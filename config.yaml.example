@@ -1,0 +1,37 @@
+# CallFS Configuration Example
+server:
+  listen_addr: ":8443"
+  external_url: "localhost:8443"  # Used for single-use download links
+  cert_file: "server.crt"
+  key_file: "server.key"
+
+auth:
+  api_keys:
+    - "your-api-key-here"
+  internal_proxy_secret: "your-internal-secret-here"
+  single_use_link_secret: "your-link-secret-here"
+
+log:
+  level: "info"
+  format: "json"
+
+metrics:
+  listen_addr: ":9090"
+
+backend:
+  localfs_root_path: "/var/lib/callfs"
+  s3_access_key: ""
+  s3_secret_key: ""
+  s3_region: "us-east-1"
+  s3_bucket_name: ""
+
+metadata_store:
+  dsn: "postgres://callfs:callfs@localhost/callfs?sslmode=disable"
+
+dlm:
+  redis_addr: "localhost:6379"
+  redis_password: ""
+
+instance_discovery:
+  instance_id: "callfs-instance-1"
+  peer_endpoints: {}

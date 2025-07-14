@@ -1,0 +1,689 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "CallFS is an ultra-lightweight, high-performance REST API filesystem that provides precise Linux filesystem semantics over various backends.",
+        "title": "CallFS API",
+        "termsOfService": "http://swagger.io/terms/",
+        "contact": {
+            "name": "CallFS Support",
+            "url": "http://callfs.io/support",
+            "email": "support@callfs.io"
+        },
+        "license": {
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8443",
+    "basePath": "/v1",
+    "paths": {
+        "/download/{token}": {
+            "get": {
+                "description": "Downloads a file using a single-use token. The token becomes invalid after one use.",
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "links"
+                ],
+                "summary": "Download file via single-use link",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Single-use download token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "File content",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Token not found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "410": {
+                        "description": "Token expired or already used",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/directories/{path}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists directory contents with optional recursive traversal",
+                "tags": [
+                    "directories"
+                ],
+                "summary": "List directory contents",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Recursively list subdirectories",
+                        "name": "recursive",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum recursion depth (default: 100, max: 1000)",
+                        "name": "max_depth",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Directory listing",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.DirectoryListingResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/files/{path}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieves file content as octet-stream or directory listing as JSON",
+                "tags": [
+                    "files"
+                ],
+                "summary": "Get file or directory",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File or directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "File content (if path is file)",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "headers": {
+                            "X-CallFS-GID": {
+                                "type": "string",
+                                "description": "Group ID"
+                            },
+                            "X-CallFS-MTime": {
+                                "type": "string",
+                                "description": "Last modified time"
+                            },
+                            "X-CallFS-Mode": {
+                                "type": "string",
+                                "description": "File mode (permissions)"
+                            },
+                            "X-CallFS-Size": {
+                                "type": "string",
+                                "description": "File size in bytes"
+                            },
+                            "X-CallFS-UID": {
+                                "type": "string",
+                                "description": "User ID"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Updates an existing file with new binary content, automatically routing to the correct server",
+                "tags": [
+                    "files"
+                ],
+                "summary": "Update file with cross-server support",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File path (no trailing slash)",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "File content (application/octet-stream)",
+                        "name": "file",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "201": {
+                        "description": "Created"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway (cross-server proxy error)",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a new file or directory. If the resource exists on another server, provides proper conflict resolution",
+                "tags": [
+                    "files"
+                ],
+                "summary": "Create or update file or directory with cross-server conflict detection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File or directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "File content (for files) or directory creation request",
+                        "name": "file",
+                        "in": "body",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK (directory already exists)"
+                    },
+                    "201": {
+                        "description": "Created"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict - resource exists on another server",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CrossServerConflictResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes a file or directory, automatically routing to the correct server",
+                "tags": [
+                    "files"
+                ],
+                "summary": "Delete file or directory with cross-server support",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File or directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway (cross-server proxy error)",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "head": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns file metadata headers, automatically routing to the correct server",
+                "tags": [
+                    "files"
+                ],
+                "summary": "Get file metadata with cross-server support",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File or directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "headers": {
+                            "X-CallFS-GID": {
+                                "type": "string",
+                                "description": "Group ID"
+                            },
+                            "X-CallFS-Instance-ID": {
+                                "type": "string",
+                                "description": "Instance ID where file is located"
+                            },
+                            "X-CallFS-MTime": {
+                                "type": "string",
+                                "description": "Last modified time"
+                            },
+                            "X-CallFS-Mode": {
+                                "type": "string",
+                                "description": "File mode (permissions)"
+                            },
+                            "X-CallFS-Size": {
+                                "type": "string",
+                                "description": "File size in bytes"
+                            },
+                            "X-CallFS-Type": {
+                                "type": "string",
+                                "description": "File type (file or directory)"
+                            },
+                            "X-CallFS-UID": {
+                                "type": "string",
+                                "description": "User ID"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway (cross-server proxy error)",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/links/generate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a secure, time-limited, single-use download link for a file",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "links"
+                ],
+                "summary": "Generate single-use download link",
+                "parameters": [
+                    {
+                        "description": "Link generation request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/links.GenerateLinkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Link generated successfully",
+                        "schema": {
+                            "$ref": "#/definitions/links.GenerateLinkResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "handlers.CrossServerConflictResponse": {
+            "type": "object",
+            "properties": {
+                "backend_type": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "existing_path": {
+                    "type": "string"
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "suggestion": {
+                    "type": "string"
+                },
+                "update_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.DirectoryListingResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.FileInfo"
+                    }
+                },
+                "max_depth": {
+                    "type": "integer"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "recursive": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "description": "\"directory\"",
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.FileInfo": {
+            "type": "object",
+            "properties": {
+                "gid": {
+                    "type": "integer"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "mtime": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "uid": {
+                    "type": "integer"
+                }
+            }
+        },
+        "links.GenerateLinkRequest": {
+            "type": "object",
+            "properties": {
+                "expiry_seconds": {
+                    "type": "integer",
+                    "example": 3600
+                },
+                "path": {
+                    "type": "string",
+                    "example": "/path/to/file"
+                }
+            }
+        },
+        "links.GenerateLinkResponse": {
+            "type": "object",
+            "properties": {
+                "expires": {
+                    "type": "string",
+                    "example": "2025-07-13T13:34:56Z"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "token123"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://localhost:8443/download/token123"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Type \"Bearer\" followed by a space and JWT token.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}
