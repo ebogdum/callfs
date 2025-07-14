@@ -1,0 +1,58 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+docs/
+PHASE2_SUMMARY.md
+
+# Build artifacts
+bin/
+callfs
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Test files
+*_test.go
+testdata/
+scripts/
+data/
+builds/
+
+# Development files
+docker-compose.yml
+docker-compose.*.yml
+
+# Temporary files
+*.tmp
+*.temp
+
+# Helm charts (will be in separate directory)
+helm/
+
+# CI/CD files
+.github/
+
+# Local development config
+config.yaml
+*.crt
+*.key
+*.pem
+
+# Removed code
+_removed/

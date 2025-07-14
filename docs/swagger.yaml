@@ -1,0 +1,461 @@
+basePath: /v1
+definitions:
+  handlers.CrossServerConflictResponse:
+    properties:
+      backend_type:
+        type: string
+      error:
+        type: string
+      existing_path:
+        type: string
+      instance_id:
+        type: string
+      suggestion:
+        type: string
+      update_url:
+        type: string
+    type: object
+  handlers.DirectoryListingResponse:
+    properties:
+      count:
+        type: integer
+      items:
+        items:
+          $ref: '#/definitions/handlers.FileInfo'
+        type: array
+      max_depth:
+        type: integer
+      path:
+        type: string
+      recursive:
+        type: boolean
+      type:
+        description: '"directory"'
+        type: string
+    type: object
+  handlers.ErrorResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  handlers.FileInfo:
+    properties:
+      gid:
+        type: integer
+      mode:
+        type: string
+      mtime:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      size:
+        type: integer
+      type:
+        type: string
+      uid:
+        type: integer
+    type: object
+  links.GenerateLinkRequest:
+    properties:
+      expiry_seconds:
+        example: 3600
+        type: integer
+      path:
+        example: /path/to/file
+        type: string
+    type: object
+  links.GenerateLinkResponse:
+    properties:
+      expires:
+        example: "2025-07-13T13:34:56Z"
+        type: string
+      token:
+        example: token123
+        type: string
+      url:
+        example: https://localhost:8443/download/token123
+        type: string
+    type: object
+host: localhost:8443
+info:
+  contact:
+    email: support@callfs.io
+    name: CallFS Support
+    url: http://callfs.io/support
+  description: CallFS is an ultra-lightweight, high-performance REST API filesystem
+    that provides precise Linux filesystem semantics over various backends.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: CallFS API
+  version: "1.0"
+paths:
+  /download/{token}:
+    get:
+      description: Downloads a file using a single-use token. The token becomes invalid
+        after one use.
+      parameters:
+      - description: Single-use download token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: File content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Token not found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "410":
+          description: Token expired or already used
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Download file via single-use link
+      tags:
+      - links
+  /v1/directories/{path}:
+    get:
+      description: Lists directory contents with optional recursive traversal
+      parameters:
+      - description: Directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      - description: Recursively list subdirectories
+        in: query
+        name: recursive
+        type: boolean
+      - description: 'Maximum recursion depth (default: 100, max: 1000)'
+        in: query
+        name: max_depth
+        type: integer
+      responses:
+        "200":
+          description: Directory listing
+          schema:
+            $ref: '#/definitions/handlers.DirectoryListingResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List directory contents
+      tags:
+      - directories
+  /v1/files/{path}:
+    delete:
+      description: Deletes a file or directory, automatically routing to the correct
+        server
+      parameters:
+      - description: File or directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway (cross-server proxy error)
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete file or directory with cross-server support
+      tags:
+      - files
+    get:
+      description: Retrieves file content as octet-stream or directory listing as
+        JSON
+      parameters:
+      - description: File or directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: File content (if path is file)
+          headers:
+            X-CallFS-GID:
+              description: Group ID
+              type: string
+            X-CallFS-MTime:
+              description: Last modified time
+              type: string
+            X-CallFS-Mode:
+              description: File mode (permissions)
+              type: string
+            X-CallFS-Size:
+              description: File size in bytes
+              type: string
+            X-CallFS-UID:
+              description: User ID
+              type: string
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get file or directory
+      tags:
+      - files
+    head:
+      description: Returns file metadata headers, automatically routing to the correct
+        server
+      parameters:
+      - description: File or directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-CallFS-GID:
+              description: Group ID
+              type: string
+            X-CallFS-Instance-ID:
+              description: Instance ID where file is located
+              type: string
+            X-CallFS-MTime:
+              description: Last modified time
+              type: string
+            X-CallFS-Mode:
+              description: File mode (permissions)
+              type: string
+            X-CallFS-Size:
+              description: File size in bytes
+              type: string
+            X-CallFS-Type:
+              description: File type (file or directory)
+              type: string
+            X-CallFS-UID:
+              description: User ID
+              type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway (cross-server proxy error)
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get file metadata with cross-server support
+      tags:
+      - files
+    post:
+      description: Creates a new file or directory. If the resource exists on another
+        server, provides proper conflict resolution
+      parameters:
+      - description: File or directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      - description: File content (for files) or directory creation request
+        in: body
+        name: file
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK (directory already exists)
+        "201":
+          description: Created
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict - resource exists on another server
+          schema:
+            $ref: '#/definitions/handlers.CrossServerConflictResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create or update file or directory with cross-server conflict detection
+      tags:
+      - files
+    put:
+      description: Updates an existing file with new binary content, automatically
+        routing to the correct server
+      parameters:
+      - description: File path (no trailing slash)
+        in: path
+        name: path
+        required: true
+        type: string
+      - description: File content (application/octet-stream)
+        in: body
+        name: file
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+        "201":
+          description: Created
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway (cross-server proxy error)
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update file with cross-server support
+      tags:
+      - files
+  /v1/links/generate:
+    post:
+      consumes:
+      - application/json
+      description: Creates a secure, time-limited, single-use download link for a
+        file
+      parameters:
+      - description: Link generation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/links.GenerateLinkRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Link generated successfully
+          schema:
+            $ref: '#/definitions/links.GenerateLinkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Generate single-use download link
+      tags:
+      - links
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and JWT token.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

@@ -1,0 +1,522 @@
+openapi: 3.0.3
+info:
+  title: CallFS API
+  description: Ultra-lightweight REST API filesystem providing Linux filesystem semantics
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://localhost:8443/v1
+    description: Local development server
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /files/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: File or directory path
+        schema:
+          type: string
+        example: "documents/readme.txt"
+    
+    get:
+      summary: Download file or list directory contents
+      description: |
+        For files: Returns file content as application/octet-stream with metadata in headers
+        For directories: Returns JSON list of children with metadata
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-CallFS-Type:
+              schema:
+                type: string
+                enum: [file, directory]
+            X-CallFS-Size:
+              schema:
+                type: integer
+            X-CallFS-Mode:
+              schema:
+                type: string
+            X-CallFS-UID:
+              schema:
+                type: integer
+            X-CallFS-GID:
+              schema:
+                type: integer
+            X-CallFS-MTime:
+              schema:
+                type: string
+                format: date-time
+          content:
+            application/octet-stream:
+              description: File content (for files only)
+              schema:
+                type: string
+                format: binary
+            application/json:
+              description: Directory listing (for directories only)
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FileInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    head:
+      summary: Get file or directory metadata
+      description: Returns metadata for file or directory in headers without content
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-CallFS-Type:
+              schema:
+                type: string
+                enum: [file, directory]
+            X-CallFS-Size:
+              schema:
+                type: integer
+            X-CallFS-Mode:
+              schema:
+                type: string
+            X-CallFS-UID:
+              schema:
+                type: integer
+            X-CallFS-GID:
+              schema:
+                type: integer
+            X-CallFS-MTime:
+              schema:
+                type: string
+                format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    post:
+      summary: Create file or directory
+      description: Create a new file with content or directory
+      requestBody:
+        content:
+          application/octet-stream:
+            description: File content (for file creation)
+            schema:
+              type: string
+              format: binary
+          application/json:
+            description: Directory creation request
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [directory]
+              required: [type]
+      responses:
+        '201':
+          description: Created successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    put:
+      summary: Update file content
+      description: Update or create file with new content
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            description: New file content
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Updated successfully
+        '201':
+          description: Created successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    delete:
+      summary: Delete file or directory
+      description: Delete file or empty directory
+      responses:
+        '204':
+          description: Deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Directory not empty
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /links/generate:
+    post:
+      summary: Generate single-use download link
+      description: Create a secure, single-use download link for a file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file_path:
+                  type: string
+                  description: Path to the file
+                  example: "documents/readme.txt"
+                expires_in:
+                  type: integer
+                  description: Expiration time in seconds
+                  default: 3600
+                  example: 3600
+              required: [file_path]
+      responses:
+        '201':
+          description: Link generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: Single-use download token
+                  download_url:
+                    type: string
+                    description: Complete download URL
+                  expires_at:
+                    type: string
+                    format: date-time
+                    description: Link expiration time
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /download/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        description: Single-use download token
+        schema:
+          type: string
+    
+    get:
+      summary: Download file using single-use link
+      description: Download file content using a single-use token (consumes the token)
+      security: []  # No authentication required for token-based downloads
+      responses:
+        '200':
+          description: File downloaded successfully
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Link expired or already used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /directories/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: Directory path
+        schema:
+          type: string
+        example: "documents/projects"
+    
+    get:
+      summary: List directory contents
+      description: |
+        Lists directory contents with optional recursive traversal.
+        Returns detailed metadata for all files and subdirectories.
+      parameters:
+        - name: recursive
+          in: query
+          required: false
+          description: Recursively list subdirectories
+          schema:
+            type: boolean
+            default: false
+          example: true
+        - name: max_depth
+          in: query
+          required: false
+          description: Maximum recursion depth (default 100, max 1000)
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 1000
+            default: 100
+          example: 5
+      responses:
+        '200':
+          description: Directory listing
+          headers:
+            X-CallFS-Type:
+              schema:
+                type: string
+                enum: [directory]
+            X-CallFS-Count:
+              schema:
+                type: integer
+              description: Number of items returned
+            X-CallFS-Recursive:
+              schema:
+                type: boolean
+              description: Whether recursive listing was performed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectoryListingResponse'
+              examples:
+                non_recursive:
+                  summary: Non-recursive listing
+                  value:
+                    path: "/documents"
+                    type: "directory"
+                    recursive: false
+                    count: 3
+                    items:
+                      - name: "file1.txt"
+                        path: "/documents/file1.txt"
+                        type: "file"
+                        size: 1024
+                        mode: "0644"
+                        uid: 1000
+                        gid: 1000
+                        mtime: "2024-01-15T10:30:00Z"
+                      - name: "subfolder"
+                        path: "/documents/subfolder"
+                        type: "directory"
+                        size: 0
+                        mode: "0755"
+                        uid: 1000
+                        gid: 1000
+                        mtime: "2024-01-15T09:15:00Z"
+                recursive:
+                  summary: Recursive listing with depth limit
+                  value:
+                    path: "/documents"
+                    type: "directory"
+                    recursive: true
+                    max_depth: 2
+                    count: 5
+                    items:
+                      - name: "file1.txt"
+                        path: "/documents/file1.txt"
+                        type: "file"
+                        size: 1024
+                        mode: "0644"
+                        uid: 1000
+                        gid: 1000
+                        mtime: "2024-01-15T10:30:00Z"
+                      - name: "subfolder"
+                        path: "/documents/subfolder"
+                        type: "directory"
+                        size: 0
+                        mode: "0755"
+                        uid: 1000
+                        gid: 1000
+                        mtime: "2024-01-15T09:15:00Z"
+                      - name: "nested.txt"
+                        path: "/documents/subfolder/nested.txt"
+                        type: "file"
+                        size: 512
+                        mode: "0644"
+                        uid: 1000
+                        gid: 1000
+                        mtime: "2024-01-15T11:45:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Use "Bearer <api-key>" format
+
+  schemas:
+    FileInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          description: File or directory name
+        path:
+          type: string
+          description: Full path
+        type:
+          type: string
+          enum: [file, directory]
+        size:
+          type: integer
+          description: Size in bytes (0 for directories)
+        mode:
+          type: string
+          description: Unix permissions (e.g., "0644")
+        uid:
+          type: integer
+          description: User ID
+        gid:
+          type: integer
+          description: Group ID
+        mtime:
+          type: string
+          format: date-time
+          description: Last modification time
+      required: [name, path, type, size, mode, uid, gid, mtime]
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Error code
+          example: "FILE_NOT_FOUND"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "The requested file was not found"
+      required: [code, message]
+
+    DirectoryListingResponse:
+      type: object
+      description: Response for directory listing operations
+      properties:
+        path:
+          type: string
+          description: Directory path that was listed
+          example: "/documents/projects"
+        type:
+          type: string
+          enum: [directory]
+          description: Always "directory" for directory listings
+        recursive:
+          type: boolean
+          description: Whether recursive listing was performed
+          example: true
+        max_depth:
+          type: integer
+          description: Maximum recursion depth used (only present for recursive listings)
+          example: 5
+        count:
+          type: integer
+          description: Total number of items returned
+          example: 42
+        items:
+          type: array
+          description: List of files and directories with their metadata
+          items:
+            $ref: '#/components/schemas/FileInfo'
+      required: [path, type, recursive, count, items]
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    
+    Forbidden:
+      description: Access denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    
+    NotFound:
+      description: File or directory not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

@@ -1,0 +1,54 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# CallFS specific
+config.yaml
+config.json
+*.pem
+*.key
+*.crt
+_removed/
+
+# Build artifacts
+/callfs
+/dist/
+/data/
+/builds/
+/.github/
+
+# Logs
+*.log
+
+# Test or build files
+*.test
+*.out
+
+# Dev scripts
+scripts/
+certs/
+config.yaml
