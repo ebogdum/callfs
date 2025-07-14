@@ -27,14 +27,16 @@ Counter of total HTTP requests by method, path, and status code.
 
 **Labels:**
 - `method`: HTTP method (GET, POST, PUT, DELETE, HEAD)
-- `path`: Request path pattern
+- `path`: Request path pattern (/v1/files/*, /v1/directories/*, /v1/links/*, etc.)
 - `status_code`: HTTP response status code
 
 **Example:**
 ```prometheus
-callfs_http_requests_total{method="GET",path="/files/*",status_code="200"} 1542
-callfs_http_requests_total{method="POST",path="/files/*",status_code="201"} 328
+callfs_http_requests_total{method="GET",path="/v1/files/*",status_code="200"} 1542
+callfs_http_requests_total{method="POST",path="/v1/files/*",status_code="201"} 328
+callfs_http_requests_total{method="POST",path="/v1/files/*",status_code="409"} 45
 callfs_http_requests_total{method="GET",path="/health",status_code="200"} 3600
+callfs_http_requests_total{method="GET",path="/v1/directories/*",status_code="200"} 892
 ```
 
 #### `callfs_http_request_duration_seconds`
@@ -53,13 +55,14 @@ Counter of backend operations by type and operation.
 
 **Labels:**
 - `backend_type`: Backend type (localfs, s3, internalproxy, noop)
-- `operation`: Operation type (read, write, delete, list, stat)
+- `operation`: Operation type (open, create, update, delete, list, stat, create_directory)
 
 **Example:**
 ```prometheus
-callfs_backend_ops_total{backend_type="localfs",operation="read"} 856
-callfs_backend_ops_total{backend_type="s3",operation="write"} 245
-callfs_backend_ops_total{backend_type="internalproxy",operation="read"} 123
+callfs_backend_ops_total{backend_type="localfs",operation="open"} 856
+callfs_backend_ops_total{backend_type="s3",operation="create"} 245
+callfs_backend_ops_total{backend_type="internalproxy",operation="open"} 123
+callfs_backend_ops_total{backend_type="localfs",operation="list"} 342
 ```
 
 #### `callfs_backend_op_duration_seconds`
@@ -75,7 +78,7 @@ Histogram of backend operation duration in seconds.
 Counter of metadata database queries by operation.
 
 **Labels:**
-- `operation`: Database operation (select, insert, update, delete)
+- `operation`: Database operation (get_metadata, create_metadata, update_metadata, delete_metadata, list_directory, create_link, etc.)
 
 #### `callfs_metadata_db_query_duration_seconds`
 Histogram of database query duration in seconds.
@@ -86,7 +89,7 @@ Histogram of database query duration in seconds.
 ### Single-Use Link Metrics
 
 #### `callfs_single_use_link_generations_total`
-Counter of single-use links generated.
+Counter of single-use links generated (with rate limiting tracking).
 
 #### `callfs_single_use_link_consumptions_total`
 Counter of single-use link consumption attempts.
@@ -110,22 +113,39 @@ Histogram of lock operation duration in seconds.
 - `operation`: Lock operation type
 
 #### `callfs_active_locks`
-Gauge of currently active locks.
+Gauge of currently active distributed locks.
 
 ### Cache Metrics
 
 #### `callfs_cache_operations_total`
-Counter of cache operations.
+Counter of metadata cache operations.
 
 **Labels:**
-- `operation`: Cache operation (hit, miss, eviction)
+- `operation`: Cache operation (hit, miss, eviction, update)
 - `cache_type`: Type of cache (metadata)
 
 #### `callfs_cache_size`
 Gauge of current cache size (number of entries).
 
 **Labels:**
-- `cache_type`: Type of cache
+- `cache_type`: Type of cache (metadata)
+
+### Cross-Server Metrics
+
+#### `callfs_cross_server_operations_total`
+Counter of cross-server operations (conflict detection, proxying).
+
+**Labels:**
+- `operation`: Operation type (conflict_detected, proxy_success, proxy_failure)
+- `source_instance`: Source instance ID
+- `target_instance`: Target instance ID (for proxying)
+
+#### `callfs_cross_server_operation_duration_seconds`
+Histogram of cross-server operation duration.
+
+**Labels:**
+- `operation`: Operation type
+- `target_instance`: Target instance ID
 
 ## Monitoring Setup
 

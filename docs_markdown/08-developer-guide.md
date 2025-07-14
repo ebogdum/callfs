@@ -62,36 +62,134 @@ cd callfs
 # Install dependencies
 go mod download
 
-# Install development tools
-make install-dev-tools
+# Build the application
+go build -o bin/callfs ./cmd
 
-# Generate development certificates
-make dev-certs
-
-# Setup development database
-make dev-db-setup
+# Setup development certificates (if not existing)
+mkdir -p certs
+# Generate self-signed certificates for development
+openssl req -x509 -newkey rsa:4096 -nodes -keyout certs/server.key \
+  -out certs/server.crt -days 365 -subj "/CN=localhost"
 ```
 
-#### 2. Start Development Services
+#### 2. Start Infrastructure Services
 ```bash
-# Start PostgreSQL and Redis
-docker-compose -f docker-compose.dev.yml up -d
-
-# Run database migrations
-make migrate-up
-
-# Start CallFS in development mode
-make run-dev
+# Start PostgreSQL and Redis using the infrastructure script
+./scripts/01-start-infra.sh
 ```
 
-#### 3. Verify Installation
+#### 3. Start CallFS Servers
 ```bash
-# Test health endpoint
+# Start LocalFS server (port 8443)
+./scripts/02-start-localfs-server.sh
+
+# In another terminal, start S3 server (port 8444)
+./scripts/03-start-s3-server.sh
+```
+
+#### 4. Verify Installation
+```bash
+# Test health endpoints
 curl -k https://localhost:8443/health
+curl -k https://localhost:8444/health
 
 # Test API with dev key
-curl -k -H "Authorization: Bearer dev-api-key-1" \
-  https://localhost:8443/api/v1/files/
+curl -k -H "Authorization: Bearer dev-api-key-12345" \
+  https://localhost:8443/v1/files/
+
+# Run comprehensive tests
+./scripts/test.sh
+```
+
+#### 5. Test Cross-Server Functionality
+```bash
+# Test basic cross-server operations
+./scripts/04-test-cross-server.sh
+
+# Test enhanced cross-server features
+./scripts/05-test-enhanced-cross-server.sh
+
+# Test latest enhanced functionality
+./scripts/06-test-enhanced-cross-server.sh
+```
+
+### Development Infrastructure
+
+CallFS provides comprehensive development scripts in the `scripts/` directory:
+
+#### Infrastructure Scripts
+
+1. **`01-start-infra.sh`** - Starts all required infrastructure services:
+   - PostgreSQL database with migrations
+   - Redis for distributed locking
+   - MinIO S3-compatible storage
+   - Waits for all services to be ready
+
+2. **`02-start-localfs-server.sh`** - Starts CallFS with LocalFS backend on port 8443
+3. **`03-start-s3-server.sh`** - Starts CallFS with S3 backend on port 8444
+
+#### Testing Scripts
+
+1. **`test.sh`** - Comprehensive test suite covering:
+   - Health and metrics endpoints
+   - Authentication and authorization
+   - File operations (CRUD)
+   - Directory operations
+   - Single-use links
+   - Both LocalFS and S3 backends
+   - Error handling and edge cases
+
+2. **`04-test-cross-server.sh`** - Basic cross-server functionality:
+   - File uploads to different servers
+   - Cross-server file access
+   - Directory listing across servers
+
+3. **`05-test-enhanced-cross-server.sh`** - Advanced cross-server features:
+   - POST conflict detection with suggestions
+   - PUT cross-server routing and proxying
+   - DELETE cross-server routing
+   - HEAD cross-server metadata retrieval
+
+4. **`06-test-enhanced-cross-server.sh`** - Latest enhanced functionality:
+   - Comprehensive conflict detection
+   - Full proxy operation testing
+   - Cross-server header validation
+
+#### Configuration Files
+
+- **`config-base.yaml`** - Base configuration for development
+- **`config-localfs.yaml`** - LocalFS-specific configuration  
+- **`config-s3.yaml`** - S3-specific configuration
+
+### Docker Infrastructure
+
+The project includes a `docker-compose.yml` that provides:
+
+```yaml
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: callfs
+      POSTGRES_USER: callfs
+      POSTGRES_PASSWORD: callfs
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ACCESS_KEY: callfs
+      MINIO_SECRET_KEY: callfs123
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
 ```
 
 ### Development Database Setup
@@ -405,6 +503,196 @@ development:
 ```
 
 ### Testing
+
+CallFS includes comprehensive testing infrastructure with multiple testing strategies:
+
+#### Test Scripts Overview
+
+The project includes several test scripts in the `scripts/` directory:
+
+1. **`test.sh`** - Master test script with the following features:
+   - Tests all CallFS endpoints comprehensively
+   - Supports both LocalFS and S3 backends
+   - Includes authentication, authorization, and error handling tests
+   - Provides colored output and detailed test reporting
+   - Usage: `./scripts/test.sh [localfs|s3|both]`
+
+2. **Cross-Server Testing Scripts**:
+   - `04-test-cross-server.sh` - Basic cross-server functionality
+   - `05-test-enhanced-cross-server.sh` - Advanced cross-server features  
+   - `06-test-enhanced-cross-server.sh` - Latest enhanced functionality
+
+#### Test Categories
+
+##### 1. Health and System Tests
+```bash
+# Health endpoint testing
+test_health() {
+    local response=$(curl $CURL_OPTS "$CALLFS_URL/health")
+    test_case "Health check (no auth required)" "200" "$response"
+}
+
+# Metrics endpoint testing  
+test_metrics() {
+    local response=$(curl $CURL_OPTS "$CALLFS_URL/metrics")
+    test_case "Metrics endpoint (no auth required)" "200" "$response"
+}
+```
+
+##### 2. Authentication Tests
+```bash
+# Test without API key (should fail)
+test_auth() {
+    local response=$(curl $CURL_OPTS "$CALLFS_URL/v1/files/test")
+    test_case "Access without API key (should fail)" "401" "$response"
+    
+    # Test with valid API key
+    local response=$(curl $CURL_OPTS -H "Authorization: Bearer $API_KEY" "$CALLFS_URL/v1/files/nonexistent")
+    test_case "Access with valid API key (file not found)" "404" "$response"
+}
+```
+
+##### 3. File Operations Tests
+```bash
+# Comprehensive CRUD testing
+test_file_operations() {
+    local backend="$1"
+    local test_prefix="$2"
+    
+    # Test file upload (PUT)
+    local response=$(curl $CURL_OPTS -X PUT -H "Authorization: Bearer $API_KEY" \
+        -H "Content-Type: application/octet-stream" \
+        --data "$test_content" "$CALLFS_URL/v1/files$test_file")
+    test_case "Upload file $test_file" "201" "$response"
+    
+    # Test file retrieval (GET)
+    local response=$(curl $CURL_OPTS -H "Authorization: Bearer $API_KEY" \
+        "$CALLFS_URL/v1/files$test_file")
+    test_case "Retrieve file $test_file" "200" "$response"
+    
+    # Test HEAD request
+    local response=$(curl $CURL_OPTS -I -H "Authorization: Bearer $API_KEY" \
+        "$CALLFS_URL/v1/files$test_file")
+    test_case "HEAD request for $test_file" "200" "$response"
+}
+```
+
+##### 4. Cross-Server Testing
+```bash
+# Enhanced conflict detection testing
+test_post_conflict_detection() {
+    # Create file on server 1
+    local response1=$(echo "$content1" | curl $CURL_OPTS -X PUT \
+        -H "Authorization: $API_KEY" -H "Content-Type: text/plain" \
+        --data-binary @- "$server1_url/v1/files$file_path")
+    
+    # Try to create same file on server 2 (should get 409 conflict)
+    local response2=$(echo "$content2" | curl $CURL_OPTS -X POST \
+        -H "Authorization: $API_KEY" -H "Content-Type: text/plain" \
+        --data-binary @- "$server2_url/v1/files$file_path")
+    
+    test_case "Conflict detection" "409" "$response2"
+}
+```
+
+#### Test Infrastructure
+
+##### Test Configuration
+Each test script uses consistent configuration:
+
+```bash
+# Configuration
+CALLFS_URL="https://localhost:8443"
+API_KEY="test-api-key-123"
+CURL_OPTS="-k -s -w %{http_code}"
+
+# Test counters and reporting
+TOTAL_TESTS=0
+PASSED_TESTS=0
+FAILED_TESTS=0
+```
+
+##### Test Helper Functions
+```bash
+# Test case helper with automatic counting
+test_case() {
+    local description="$1"
+    local expected_code="$2"
+    local actual_response="$3"
+    
+    ((TOTAL_TESTS++))
+    
+    local actual_code="${actual_response: -3}"
+    local response_body="${actual_response%???}"
+    
+    if [[ "$actual_code" == "$expected_code" ]]; then
+        ((PASSED_TESTS++))
+        echo -e "${GREEN}[SUCCESS]${NC} $description - HTTP $actual_code"
+    else
+        ((FAILED_TESTS++))
+        echo -e "${RED}[ERROR]${NC} $description - Expected HTTP $expected_code, got HTTP $actual_code"
+    fi
+}
+
+# Service readiness checking
+wait_for_service() {
+    local retries=30
+    while [[ $retries -gt 0 ]]; do
+        if curl $CURL_OPTS -H "Authorization: Bearer $API_KEY" "$CALLFS_URL/health" >/dev/null 2>&1; then
+            log_success "CallFS is ready"
+            return 0
+        fi
+        sleep 2
+        ((retries--))
+    done
+    log_error "CallFS did not become ready within 60 seconds"
+    exit 1
+}
+```
+
+#### Running Tests
+
+##### Full Test Suite
+```bash
+# Run all tests on both backends
+./scripts/test.sh both
+
+# Run only LocalFS tests
+./scripts/test.sh localfs
+
+# Run only S3 tests  
+./scripts/test.sh s3
+```
+
+##### Cross-Server Tests
+```bash
+# Start infrastructure and servers first
+./scripts/01-start-infra.sh
+./scripts/02-start-localfs-server.sh  # Terminal 1
+./scripts/03-start-s3-server.sh       # Terminal 2
+
+# Run cross-server tests
+./scripts/04-test-cross-server.sh
+./scripts/05-test-enhanced-cross-server.sh
+./scripts/06-test-enhanced-cross-server.sh
+```
+
+##### Manual Testing
+```bash
+# Health check
+curl -k https://localhost:8443/health
+
+# Authentication test
+curl -k -H "Authorization: Bearer dev-api-key-12345" \
+  https://localhost:8443/v1/files/
+
+# File upload test
+echo "test content" | curl -k -X PUT \
+  -H "Authorization: Bearer dev-api-key-12345" \
+  -H "Content-Type: text/plain" \
+  --data-binary @- \
+  https://localhost:8443/v1/files/test.txt
+```
 
 #### Test Structure
 ```

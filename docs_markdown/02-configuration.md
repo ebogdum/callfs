@@ -50,6 +50,8 @@ metrics:
 
 # Backend storage configuration
 backend:
+  default_backend: "localfs"              # Default backend for new files: localfs or s3
+  
   # Local filesystem backend
   localfs_root_path: "/var/lib/callfs"    # Local filesystem root path
   
@@ -62,6 +64,9 @@ backend:
   s3_server_side_encryption: "AES256"     # Server-side encryption
   s3_acl: "private"                       # Object ACL
   s3_kms_key_id: ""                       # KMS key ID for SSE-KMS
+  
+  # Internal proxy configuration
+  internal_proxy_skip_tls_verify: false   # Skip TLS verification for internal proxy
 
 # Metadata store configuration
 metadata_store:
@@ -122,6 +127,7 @@ All configuration options can be overridden using environment variables with the
 
 | Environment Variable | YAML Path | Default | Description |
 |---------------------|-----------|---------|-------------|
+| `CALLFS_BACKEND_DEFAULT_BACKEND` | `backend.default_backend` | `localfs` | Default backend for new files |
 | `CALLFS_BACKEND_LOCALFS_ROOT_PATH` | `backend.localfs_root_path` | `/var/lib/callfs` | Local filesystem root path |
 | `CALLFS_BACKEND_S3_ACCESS_KEY` | `backend.s3_access_key` | `""` | AWS S3 access key |
 | `CALLFS_BACKEND_S3_SECRET_KEY` | `backend.s3_secret_key` | `""` | AWS S3 secret key |
@@ -131,6 +137,7 @@ All configuration options can be overridden using environment variables with the
 | `CALLFS_BACKEND_S3_SERVER_SIDE_ENCRYPTION` | `backend.s3_server_side_encryption` | `AES256` | S3 server-side encryption |
 | `CALLFS_BACKEND_S3_ACL` | `backend.s3_acl` | `private` | S3 object ACL |
 | `CALLFS_BACKEND_S3_KMS_KEY_ID` | `backend.s3_kms_key_id` | `""` | KMS key ID for SSE-KMS |
+| `CALLFS_BACKEND_INTERNAL_PROXY_SKIP_TLS_VERIFY` | `backend.internal_proxy_skip_tls_verify` | `false` | Skip TLS verification for internal proxy |
 
 ### Metadata Store Configuration
 
@@ -187,6 +194,7 @@ log:
   format: "console"
 
 backend:
+  default_backend: "localfs"
   localfs_root_path: "./data"
 
 metadata_store:
@@ -219,6 +227,7 @@ log:
   format: "json"
 
 backend:
+  default_backend: "s3"
   localfs_root_path: "/var/lib/callfs"
   s3_bucket_name: "callfs-production"
   s3_region: "us-west-2"
@@ -253,6 +262,7 @@ auth:
   single_use_link_secret: "cluster-link-secret"
 
 backend:
+  default_backend: "s3"
   s3_bucket_name: "callfs-cluster-storage"
   s3_region: "us-east-1"
 
