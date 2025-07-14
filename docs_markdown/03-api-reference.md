@@ -90,13 +90,23 @@ curl -H "Authorization: Bearer your-api-key" \
 
 ### HEAD /v1/files/{path}
 
-Retrieves file metadata without downloading content.
+Retrieves file metadata without downloading content. **Enhanced with cross-server routing**.
 
 #### Parameters
 - **path** (string, required): File path
 
-#### Response
-Returns the same headers as GET but without response body.
+#### Response Headers
+- `X-CallFS-Type`: `file` or `directory`
+- `X-CallFS-Size`: File size in bytes
+- `X-CallFS-Mode`: File permissions (octal)
+- `X-CallFS-UID`: Owner user ID
+- `X-CallFS-GID`: Owner group ID
+- `X-CallFS-MTime`: Last modification time (RFC3339)
+- `X-CallFS-Instance-ID`: Instance ID where file is stored
+- `X-CallFS-Backend-Type`: Backend type (`localfs`, `s3`, `internalproxy`)
+
+#### Cross-Server Behavior
+If the file exists on another server instance, the request is automatically proxied to the correct server.
 
 #### Example
 ```bash
@@ -106,7 +116,7 @@ curl -I -H "Authorization: Bearer your-api-key" \
 
 ### POST /v1/files/{path}
 
-Creates a new file or directory.
+Creates a new file or directory. **Enhanced with cross-server conflict detection**.
 
 #### Parameters
 - **path** (string, required): File or directory path
@@ -115,6 +125,20 @@ Creates a new file or directory.
 #### Content Types
 - **Files**: `application/octet-stream`
 - **Directories**: `application/json`
+
+#### Cross-Server Conflict Detection
+If the resource already exists on another server, returns HTTP 409 with detailed conflict information:
+
+```json
+{
+  "error": "Resource exists on another server",
+  "existing_path": "/documents/readme.txt",
+  "instance_id": "callfs-localfs-1",
+  "backend_type": "localfs",
+  "suggestion": "File already exists on another server. Use PUT to update it.",
+  "update_url": "https://server-a:8443/v1/files/documents/readme.txt"
+}
+```
 
 #### Examples
 
@@ -139,12 +163,12 @@ curl -X POST -H "Authorization: Bearer your-api-key" \
 - `400 Bad Request`: Invalid request (e.g., missing trailing slash for directory)
 - `401 Unauthorized`: Invalid or missing API key
 - `403 Forbidden`: Permission denied
-- `409 Conflict`: File or directory already exists
+- `409 Conflict`: File or directory already exists (with cross-server info)
 - `500 Internal Server Error`: Server error
 
 ### PUT /v1/files/{path}
 
-Updates an existing file's content.
+Updates an existing file's content. **Enhanced with cross-server routing**.
 
 #### Parameters
 - **path** (string, required): File path (no trailing slash)
@@ -152,6 +176,9 @@ Updates an existing file's content.
 
 #### Content Type
 - `application/octet-stream`
+
+#### Cross-Server Behavior
+If the file exists on another server instance, the request is automatically proxied to the correct server.
 
 #### Example
 ```bash
@@ -163,18 +190,23 @@ curl -X PUT -H "Authorization: Bearer your-api-key" \
 
 #### Status Codes
 - `200 OK`: File updated successfully
+- `201 Created`: File created (if it didn't exist)
 - `400 Bad Request`: Invalid request (e.g., path with trailing slash)
 - `401 Unauthorized`: Invalid or missing API key
 - `403 Forbidden`: Permission denied
 - `404 Not Found`: File not found
+- `502 Bad Gateway`: Cross-server proxy error
 - `500 Internal Server Error`: Server error
 
 ### DELETE /v1/files/{path}
 
-Deletes a file or empty directory.
+Deletes a file or empty directory. **Enhanced with cross-server routing**.
 
 #### Parameters
 - **path** (string, required): File or directory path (use trailing slash for directories)
+
+#### Cross-Server Behavior
+If the file exists on another server instance, the request is automatically proxied to the correct server.
 
 #### Examples
 
@@ -196,6 +228,7 @@ curl -X DELETE -H "Authorization: Bearer your-api-key" \
 - `401 Unauthorized`: Invalid or missing API key
 - `403 Forbidden`: Permission denied
 - `404 Not Found`: File or directory not found
+- `502 Bad Gateway`: Cross-server proxy error
 - `500 Internal Server Error`: Server error
 
 ## Directory Listing API
@@ -274,7 +307,7 @@ curl -H "Authorization: Bearer your-api-key" \
 
 ### POST /v1/links/generate
 
-Generates a secure, time-limited, single-use download link for a file.
+Generates a secure, time-limited, single-use download link for a file. **Rate limited to 100 requests per second**.
 
 #### Request Format
 ```json
@@ -296,6 +329,11 @@ Generates a secure, time-limited, single-use download link for a file.
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
+
+#### Security Features
+- HMAC-SHA256 token signing
+- Cryptographically secure token generation
+- Automatic cleanup of expired links
 
 #### Example
 ```bash
