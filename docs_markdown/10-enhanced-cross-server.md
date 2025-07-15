@@ -1,286 +1,54 @@
-# Enhanced Cross-Server Functionality
+# Enhanced Cross-Server Operations
 
-This document describes the enhanced cross-server functionality for CallFS that addresses the key requirements for proper distributed file system behavior.
+In a distributed CallFS cluster, "enhanced" API operations provide intelligent routing and conflict management, making the cluster behave like a single, unified filesystem. This document details the functionality of these crucial features.
 
-## Overview
+## Core Concepts
 
-The enhanced cross-server functionality provides:
+- **Automatic Routing**: When you make a request to one node for a file that is stored on another node's local filesystem, CallFS automatically proxies the request to the correct node. This is transparent to the client.
+- **Conflict Detection**: When you try to create a file or directory, CallFS checks the entire cluster to prevent accidental overwrites of data that exists on other nodes.
 
-1. **Conflict Detection with Suggestions**: When attempting to create files/directories that exist on other servers
-2. **Cross-Server Operation Routing**: Automatic routing of operations to the correct server based on file location
-3. **Comprehensive HTTP Method Support**: Full support for GET, HEAD, POST, PUT, DELETE across servers
+These features apply to the `HEAD`, `POST`, `PUT`, and `DELETE` methods on the `/v1/files/{path}` endpoint.
 
-## Key Features
+## Enhanced Operations
 
-### 1. POST Conflict Detection and Resolution
+### `POST /v1/files/{path}` - Create with Conflict Detection
 
-When you try to create a file or directory that already exists on another server:
+When you `POST` to create a new file or directory, CallFS performs a cluster-wide check.
 
-**Scenario**: File exists on Server A, trying to create on Server B
+- **If the path is available everywhere**: The resource is created on the default backend of the node that received the request.
+- **If the path already exists on another node**: The API returns a `409 Conflict` error. The response body provides details about the conflict, including which node holds the resource and a suggestion to use `PUT` for updates.
 
-**Response**: HTTP 409 Conflict with detailed information:
+**Example `409 Conflict` Response:**
 ```json
 {
   "error": "Resource exists on another server",
-  "existing_path": "/path/to/file.txt",
-  "instance_id": "callfs-localfs-1", 
+  "existing_path": "/shared/report.docx",
+  "instance_id": "callfs-node-east",
   "backend_type": "localfs",
-  "suggestion": "File already exists on another server. Use PUT to update it.",
-  "update_url": "https://server-a:8443/v1/files/path/to/file.txt"
+  "suggestion": "File already exists on another server. Use PUT to update it."
 }
 ```
 
-**Benefits**:
-- Clear indication that the resource exists elsewhere
-- Specific server information for debugging
-- Actionable suggestions (use PUT for updates)
-- Direct URL for cross-server operations
+### `PUT /v1/files/{path}` - Update with Automatic Routing
 
-### 2. Enhanced PUT with Cross-Server Routing
+When you `PUT` to update a file, CallFS first looks up the file's location in the metadata store.
 
-**Automatic Proxying**: PUT requests are automatically routed to the server containing the file
+- **If the file is on the current node**: The operation proceeds locally.
+- **If the file is on a different node**: The request (including the data payload) is automatically proxied to the correct node.
+- **If the file does not exist**: It is created on the default backend of the current node.
 
-```bash
-# File created on LocalFS server
-curl -X PUT -H "Authorization: Bearer key" \
-  --data "content" \
-  https://localfs-server:8443/v1/files/myfile.txt
+This ensures that you can update any file by connecting to any node in the cluster, without needing to know where the file is physically stored.
 
-# Update via S3 server - automatically proxied to LocalFS server
-curl -X PUT -H "Authorization: Bearer key" \
-  --data "updated content" \
-  https://s3-server:8444/v1/files/myfile.txt
-```
+### `DELETE /v1/files/{path}` - Delete with Automatic Routing
 
-**Features**:
-- Transparent proxying to the correct server
-- Proper error handling and status codes
-- Request/response header preservation
-- Authentication forwarding
+Similar to `PUT`, a `DELETE` request is automatically routed to the node that holds the file or directory, ensuring the correct resource is removed.
 
-### 3. Enhanced DELETE with Cross-Server Routing
+### `HEAD /v1/files/{path}` - Get Metadata with Automatic Routing
 
-**Automatic Proxying**: DELETE requests are routed to the server containing the file/directory
+A `HEAD` request will also be proxied to the correct node to fetch the resource's metadata. The response headers will include the `X-CallFS-Instance-ID` and `X-CallFS-Backend-Type`, telling you exactly where the file is located.
 
-```bash
-# Delete file regardless of which server you connect to
-curl -X DELETE -H "Authorization: Bearer key" \
-  https://any-server:8443/v1/files/myfile.txt
-```
+## Use Cases
 
-**Features**:
-- Works for both files and directories
-- Directory emptiness checking before deletion
-- Proper metadata cleanup across servers
-
-### 4. Enhanced HEAD with Cross-Server Metadata
-
-**Cross-Server Metadata Retrieval**: HEAD requests automatically fetch metadata from the correct server
-
-```bash
-curl -I -H "Authorization: Bearer key" \
-  https://any-server:8443/v1/files/myfile.txt
-```
-
-**Response Headers Include**:
-```
-X-CallFS-Type: file
-X-CallFS-Size: 1024
-X-CallFS-Mode: 0644
-X-CallFS-UID: 1000
-X-CallFS-GID: 1000
-X-CallFS-MTime: 2025-01-14T10:30:00Z
-X-CallFS-Instance-ID: callfs-localfs-1
-```
-
-## Implementation Architecture
-
-### Core Components
-
-1. **Enhanced Engine Methods**:
-   - `GetCurrentInstanceID()`: Returns current instance identifier
-   - `GetPeerEndpoint(instanceID)`: Returns endpoint URL for peer instance
-
-2. **Enhanced Handlers**:
-   - `V1PostFileEnhanced`: POST with conflict detection
-   - `V1PutFileEnhanced`: PUT with cross-server routing
-   - `V1DeleteFileEnhanced`: DELETE with cross-server routing
-   - `V1HeadFileEnhanced`: HEAD with cross-server metadata
-
-3. **Proxy Functions**:
-   - `proxyPutRequest()`: Proxies PUT operations
-   - `proxyDeleteRequest()`: Proxies DELETE operations
-   - `proxyHeadRequest()`: Proxies HEAD operations
-
-### Routing Logic
-
-```go
-// Metadata lookup determines file location
-md, err := engine.GetMetadata(ctx, path)
-
-// Check if file is on current instance
-if md.CallFSInstanceID != nil && *md.CallFSInstanceID != currentInstanceID {
-    // File is on another server - proxy the request
-    return proxyRequest(targetInstanceID, path, request)
-}
-
-// File is on this instance - handle locally
-return handleLocally(path, request)
-```
-
-## Configuration
-
-### Enabling Enhanced Cross-Server Support
-
-Add to your configuration:
-
-```yaml
-handlers:
-  enable_cross_server_support: true
-
-instance_discovery:
-  instance_id: "callfs-instance-1"
-  peer_endpoints:
-    callfs-instance-2: "https://server2:8443"
-    callfs-instance-3: "https://server3:8443"
-```
-
-### Handler Selection
-
-The system automatically chooses handlers based on configuration:
-
-- **Enhanced Handlers**: When `enable_cross_server_support: true`
-- **Standard Handlers**: When `enable_cross_server_support: false` (default)
-
-## Error Handling
-
-### Cross-Server Proxy Errors
-
-**HTTP 502 Bad Gateway**: When proxy requests fail
-```json
-{
-  "code": "PROXY_ERROR",
-  "message": "failed to proxy request to owning server: connection refused"
-}
-```
-
-**Common Causes**:
-- Target server is down
-- Network connectivity issues
-- Authentication token expired
-- Mismatched peer endpoint configuration
-
-### Conflict Resolution Errors
-
-**HTTP 409 Conflict**: For resource conflicts
-```json
-{
-  "error": "Resource exists on another server",
-  "instance_id": "target-server-id",
-  "suggestion": "Use PUT to update the existing resource"
-}
-```
-
-## Testing
-
-### Test Script
-
-Use the enhanced test script to validate functionality:
-
-```bash
-./scripts/05-test-enhanced-cross-server.sh
-```
-
-**Test Coverage**:
-- POST conflict detection (both directions)
-- PUT cross-server routing (both directions)  
-- DELETE cross-server routing (both directions)
-- HEAD cross-server metadata (both directions)
-
-### Manual Testing
-
-```bash
-# Test conflict detection
-curl -X POST -H "Authorization: Bearer key" \
-  --data "content" \
-  https://server1:8443/v1/files/test.txt
-
-curl -X POST -H "Authorization: Bearer key" \
-  --data "different content" \
-  https://server2:8444/v1/files/test.txt
-# Should return HTTP 409 with conflict information
-
-# Test cross-server PUT
-curl -X PUT -H "Authorization: Bearer key" \
-  --data "updated content" \
-  https://server2:8444/v1/files/test.txt
-# Should successfully update file on server1
-```
-
-## Performance Considerations
-
-### Latency
-- Cross-server operations add network round-trip latency
-- Metadata lookups are cached to minimize database queries
-- Local operations remain fast (no proxy overhead)
-
-### Scalability
-- Each proxy request uses one connection from the connection pool
-- Consider connection limits and timeouts in high-traffic scenarios
-- Monitor proxy request success rates
-
-### Optimization Tips
-1. **Sticky Sessions**: Route clients to servers containing their files when possible
-2. **Local Affinity**: Create files on the local server by default
-3. **Monitoring**: Track cross-server request patterns and optimize placement
-
-## Security
-
-### Authentication
-- Original authentication tokens are forwarded to target servers
-- Internal proxy uses shared secrets for server-to-server communication
-- No credential exposure in cross-server requests
-
-### Authorization
-- Authorization is checked on the receiving server (not just the proxy)
-- Permissions are enforced based on the actual file location
-- No privilege escalation through proxying
-
-## Monitoring
-
-### Metrics
-- Cross-server request counts by operation type
-- Proxy request latency and success rates
-- Conflict detection frequency
-- Instance-specific file distribution
-
-### Logging
-- All cross-server operations are logged with instance information
-- Proxy failures include detailed error context
-- Conflict detection events are tracked for analysis
-
-## Migration from Standard to Enhanced
-
-### Backwards Compatibility
-- Enhanced handlers are fully backwards compatible
-- Existing files work without modification
-- Standard API behavior is preserved for local operations
-
-### Gradual Rollout
-1. Deploy enhanced handlers with feature flag disabled
-2. Enable enhanced support on test instances
-3. Monitor performance and error rates
-4. Gradually enable on production instances
-
-### Configuration Changes
-```yaml
-# Before
-handlers:
-  # No cross-server configuration
-
-# After  
-handlers:
-  enable_cross_server_support: true
-```
-
-This enhanced functionality transforms CallFS from a collection of independent instances into a truly distributed filesystem with intelligent operation routing and conflict resolution.
+- **Unified Namespace**: Present a single, consistent filesystem view to your applications, even when data is physically distributed across many servers and storage backends.
+- **Data Locality**: Allow applications to write data to a local CallFS node for low latency, while still being able to access that data from any other node in the cluster.
+- **Simplified Clients**: Client applications don't need complex logic to track file locations; they can simply interact with any node in the cluster.
