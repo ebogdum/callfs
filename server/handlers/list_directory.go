@@ -66,6 +66,11 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 
 		// Clean and validate path
 		pathInfo := ParseFilePath(pathParam)
+		if pathInfo.IsInvalid {
+			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/api/directories/*", "400").Inc()
+			SendErrorResponse(w, logger, fmt.Errorf("invalid path"), http.StatusBadRequest)
+			return
+		}
 
 		// Get user ID from context
 		userID, ok := middleware.GetUserID(r.Context())

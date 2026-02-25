@@ -33,9 +33,8 @@ COPY --from=builder /build/callfs /callfs
 # Expose the default port
 EXPOSE 8443
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["/callfs", "health-check"] || exit 1
+# Health checks should be configured externally against /health.
+HEALTHCHECK NONE
 
 # Run the binary
 ENTRYPOINT ["/callfs"]

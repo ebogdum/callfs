@@ -3,9 +3,12 @@ package internalproxy
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +16,17 @@ import (
 
 	"github.com/ebogdum/callfs/metadata"
 )
+
+type proxiedFileInfo struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Type  string `json:"type"`
+	Size  int64  `json:"size"`
+	Mode  string `json:"mode"`
+	UID   int    `json:"uid"`
+	GID   int    `json:"gid"`
+	MTime string `json:"mtime"`
+}
 
 // InternalProxyAdapter implements the backends.Storage interface by proxying requests
 // to other CallFS instances for Local FS content
@@ -247,10 +261,43 @@ func (a *InternalProxyAdapter) StatOnInstance(ctx context.Context, instanceID, p
 		return nil, fmt.Errorf("proxy request failed with status %d", resp.StatusCode)
 	}
 
-	// Parse metadata from headers (this would need to be implemented based on actual header format)
-	// For now, return minimal metadata
+	size, _ := strconv.ParseInt(resp.Header.Get("X-CallFS-Size"), 10, 64)
+	uid, _ := strconv.Atoi(resp.Header.Get("X-CallFS-UID"))
+	gid, _ := strconv.Atoi(resp.Header.Get("X-CallFS-GID"))
+	typeHeader := resp.Header.Get("X-CallFS-Type")
+	if typeHeader == "" {
+		typeHeader = "file"
+	}
+	mTime := time.Now()
+	if mtimeHeader := resp.Header.Get("X-CallFS-MTime"); mtimeHeader != "" {
+		if parsedMTime, err := time.Parse("2006-01-02T15:04:05Z07:00", mtimeHeader); err == nil {
+			mTime = parsedMTime
+		}
+	}
+	mode := resp.Header.Get("X-CallFS-Mode")
+	if mode == "" {
+		mode = "0644"
+	}
+	cleanPath := path
+	if !strings.HasPrefix(cleanPath, "/") {
+		cleanPath = "/" + cleanPath
+	}
+	name := filepath.Base(cleanPath)
+	if cleanPath == "/" {
+		name = "/"
+	}
+
 	return &metadata.Metadata{
-		Path:        path,
+		Name:        name,
+		Path:        cleanPath,
+		Type:        typeHeader,
+		Size:        size,
+		Mode:        mode,
+		UID:         uid,
+		GID:         gid,
+		MTime:       mTime,
+		ATime:       mTime,
+		CTime:       mTime,
 		BackendType: "localfs",
 	}, nil
 }
@@ -300,10 +347,52 @@ func (a *InternalProxyAdapter) ListDirectoryOnInstance(ctx context.Context, inst
 		return nil, fmt.Errorf("proxy request failed with status %d", resp.StatusCode)
 	}
 
-	// Parse JSON response to get directory listing
-	// This would require implementing JSON unmarshaling for the directory listing format
-	// For now, return empty list
-	return []*metadata.Metadata{}, nil
+	var fileInfos []proxiedFileInfo
+	if err := json.NewDecoder(resp.Body).Decode(&fileInfos); err != nil {
+		return nil, fmt.Errorf("failed to decode directory listing response: %w", err)
+	}
+
+	children := make([]*metadata.Metadata, 0, len(fileInfos))
+	for _, item := range fileInfos {
+		itemPath := item.Path
+		if itemPath == "" {
+			itemPath = "/" + strings.TrimLeft(filepath.Join(path, item.Name), "/")
+		}
+		if !strings.HasPrefix(itemPath, "/") {
+			itemPath = "/" + itemPath
+		}
+
+		itemMTime := time.Now()
+		if item.MTime != "" {
+			if parsedMTime, err := time.Parse("2006-01-02T15:04:05Z07:00", item.MTime); err == nil {
+				itemMTime = parsedMTime
+			}
+		}
+
+		mode := item.Mode
+		if mode == "" {
+			mode = "0644"
+			if item.Type == "directory" {
+				mode = "0755"
+			}
+		}
+
+		children = append(children, &metadata.Metadata{
+			Name:        item.Name,
+			Path:        itemPath,
+			Type:        item.Type,
+			Size:        item.Size,
+			Mode:        mode,
+			UID:         item.UID,
+			GID:         item.GID,
+			MTime:       itemMTime,
+			ATime:       itemMTime,
+			CTime:       itemMTime,
+			BackendType: "localfs",
+		})
+	}
+
+	return children, nil
 }
 
 // CreateDirectory creates a directory by proxying to the target instance

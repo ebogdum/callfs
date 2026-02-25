@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -44,7 +45,7 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 		filePath, err := manager.ValidateAndInvalidateLink(ctx, token, userIP)
 		if err != nil {
 			logger.Warn("Invalid single-use link access attempt",
-				zap.String("token", token),
+				zap.String("token", links.TruncateToken(token)),
 				zap.String("user_ip", userIP),
 				zap.Error(err))
 
@@ -66,7 +67,7 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 		reader, err := engine.GetFile(ctx, filePath)
 		if err != nil {
 			logger.Error("Failed to get file for single-use link",
-				zap.String("token", token),
+				zap.String("token", links.TruncateToken(token)),
 				zap.String("file_path", filePath),
 				zap.String("user_ip", userIP),
 				zap.Error(err))
@@ -87,7 +88,7 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 		_, err = io.Copy(w, reader)
 		if err != nil {
 			logger.Error("Failed to stream file content for single-use link",
-				zap.String("token", token),
+				zap.String("token", links.TruncateToken(token)),
 				zap.String("file_path", filePath),
 				zap.String("user_ip", userIP),
 				zap.Error(err))
@@ -95,7 +96,7 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 		}
 
 		logger.Info("Successfully served file via single-use link",
-			zap.String("token", token),
+			zap.String("token", links.TruncateToken(token)),
 			zap.String("file_path", filePath),
 			zap.String("user_ip", userIP))
 	}
@@ -105,11 +106,10 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 func getUserIP(r *http.Request) string {
 	// Check X-Forwarded-For header (from load balancer/proxy)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// X-Forwarded-For can contain multiple IPs, take the first one
-		if ip, _, err := net.SplitHostPort(xff); err == nil {
-			return ip
+		if idx := strings.IndexByte(xff, ','); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
 		}
-		return xff
+		return strings.TrimSpace(xff)
 	}
 
 	// Check X-Real-IP header

@@ -37,12 +37,12 @@ func NewS3Adapter(cfg config.BackendConfig, logger *zap.Logger) (*S3Adapter, err
 			cfg.S3SecretKey,
 			"",
 		),
-		DisableSSL: aws.Bool(true), // MinIO typically uses HTTP
 	}
 
 	// Set custom endpoint if provided (for MinIO compatibility)
 	if cfg.S3Endpoint != "" {
 		awsConfig.Endpoint = aws.String(cfg.S3Endpoint)
+		awsConfig.DisableSSL = aws.Bool(true)                 // Custom MinIO-like endpoints typically use HTTP
 		awsConfig.S3ForcePathStyle = aws.Bool(true)              // Required for MinIO
 		awsConfig.S3DisableContentMD5Validation = aws.Bool(true) // Disable MD5 for MinIO
 	}

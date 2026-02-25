@@ -1,17 +1,19 @@
 package schema
 
 import (
+	"embed"
 	"fmt"
-	"path/filepath"
-	"runtime"
 
 	"database/sql"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
-	"github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/lib/pq"
 )
+
+//go:embed *.sql
+var migrationFS embed.FS
 
 // RunMigrations applies database migrations programmatically on startup
 func RunMigrations(dsn string) error {
@@ -27,16 +29,8 @@ func RunMigrations(dsn string) error {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Get the directory containing the migration files
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return fmt.Errorf("failed to get current file path")
-	}
-	schemaDir := filepath.Dir(currentFile)
-
-	// Create file source
-	sourceURL := fmt.Sprintf("file://%s", schemaDir)
-	source, err := (&file.File{}).Open(sourceURL)
+	// Create embedded migration source
+	source, err := iofs.New(migrationFS, ".")
 	if err != nil {
 		return fmt.Errorf("failed to open migration source: %w", err)
 	}
@@ -48,7 +42,7 @@ func RunMigrations(dsn string) error {
 	}
 
 	// Create migrator
-	m, err := migrate.NewWithInstance("file", source, "postgres", driver)
+	m, err := migrate.NewWithInstance("iofs", source, "postgres", driver)
 	if err != nil {
 		return fmt.Errorf("failed to create migrator: %w", err)
 	}

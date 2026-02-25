@@ -1,7 +1,6 @@
 package s3
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/metadata"
@@ -42,16 +42,10 @@ func (a *S3Adapter) Open(ctx context.Context, path string) (io.ReadCloser, error
 func (a *S3Adapter) Create(ctx context.Context, path string, reader io.Reader, size int64) error {
 	key := a.pathToKey(path)
 
-	// Read data into buffer for upload
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return fmt.Errorf("failed to read data: %w", err)
-	}
-
-	putInput := &s3.PutObjectInput{
+	putInput := &s3manager.UploadInput{
 		Bucket: aws.String(a.bucketName),
 		Key:    aws.String(key),
-		Body:   bytes.NewReader(data),
+		Body:   reader,
 	}
 
 	// Set server-side encryption if configured
@@ -72,7 +66,8 @@ func (a *S3Adapter) Create(ctx context.Context, path string, reader io.Reader, s
 		putInput.ContentType = aws.String(contentType)
 	}
 
-	_, err = a.client.PutObjectWithContext(ctx, putInput)
+	uploader := s3manager.NewUploaderWithClient(a.client)
+	_, err := uploader.UploadWithContext(ctx, putInput)
 	if err != nil {
 		return fmt.Errorf("failed to put object to S3: %w", err)
 	}

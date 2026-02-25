@@ -68,15 +68,14 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 		fileCtx, fileCancel := context.WithTimeout(r.Context(), cfg.FileOpTimeout)
 		defer fileCancel()
 
-		// Track HTTP metrics
-		defer func() {
-			duration := time.Since(start)
-			metrics.HTTPRequestDuration.WithLabelValues(r.Method, "/files/*").Observe(duration.Seconds())
-		}()
-
 		// Extract and parse path from URL
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
+		if pathInfo.IsInvalid {
+			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "400").Inc()
+			SendErrorResponse(w, logger, fmt.Errorf("invalid path"), http.StatusBadRequest)
+			return
+		}
 
 		// Get user ID from context
 		userID, ok := middleware.GetUserID(r.Context())

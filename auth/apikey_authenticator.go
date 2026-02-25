@@ -2,30 +2,30 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
 // APIKeyAuthenticator implements authentication using static API keys
 type APIKeyAuthenticator struct {
-	validKeys map[string]bool
+	validKeys            map[string]string
+	internalProxySecret string
 }
 
 // NewAPIKeyAuthenticator creates a new API key authenticator
 func NewAPIKeyAuthenticator(keys []string, internalProxySecret string) *APIKeyAuthenticator {
-	validKeys := make(map[string]bool)
+	validKeys := make(map[string]string)
+	userIndex := 1
 	for _, key := range keys {
 		if key != "" {
-			validKeys[key] = true
+			validKeys[key] = fmt.Sprintf("api-user-%d", userIndex)
+			userIndex++
 		}
 	}
 
-	// Also add the internal proxy secret as a valid key
-	if internalProxySecret != "" {
-		validKeys[internalProxySecret] = true
-	}
-
 	return &APIKeyAuthenticator{
-		validKeys: validKeys,
+		validKeys:            validKeys,
+		internalProxySecret: internalProxySecret,
 	}
 }
 
@@ -39,12 +39,14 @@ func (a *APIKeyAuthenticator) Authenticate(ctx context.Context, token string) (s
 		return "", ErrAuthenticationFailed
 	}
 
-	if !a.validKeys[token] {
+	if a.internalProxySecret != "" && token == a.internalProxySecret {
+		return "internal-proxy", nil
+	}
+
+	userID, ok := a.validKeys[token]
+	if !ok {
 		return "", ErrAuthenticationFailed
 	}
 
-	// For now, return a fixed user ID for any valid API key
-	// In a real implementation, you might map API keys to specific users
-	// For testing, return "root" to bypass Unix permission checks
-	return "root", nil
+	return userID, nil
 }

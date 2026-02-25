@@ -96,7 +96,7 @@ func TestPathSanitization(t *testing.T) {
 	}{
 		{"normal/file.txt", false},
 		{"../../../etc/passwd", true},
-		{"/etc/passwd", true},
+		{"/etc/passwd", false},
 		{"..\\..\\..\\windows\\system32", true},
 		{"dir/../../../etc/passwd", true},
 		{"./file.txt", false},
@@ -108,14 +108,13 @@ func TestPathSanitization(t *testing.T) {
 			// Test the ParseFilePath function
 			pathInfo := ParseFilePath(test.input)
 
-			// For malicious paths, they should either be cleaned to safe paths
-			// or result in paths that would be rejected by authorization
+			// For malicious paths, parser should explicitly mark them invalid.
 			if test.shouldBeBlocked {
-				// The path should be cleaned/sanitized
-				// We verify this by checking that dangerous sequences are removed
-				if pathInfo.FullPath == test.input {
-					t.Errorf("malicious path %s was not sanitized", test.input)
+				if !pathInfo.IsInvalid {
+					t.Errorf("malicious path %s was not marked invalid", test.input)
 				}
+			} else if pathInfo.IsInvalid {
+				t.Errorf("safe path %s was marked invalid", test.input)
 			}
 
 			// All paths should result in valid PathInfo structures

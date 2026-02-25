@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/knadh/koanf/parsers/json"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
@@ -43,6 +44,8 @@ func LoadConfigFromFile(configFilePath string) (AppConfig, error) {
 		var parser koanf.Parser
 		if strings.HasSuffix(configFilePath, ".yaml") || strings.HasSuffix(configFilePath, ".yml") {
 			parser = yaml.Parser()
+		} else if strings.HasSuffix(configFilePath, ".json") {
+			parser = json.Parser()
 		}
 
 		if err := k.Load(file.Provider(configFilePath), parser); err != nil {
@@ -56,6 +59,8 @@ func LoadConfigFromFile(configFilePath string) (AppConfig, error) {
 				var parser koanf.Parser
 				if strings.HasSuffix(configFile, ".yaml") || strings.HasSuffix(configFile, ".yml") {
 					parser = yaml.Parser()
+				} else if strings.HasSuffix(configFile, ".json") {
+					parser = json.Parser()
 				}
 
 				if err := k.Load(file.Provider(configFile), parser); err != nil {
@@ -68,8 +73,10 @@ func LoadConfigFromFile(configFilePath string) (AppConfig, error) {
 
 	// Load environment variables with CALLFS_ prefix
 	if err := k.Load(env.Provider("CALLFS_", ".", func(s string) string {
-		return strings.Replace(strings.ToLower(
-			strings.TrimPrefix(s, "CALLFS_")), "_", ".", -1)
+		key := strings.TrimPrefix(s, "CALLFS_")
+		key = strings.ToLower(key)
+		key = strings.ReplaceAll(key, "__", ".")
+		return key
 	}), nil); err != nil {
 		return AppConfig{}, fmt.Errorf("failed to load environment variables: %w", err)
 	}

@@ -45,6 +45,10 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 		// Extract and parse path from URL
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
+		if pathInfo.IsInvalid {
+			SendErrorResponse(w, logger, &customError{message: "invalid path"}, http.StatusBadRequest)
+			return
+		}
 
 		// Get user ID from context
 		userID, ok := middleware.GetUserID(r.Context())
@@ -152,6 +156,12 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 
 		} else {
 			// File creation (fileExists is false at this point)
+			size := r.ContentLength
+			if size < 0 {
+				// Chunked uploads don't provide a trusted content length here.
+				size = 0
+			}
+
 			md := &metadata.Metadata{
 				Name:        pathInfo.Name,
 				Type:        "file",
@@ -165,7 +175,7 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 			}
 
 			// Create new file
-			if err := engine.CreateFile(r.Context(), enginePath, r.Body, r.ContentLength, md); err != nil {
+			if err := engine.CreateFile(r.Context(), enginePath, r.Body, size, md); err != nil {
 				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 				return
 			}
@@ -174,7 +184,7 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 			logger.Info("File created",
 				zap.String("path", pathInfo.FullPath),
 				zap.String("user_id", userID),
-				zap.Int64("size", r.ContentLength))
+				zap.Int64("size", size))
 		}
 	}
 }
