@@ -63,7 +63,7 @@ func (e *Engine) CreateFile(ctx context.Context, path string, reader io.Reader, 
 		return fmt.Errorf("failed to acquire lock for file creation")
 	}
 	defer func() {
-		if err := e.lockManager.Release(ctx, lockKey); err != nil {
+		if err := e.lockManager.Release(context.Background(), lockKey); err != nil {
 			e.logger.Error("Failed to release lock", zap.String("lock_key", lockKey), zap.Error(err))
 		}
 	}()
@@ -74,12 +74,13 @@ func (e *Engine) CreateFile(ctx context.Context, path string, reader io.Reader, 
 	}
 
 	// Ensure parent directories exist
-	if err := e.ensureParentDirectories(ctx, path); err != nil {
+	if err := e.ensureParentDirectories(ctx, path, md.BackendType); err != nil {
 		return fmt.Errorf("failed to ensure parent directories: %w", err)
 	}
 
-	// Set instance ID for all files (both localfs and s3)
-	md.CallFSInstanceID = &e.currentInstanceID
+	if md.BackendType == "localfs" {
+		md.CallFSInstanceID = &e.currentInstanceID
+	}
 
 	// Create file in appropriate backend
 	storage := e.selectBackendByType(md.BackendType)
@@ -128,7 +129,7 @@ func (e *Engine) UpdateFile(ctx context.Context, path string, reader io.Reader, 
 		return fmt.Errorf("failed to acquire lock for file update")
 	}
 	defer func() {
-		if err := e.lockManager.Release(ctx, lockKey); err != nil {
+		if err := e.lockManager.Release(context.Background(), lockKey); err != nil {
 			e.logger.Error("Failed to release lock", zap.String("lock_key", lockKey), zap.Error(err))
 		}
 	}()
@@ -156,8 +157,7 @@ func (e *Engine) UpdateFile(ctx context.Context, path string, reader io.Reader, 
 	existingMd.MTime = time.Now()
 	existingMd.UpdatedAt = time.Now()
 
-	// Ensure instance ID is set for all files (including legacy files being updated)
-	if existingMd.CallFSInstanceID == nil {
+	if existingMd.CallFSInstanceID == nil && existingMd.BackendType == "localfs" {
 		existingMd.CallFSInstanceID = &e.currentInstanceID
 	}
 
@@ -189,7 +189,7 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 		return fmt.Errorf("failed to acquire lock for file deletion")
 	}
 	defer func() {
-		if err := e.lockManager.Release(ctx, lockKey); err != nil {
+		if err := e.lockManager.Release(context.Background(), lockKey); err != nil {
 			e.logger.Error("Failed to release lock", zap.String("lock_key", lockKey), zap.Error(err))
 		}
 	}()

@@ -71,24 +71,25 @@ func (lm *LinkManager) GenerateLink(ctx context.Context, filePath string, expiry
 
 	// Create single-use link record
 	link := &metadata.SingleUseLink{
-		Token:     token,
-		FilePath:  filePath,
-		Status:    "active",
-		ExpiresAt: time.Now().Add(expiryDuration),
-		CreatedAt: time.Now(),
+		Token:         token,
+		FilePath:      filePath,
+		Status:        "active",
+		ExpiresAt:     time.Now().Add(expiryDuration),
+		CreatedAt:     time.Now(),
+		HMACSignature: signature,
 	}
 
 	// Store in metadata store
 	if err := lm.metadataStore.CreateSingleUseLink(ctx, link); err != nil {
 		lm.logger.Error("Failed to store single-use link",
-			zap.String("token", token),
+			zap.String("token", TruncateToken(token)),
 			zap.String("file_path", filePath),
 			zap.Error(err))
 		return "", fmt.Errorf("failed to store link: %w", err)
 	}
 
 	lm.logger.Info("Generated single-use download link",
-		zap.String("token", token),
+		zap.String("token", TruncateToken(token)),
 		zap.String("file_path", filePath),
 		zap.Time("expires_at", link.ExpiresAt))
 
@@ -105,12 +106,12 @@ func (lm *LinkManager) ValidateAndInvalidateLink(ctx context.Context, token, use
 	link, err := lm.metadataStore.GetSingleUseLink(ctx, token)
 	if err != nil {
 		if errors.Is(err, metadata.ErrNotFound) {
-			lm.logger.Warn("Single-use link not found", zap.String("token", token))
+			lm.logger.Warn("Single-use link not found", zap.String("token", TruncateToken(token)))
 			metrics.SingleUseLinkConsumptionsTotal.WithLabelValues("not_found").Inc()
 			return "", ErrLinkNotFound
 		}
 		lm.logger.Error("Failed to retrieve single-use link",
-			zap.String("token", token),
+			zap.String("token", TruncateToken(token)),
 			zap.Error(err))
 		return "", fmt.Errorf("failed to retrieve link: %w", err)
 	}
@@ -118,7 +119,7 @@ func (lm *LinkManager) ValidateAndInvalidateLink(ctx context.Context, token, use
 	// Check if link has expired
 	if time.Now().After(link.ExpiresAt) {
 		lm.logger.Warn("Single-use link has expired",
-			zap.String("token", token),
+			zap.String("token", TruncateToken(token)),
 			zap.Time("expired_at", link.ExpiresAt))
 		metrics.SingleUseLinkConsumptionsTotal.WithLabelValues("expired").Inc()
 		return "", ErrLinkExpired
@@ -127,7 +128,7 @@ func (lm *LinkManager) ValidateAndInvalidateLink(ctx context.Context, token, use
 	// Check if link is still active
 	if link.Status != "active" {
 		lm.logger.Warn("Single-use link is not active",
-			zap.String("token", token),
+			zap.String("token", TruncateToken(token)),
 			zap.String("status", link.Status))
 		metrics.SingleUseLinkConsumptionsTotal.WithLabelValues("invalid").Inc()
 		return "", ErrLinkInvalid
@@ -136,7 +137,7 @@ func (lm *LinkManager) ValidateAndInvalidateLink(ctx context.Context, token, use
 	// Verify HMAC signature
 	if !lm.verifySignature(token, link.FilePath) {
 		lm.logger.Warn("Single-use link signature verification failed",
-			zap.String("token", token),
+			zap.String("token", TruncateToken(token)),
 			zap.String("file_path", link.FilePath))
 		metrics.SingleUseLinkConsumptionsTotal.WithLabelValues("invalid").Inc()
 		return "", ErrLinkInvalid
@@ -146,14 +147,14 @@ func (lm *LinkManager) ValidateAndInvalidateLink(ctx context.Context, token, use
 	now := time.Now()
 	if err := lm.metadataStore.UpdateSingleUseLink(ctx, token, "used", &now, &userIP); err != nil {
 		lm.logger.Error("Failed to mark single-use link as used",
-			zap.String("token", token),
+			zap.String("token", TruncateToken(token)),
 			zap.String("user_ip", userIP),
 			zap.Error(err))
 		return "", fmt.Errorf("failed to invalidate link: %w", err)
 	}
 
 	lm.logger.Info("Single-use link consumed",
-		zap.String("token", token),
+		zap.String("token", TruncateToken(token)),
 		zap.String("file_path", link.FilePath),
 		zap.String("user_ip", userIP),
 		zap.Time("used_at", now))
@@ -162,6 +163,15 @@ func (lm *LinkManager) ValidateAndInvalidateLink(ctx context.Context, token, use
 	metrics.SingleUseLinkConsumptionsTotal.WithLabelValues("success").Inc()
 
 	return link.FilePath, nil
+}
+
+// TruncateToken returns a redacted token suitable for logs.
+func TruncateToken(token string) string {
+	if len(token) <= 8 {
+		return token
+	}
+
+	return token[:8] + "..."
 }
 
 // verifySignature verifies the HMAC signature in the token.

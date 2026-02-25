@@ -87,7 +87,7 @@ func (e *Engine) CreateDirectory(ctx context.Context, path string, md *metadata.
 		return fmt.Errorf("failed to acquire lock for directory creation")
 	}
 	defer func() {
-		if err := e.lockManager.Release(ctx, lockKey); err != nil {
+		if err := e.lockManager.Release(context.Background(), lockKey); err != nil {
 			e.logger.Error("Failed to release lock", zap.String("lock_key", lockKey), zap.Error(err))
 		}
 	}()
@@ -98,7 +98,7 @@ func (e *Engine) CreateDirectory(ctx context.Context, path string, md *metadata.
 	}
 
 	// Ensure parent directories exist
-	if err := e.ensureParentDirectories(ctx, path); err != nil {
+	if err := e.ensureParentDirectories(ctx, path, md.BackendType); err != nil {
 		return fmt.Errorf("failed to ensure parent directories: %w", err)
 	}
 

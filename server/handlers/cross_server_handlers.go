@@ -32,6 +32,10 @@ func V1DeleteFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logge
 		// Extract and parse path from URL
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
+		if pathInfo.IsInvalid {
+			SendErrorResponse(w, logger, &customError{message: "invalid path"}, http.StatusBadRequest)
+			return
+		}
 
 		// Get user ID from context
 		userID, ok := middleware.GetUserID(r.Context())
@@ -122,6 +126,10 @@ func V1HeadFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logger 
 		// Extract and parse path from URL
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
+		if pathInfo.IsInvalid {
+			SendErrorResponse(w, logger, &customError{message: "invalid path"}, http.StatusBadRequest)
+			return
+		}
 
 		// Get user ID from context
 		userID, ok := middleware.GetUserID(r.Context())

@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -41,7 +42,6 @@ func NewRouter(
 	r.Use(authMiddleware.V1RequestIDMiddleware())
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(authMiddleware.V1SecurityHeaders())
 
 	// Custom logging and metrics middleware
@@ -53,22 +53,27 @@ func NewRouter(
 			next.ServeHTTP(ww, r)
 
 			duration := time.Since(start)
+			routePattern := chi.RouteContext(r.Context()).RoutePattern()
+			if routePattern == "" {
+				routePattern = "unmatched"
+			}
+			statusCode := strconv.Itoa(ww.Status())
 
 			// Record metrics
 			metrics.HTTPRequestsTotal.WithLabelValues(
 				r.Method,
-				r.URL.Path,
-				http.StatusText(ww.Status()),
+				routePattern,
+				statusCode,
 			).Inc()
 
 			metrics.HTTPRequestDuration.WithLabelValues(
 				r.Method,
-				r.URL.Path,
+				routePattern,
 			).Observe(duration.Seconds())
 
 			logger.Info("HTTP request",
 				zap.String("method", r.Method),
-				zap.String("path", r.URL.Path),
+				zap.String("path", routePattern),
 				zap.Int("status", ww.Status()),
 				zap.Duration("duration", duration),
 				zap.String("user_agent", r.UserAgent()),
@@ -114,7 +119,7 @@ func NewRouter(
 			// Apply rate limiting specifically to link generation (100 requests per second, burst of 1)
 			linkRateLimiter := rate.NewLimiter(100, 1)
 			r.With(authMiddleware.V1RateLimitMiddleware(linkRateLimiter, logger)).
-				Post("/generate", linksHandlers.V1GenerateLinkHandler(linkManager, apiHost, logger))
+				Post("/generate", linksHandlers.V1GenerateLinkHandler(linkManager, authorizer, apiHost, logger))
 		})
 	})
 

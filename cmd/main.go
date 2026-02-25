@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
@@ -79,6 +80,7 @@ var configFilePath string
 func main() {
 	// Add flags to server command
 	serverCmd.Flags().StringVarP(&configFilePath, "config", "c", "", "Path to configuration file")
+	configCmd.PersistentFlags().StringVarP(&configFilePath, "config", "c", "", "Path to configuration file")
 
 	// Add subcommands
 	configCmd.AddCommand(validateCmd)
@@ -241,9 +243,26 @@ func runServer(cmd *cobra.Command, args []string) error {
 	srv := &http.Server{
 		Addr:         cfg.Server.ListenAddr,
 		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  120 * time.Second,
+	}
+
+	var metricsSrv *http.Server
+	if cfg.Metrics.ListenAddr != "" {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", promhttp.Handler())
+		metricsSrv = &http.Server{
+			Addr:    cfg.Metrics.ListenAddr,
+			Handler: metricsMux,
+		}
+
+		go func() {
+			logger.Info("Starting metrics server", zap.String("addr", cfg.Metrics.ListenAddr))
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Fatal("Failed to start metrics server", zap.Error(err))
+			}
+		}()
 	}
 
 	// Start server in a goroutine
@@ -271,6 +290,13 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if metricsSrv != nil {
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			logger.Error("Metrics server forced to shutdown", zap.Error(err))
+			return err
+		}
+	}
+
 	logger.Info("Server exited gracefully")
 	return nil
 }
@@ -279,7 +305,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 func validateConfig(cmd *cobra.Command, args []string) error {
 	fmt.Println("Validating configuration...")
 
-	cfg, err := config.LoadConfig()
+	cfg, err := config.LoadConfigFromFile(configFilePath)
 	if err != nil {
 		fmt.Printf("Configuration validation failed: %v\n", err)
 		return err

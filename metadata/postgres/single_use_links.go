@@ -18,7 +18,7 @@ func (s *PostgresStore) GetSingleUseLink(ctx context.Context, token string) (*me
 	var usedByIP sql.NullString
 
 	query := `
-		SELECT token, file_path, created_at, expires_at, status, used_at, used_by_ip
+		SELECT token, file_path, created_at, expires_at, status, used_at, used_by_ip, hmac_signature
 		FROM single_use_links
 		WHERE token = $1`
 
@@ -30,6 +30,7 @@ func (s *PostgresStore) GetSingleUseLink(ctx context.Context, token string) (*me
 		&link.Status,
 		&usedAt,
 		&usedByIP,
+		&link.HMACSignature,
 	)
 
 	if err != nil {
@@ -53,8 +54,8 @@ func (s *PostgresStore) GetSingleUseLink(ctx context.Context, token string) (*me
 // CreateSingleUseLink creates a new single-use download link
 func (s *PostgresStore) CreateSingleUseLink(ctx context.Context, link *metadata.SingleUseLink) error {
 	query := `
-		INSERT INTO single_use_links (token, file_path, created_at, expires_at, status)
-		VALUES ($1, $2, $3, $4, $5)`
+		INSERT INTO single_use_links (token, file_path, created_at, expires_at, status, hmac_signature)
+		VALUES ($1, $2, $3, $4, $5, $6)`
 
 	_, err := s.db.ExecContext(ctx, query,
 		link.Token,
@@ -62,6 +63,7 @@ func (s *PostgresStore) CreateSingleUseLink(ctx context.Context, link *metadata.
 		link.CreatedAt,
 		link.ExpiresAt,
 		link.Status,
+		link.HMACSignature,
 	)
 
 	if err != nil {
@@ -83,15 +85,7 @@ func (s *PostgresStore) UpdateSingleUseLink(ctx context.Context, token string, s
 		usedByIPArg = sql.NullString{String: *usedByIP, Valid: true}
 	}
 
-	// Update status and usage information
-	query := `
-		UPDATE single_use_links 
-		SET status = $2,
-		    used_at = $3,
-		    used_by_ip = $4
-		WHERE token = $1`
-
-	result, err := s.db.ExecContext(ctx, query, token, status, usedAtArg, usedByIPArg)
+	result, err := s.db.ExecContext(ctx, _SQL_UPDATE_SINGLE_USE_LINK, token, status, usedAtArg, usedByIPArg)
 	if err != nil {
 		return fmt.Errorf("failed to update single-use link: %w", err)
 	}

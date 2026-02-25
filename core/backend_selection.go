@@ -61,7 +61,7 @@ func (e *Engine) selectBackendByType(backendType string) backends.Storage {
 }
 
 // ensureParentDirectories creates parent directories if they don't exist
-func (e *Engine) ensureParentDirectories(ctx context.Context, path string) error {
+func (e *Engine) ensureParentDirectories(ctx context.Context, path string, backendType string) error {
 	parentPath := filepath.Dir(path)
 	if parentPath == "/" || parentPath == "." {
 		return nil // Root directory should always exist
@@ -73,8 +73,12 @@ func (e *Engine) ensureParentDirectories(ctx context.Context, path string) error
 	}
 
 	// Recursively ensure grandparent exists
-	if err := e.ensureParentDirectories(ctx, parentPath); err != nil {
+	if err := e.ensureParentDirectories(ctx, parentPath, backendType); err != nil {
 		return err
+	}
+
+	if backendType == "" {
+		backendType = "localfs"
 	}
 
 	// Create parent directory
@@ -84,7 +88,7 @@ func (e *Engine) ensureParentDirectories(ctx context.Context, path string) error
 		Mode:        "0755",
 		UID:         1000,
 		GID:         1000,
-		BackendType: "localfs", // Default to local FS for auto-created directories
+		BackendType: backendType,
 	}
 
 	return e.CreateDirectory(ctx, parentPath, parentMd)

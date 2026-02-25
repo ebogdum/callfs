@@ -37,6 +37,10 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 		// Extract and parse path from URL
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
+		if pathInfo.IsInvalid {
+			SendErrorResponse(w, logger, &customError{message: "invalid path"}, http.StatusBadRequest)
+			return
+		}
 
 		// PUT is only for files, not directories
 		if pathInfo.IsDirectory {
@@ -57,6 +61,12 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 		enginePath := pathInfo.FullPath
 		if pathInfo.IsDirectory && enginePath != "/" {
 			enginePath = strings.TrimSuffix(enginePath, "/")
+		}
+
+		size := r.ContentLength
+		if size < 0 {
+			// Chunked uploads don't provide a trusted content length here.
+			size = 0
 		}
 
 		// Authorize write access FIRST
@@ -87,7 +97,7 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 				}
 
 				// Create the file locally
-				if err := engine.CreateFile(r.Context(), enginePath, r.Body, r.ContentLength, existingMd); err != nil {
+				if err := engine.CreateFile(r.Context(), enginePath, r.Body, size, existingMd); err != nil {
 					SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 					return
 				}
@@ -106,7 +116,7 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 			// Check if file is on this instance or needs cross-server proxy
 			if existingMd.CallFSInstanceID != nil && *existingMd.CallFSInstanceID != currentInstanceID {
 				// File is on another server - use the internal proxy backend
-				if err := engine.UpdateFileOnInstance(r.Context(), *existingMd.CallFSInstanceID, enginePath, r.Body, r.ContentLength); err != nil {
+				if err := engine.UpdateFileOnInstance(r.Context(), *existingMd.CallFSInstanceID, enginePath, r.Body, size); err != nil {
 					logger.Error("Failed to update file via cross-server proxy",
 						zap.String("instance_id", *existingMd.CallFSInstanceID),
 						zap.String("path", enginePath),
@@ -121,12 +131,12 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 					zap.String("path", pathInfo.FullPath),
 					zap.String("user_id", userID),
 					zap.String("target_instance", *existingMd.CallFSInstanceID),
-					zap.Int64("size", r.ContentLength))
+					zap.Int64("size", size))
 				return
 			}
 
 			// File exists on this instance - update locally
-			if err := engine.UpdateFile(r.Context(), enginePath, r.Body, r.ContentLength, existingMd); err != nil {
+			if err := engine.UpdateFile(r.Context(), enginePath, r.Body, size, existingMd); err != nil {
 				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 				return
 			}
@@ -136,7 +146,7 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 		logger.Info("File updated locally",
 			zap.String("path", pathInfo.FullPath),
 			zap.String("user_id", userID),
-			zap.Int64("size", r.ContentLength),
+			zap.Int64("size", size),
 			zap.Int("status_code", statusCode))
 	}
 }

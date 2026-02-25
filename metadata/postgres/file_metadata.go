@@ -105,13 +105,9 @@ func (s *PostgresStore) Create(ctx context.Context, md *metadata.Metadata) error
 
 // Update updates an existing inode
 func (s *PostgresStore) Update(ctx context.Context, md *metadata.Metadata) error {
-	var parentID sql.NullInt64
 	var callfsInstanceID sql.NullString
 	var symlinkTarget sql.NullString
 
-	if md.ParentID != nil {
-		parentID = sql.NullInt64{Int64: *md.ParentID, Valid: true}
-	}
 	if md.CallFSInstanceID != nil {
 		callfsInstanceID = sql.NullString{String: *md.CallFSInstanceID, Valid: true}
 	}
@@ -120,10 +116,6 @@ func (s *PostgresStore) Update(ctx context.Context, md *metadata.Metadata) error
 	}
 
 	_, err := s.db.ExecContext(ctx, _SQL_UPDATE_INODE,
-		parentID,
-		md.Name,
-		md.Path,
-		md.Type,
 		md.Size,
 		md.Mode,
 		md.UID,
@@ -134,7 +126,7 @@ func (s *PostgresStore) Update(ctx context.Context, md *metadata.Metadata) error
 		md.BackendType,
 		callfsInstanceID,
 		symlinkTarget,
-		md.ID,
+		md.Path,
 	)
 
 	if err != nil {
@@ -175,7 +167,23 @@ func (s *PostgresStore) ListChildren(ctx context.Context, parentPath string) ([]
 		WHERE path LIKE $1 || '/%' AND path NOT LIKE $1 || '/%/%'
 		ORDER BY type DESC, name ASC`
 
-	rows, err := s.db.QueryContext(ctx, query, parentPath)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+
+	if parentPath == "/" {
+		rootQuery := `
+			SELECT id, parent_id, name, path, type, size, mode, uid, gid,
+			       atime, mtime, ctime, backend_type, callfs_instance_id,
+			       symlink_target, created_at, updated_at
+			FROM inodes
+			WHERE path LIKE '/%' AND path NOT LIKE '/%/%' AND path != '/'
+			ORDER BY type DESC, name ASC`
+		rows, err = s.db.QueryContext(ctx, rootQuery)
+	} else {
+		rows, err = s.db.QueryContext(ctx, query, parentPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to list children: %w", err)
 	}

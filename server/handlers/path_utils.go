@@ -12,6 +12,7 @@ type PathInfo struct {
 	ParentPath  string // The parent directory path (e.g., "/some/path/here/and")
 	Name        string // The file or directory name (e.g., "file" or "dir")
 	IsDirectory bool   // True if path ends with "/" indicating directory
+	IsInvalid   bool   // True when path failed validation and should be rejected
 }
 
 // ParseFilePath extracts path information from a URL path according to new rules:
@@ -31,18 +32,6 @@ func ParseFilePath(urlPath string) PathInfo {
 	// Remove trailing slash for processing
 	cleanPath := strings.TrimSuffix(urlPath, "/")
 
-	// SECURITY: Validate the relative path to prevent traversal attacks
-	// Note: We work with relative paths here, SafeJoin in backends handles root joining
-	if err := pathutil.ValidatePath(cleanPath); err != nil {
-		// If path validation fails, return a safe empty path that will result in 403
-		return PathInfo{
-			FullPath:    "/",
-			ParentPath:  "/",
-			Name:        "",
-			IsDirectory: true,
-		}
-	}
-
 	// Handle root case
 	if cleanPath == "" || cleanPath == "." {
 		return PathInfo{
@@ -50,6 +39,29 @@ func ParseFilePath(urlPath string) PathInfo {
 			ParentPath:  "/",
 			Name:        "",
 			IsDirectory: true, // Root is always a directory
+		}
+	}
+
+	if strings.Contains(cleanPath, "\\") {
+		return PathInfo{
+			FullPath:    "/",
+			ParentPath:  "/",
+			Name:        "",
+			IsDirectory: true,
+			IsInvalid:   true,
+		}
+	}
+
+	// SECURITY: Validate the relative path to prevent traversal attacks
+	// Note: We work with relative paths here, SafeJoin in backends handles root joining
+	if err := pathutil.ValidatePath(cleanPath); err != nil {
+		// Mark invalid path so callers can return 400 Bad Request.
+		return PathInfo{
+			FullPath:    "/",
+			ParentPath:  "/",
+			Name:        "",
+			IsDirectory: true,
+			IsInvalid:   true,
 		}
 	}
 

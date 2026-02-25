@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/ebogdum/callfs/auth"
 	"github.com/ebogdum/callfs/links"
 	"github.com/ebogdum/callfs/server/handlers"
+	"github.com/ebogdum/callfs/server/middleware"
 	"go.uber.org/zap"
 )
 
@@ -38,9 +41,15 @@ type GenerateLinkResponse struct {
 // @Failure 401 {object} handlers.ErrorResponse "Unauthorized"
 // @Failure 500 {object} handlers.ErrorResponse "Internal Server Error"
 // @Router /v1/links/generate [post]
-func V1GenerateLinkHandler(manager *links.LinkManager, apiHost string, logger *zap.Logger) http.HandlerFunc {
+func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorizer, apiHost string, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+
+		userID, ok := middleware.GetUserID(ctx)
+		if !ok {
+			handlers.SendErrorResponse(w, logger, auth.ErrAuthenticationFailed, http.StatusUnauthorized)
+			return
+		}
 
 		// Parse JSON request
 		var req GenerateLinkRequest
@@ -56,6 +65,22 @@ func V1GenerateLinkHandler(manager *links.LinkManager, apiHost string, logger *z
 			return
 		}
 
+		pathInfo := handlers.ParseFilePath(strings.TrimPrefix(req.Path, "/"))
+		if pathInfo.IsInvalid {
+			handlers.SendErrorResponse(w, logger, errors.New("invalid path"), http.StatusBadRequest)
+			return
+		}
+
+		enginePath := pathInfo.FullPath
+		if pathInfo.IsDirectory && enginePath != "/" {
+			enginePath = strings.TrimSuffix(enginePath, "/")
+		}
+
+		if err := authorizer.Authorize(ctx, userID, enginePath, auth.ReadPerm); err != nil {
+			handlers.SendErrorResponse(w, logger, err, http.StatusForbidden)
+			return
+		}
+
 		if req.ExpirySeconds <= 0 || req.ExpirySeconds > 86400 { // Max 24 hours
 			handlers.SendErrorResponse(w, logger, errors.New("expiry must be between 1 and 86400 seconds"), http.StatusBadRequest)
 			return
@@ -65,10 +90,10 @@ func V1GenerateLinkHandler(manager *links.LinkManager, apiHost string, logger *z
 		expiryDuration := time.Duration(req.ExpirySeconds) * time.Second
 
 		// Generate single-use link
-		token, err := manager.GenerateLink(ctx, req.Path, expiryDuration)
+		token, err := manager.GenerateLink(ctx, enginePath, expiryDuration)
 		if err != nil {
 			logger.Error("Failed to generate single-use link",
-				zap.String("path", req.Path),
+				zap.String("path", enginePath),
 				zap.Int("expiry_seconds", req.ExpirySeconds),
 				zap.Error(err))
 			handlers.SendErrorResponse(w, logger, errors.New("failed to generate download link"), http.StatusInternalServerError)
@@ -95,8 +120,9 @@ func V1GenerateLinkHandler(manager *links.LinkManager, apiHost string, logger *z
 		}
 
 		logger.Info("Generated single-use download link",
-			zap.String("path", req.Path),
-			zap.String("token", token),
+			zap.String("path", enginePath),
+			zap.String("user_id", userID),
+			zap.String("token", links.TruncateToken(token)),
 			zap.String("url", downloadURL),
 			zap.Duration("expiry", expiryDuration))
 	}
