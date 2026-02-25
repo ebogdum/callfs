@@ -281,11 +281,11 @@ func validateConfig(cmd *cobra.Command, args []string) error {
 
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		fmt.Printf("❌ Configuration validation failed: %v\n", err)
+		fmt.Printf("Configuration validation failed: %v\n", err)
 		return err
 	}
 
-	fmt.Println("✅ Configuration is valid")
+	fmt.Println("Configuration is valid")
 	fmt.Printf("Instance ID: %s\n", cfg.InstanceDiscovery.InstanceID)
 	fmt.Printf("Listen Address: %s\n", cfg.Server.ListenAddr)
 	fmt.Printf("Metadata Store DSN: %s\n", maskDSN(cfg.MetadataStore.DSN))
