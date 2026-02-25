@@ -21,6 +21,9 @@ type Engine struct {
 	lockManager          locks.Manager
 	currentInstanceID    string
 	peerEndpoints        map[string]string // Instance ID -> endpoint URL
+	replicationEnabled   bool
+	replicaBackend       string
+	requireReplicaAck    bool
 	metadataCache        *MetadataCache
 	logger               *zap.Logger
 }
@@ -35,6 +38,9 @@ func NewEngine(
 	lockManager locks.Manager,
 	currentInstanceID string,
 	peerEndpoints map[string]string,
+	replicationEnabled bool,
+	replicaBackend string,
+	requireReplicaAck bool,
 	logger *zap.Logger,
 ) *Engine {
 	return &Engine{
@@ -46,6 +52,9 @@ func NewEngine(
 		lockManager:          lockManager,
 		currentInstanceID:    currentInstanceID,
 		peerEndpoints:        peerEndpoints,
+		replicationEnabled:   replicationEnabled,
+		replicaBackend:       replicaBackend,
+		requireReplicaAck:    requireReplicaAck,
 		metadataCache:        NewMetadataCache(5*time.Minute, 1000), // 5 min TTL, max 1000 entries
 		logger:               logger,
 	}

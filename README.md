@@ -12,9 +12,9 @@ CallFS is an ultra-lightweight, high-performance REST API filesystem that provid
 - **Cross-Server Operations**: Operations like move, copy, and delete work across the cluster with automatic conflict detection and resolution.
 - **High-Performance API**: A clean REST API for all filesystem operations, built for low latency and high throughput.
 - **Secure, Ephemeral Links**: Generate secure, time-limited, single-use download links for any file.
-- **Distributed Locking**: A Redis-based Distributed Lock Manager ensures data consistency for concurrent operations across the cluster.
-- **Rich Metadata Store**: PostgreSQL backend for robust, queryable, and persistent file metadata.
-- **Comprehensive Security**: Enforces TLS, API key authentication, and a full Unix permission model for authorization.
+- **Distributed Locking**: Supports Redis or local lock managers depending on deployment mode.
+- **Rich Metadata Store**: Supports PostgreSQL, SQLite, Redis, and Raft-backed metadata coordination.
+- **Comprehensive Security**: Supports HTTP/HTTPS modes, API key authentication, and Unix-style permission authorization.
 - **First-Class Observability**: Structured logging (JSON/console) and extensive Prometheus metrics for deep operational insight.
 - **Zero-Copy I/O**: Efficiently streams large files without buffering them in memory, ensuring a low memory footprint.
 

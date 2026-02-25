@@ -27,20 +27,21 @@ Using Docker Compose is the fastest way to get CallFS and its dependencies runni
     nano config.yaml
     ```
 
-3.  **Start the services:**
-    This command will start CallFS, PostgreSQL, and Redis containers in detached mode.
+3.  **Start dependency services:**
+    This command starts PostgreSQL and Redis in detached mode.
     ```bash
-    docker-compose up -d
+    docker-compose up -d postgres redis
     ```
 
-4.  **Verify the installation:**
-    Check the logs to ensure everything started correctly.
+4.  **Verify dependencies and run CallFS:**
+    Confirm dependencies are healthy, then start the CallFS binary.
     ```bash
-    docker-compose logs -f callfs
+    docker-compose ps
+    ./callfs server --config ./config.yaml
     ```
-    You can also check the health endpoint:
+    In another terminal, check the health endpoint:
     ```bash
-    curl -k https://localhost:8443/health
+    curl http://localhost:8443/health
     ```
 
 ## 2. Installation from Source
@@ -98,6 +99,7 @@ GRANT ALL PRIVILEGES ON DATABASE callfs TO callfs_user;
 Update your `config.yaml` with the correct database DSN:
 ```yaml
 metadata_store:
+    type: "postgres"
   dsn: "postgres://callfs_user:a-very-secure-password@localhost:5432/callfs?sslmode=disable"
 ```
 
@@ -106,6 +108,7 @@ metadata_store:
 Ensure your Redis instance is running and update `config.yaml` with the connection details:
 ```yaml
 dlm:
+    type: "redis"
   redis_addr: "localhost:6379"
   redis_password: "your-redis-password" # Leave empty if no password
 ```

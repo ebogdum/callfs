@@ -1,11 +1,11 @@
 # Enhanced Cross-Server Operations
 
-In a distributed CallFS cluster, "enhanced" API operations provide intelligent routing and conflict management, making the cluster behave like a single, unified filesystem. This document details the functionality of these crucial features.
+In a distributed CallFS cluster, "enhanced" API operations provide routing and conflict management. In Raft metadata mode, metadata changes are committed via consensus while clients still write through any node.
 
 ## Core Concepts
 
 - **Automatic Routing**: When you make a request to one node for a file that is stored on another node's local filesystem, CallFS automatically proxies the request to the correct node. This is transparent to the client.
-- **Conflict Detection**: When you try to create a file or directory, CallFS checks the entire cluster to prevent accidental overwrites of data that exists on other nodes.
+- **Conflict Detection**: Conflict checks are based on synchronized metadata state (shared metadata store or Raft metadata cluster).
 
 These features apply to the `HEAD`, `POST`, `PUT`, and `DELETE` methods on the `/v1/files/{path}` endpoint.
 
@@ -13,7 +13,7 @@ These features apply to the `HEAD`, `POST`, `PUT`, and `DELETE` methods on the `
 
 ### `POST /v1/files/{path}` - Create with Conflict Detection
 
-When you `POST` to create a new file or directory, CallFS performs a cluster-wide check.
+When you `POST` to create a new file or directory, CallFS checks synchronized metadata before creating.
 
 - **If the path is available everywhere**: The resource is created on the default backend of the node that received the request.
 - **If the path already exists on another node**: The API returns a `409 Conflict` error. The response body provides details about the conflict, including which node holds the resource and a suggestion to use `PUT` for updates.
@@ -37,7 +37,7 @@ When you `PUT` to update a file, CallFS first looks up the file's location in th
 - **If the file is on a different node**: The request (including the data payload) is automatically proxied to the correct node.
 - **If the file does not exist**: It is created on the default backend of the current node.
 
-This ensures that you can update any file by connecting to any node in the cluster, without needing to know where the file is physically stored.
+This ensures that you can update any file by connecting to any node in the cluster. Byte storage remains on the owner node/backend and is proxied as needed.
 
 ### `DELETE /v1/files/{path}` - Delete with Automatic Routing
 

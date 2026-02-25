@@ -7,9 +7,12 @@ func DefaultAppConfig() AppConfig {
 	return AppConfig{
 		Server: ServerConfig{
 			ListenAddr:        ":8443",
+			Protocol:          "https",
 			ExternalURL:       "localhost:8443",
 			CertFile:          "server.crt",
 			KeyFile:           "server.key",
+			EnableQUIC:        false,
+			QUICListenAddr:    ":8443",
 			ReadTimeout:       30 * time.Second,
 			WriteTimeout:      30 * time.Second,
 			FileOpTimeout:     10 * time.Second,
@@ -40,11 +43,37 @@ func DefaultAppConfig() AppConfig {
 			InternalProxySkipTLSVerify: false,     // Default to strict TLS verification
 		},
 		MetadataStore: MetadataStoreConfig{
-			DSN: "postgres://callfs:callfs@localhost/callfs?sslmode=disable",
+			Type:           "postgres",
+			DSN:            "postgres://callfs:callfs@localhost/callfs?sslmode=disable",
+			SQLitePath:     "./callfs.sqlite3",
+			RedisAddr:      "localhost:6379",
+			RedisPassword:  "",
+			RedisDB:        0,
+			RedisKeyPrefix: "callfs:",
+		},
+		Raft: RaftConfig{
+			Enabled:             false,
+			NodeID:              "callfs-node-1",
+			BindAddr:            "127.0.0.1:7000",
+			DataDir:             "./raft",
+			Bootstrap:           false,
+			Peers:               make(map[string]string),
+			APIPeerEndpoints:    make(map[string]string),
+			ApplyTimeout:        10 * time.Second,
+			ForwardTimeout:      10 * time.Second,
+			SnapshotInterval:    60 * time.Second,
+			SnapshotThreshold:   256,
+			RetainSnapshotCount: 2,
 		},
 		DLM: DLMConfig{
+			Type:          "redis",
 			RedisAddr:     "localhost:6379",
 			RedisPassword: "",
+		},
+		HA: HAConfig{
+			ReplicationEnabled:    false,
+			ReplicaBackend:        "",
+			RequireReplicaSuccess: false,
 		},
 		InstanceDiscovery: InstanceDiscoveryConfig{
 			InstanceID:    "callfs-instance-1",

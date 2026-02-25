@@ -5,11 +5,13 @@ CallFS is designed for horizontal scalability and high availability. By deployin
 ## Architecture Overview
 
 A CallFS cluster consists of:
-- **Multiple CallFS Instances**: Stateless application servers that handle API requests.
-- **A Shared Metadata Store**: A centralized PostgreSQL database (which should be clustered for production) that stores all file metadata.
-- **A Shared Distributed Lock Manager**: A Redis cluster that coordinates concurrent operations across all instances.
-- **An Internal Proxy Network**: A peer-to-peer communication layer that allows instances to route operations to each other.
-- **A Load Balancer**: Distributes incoming traffic across the CallFS instances.
+- **Multiple CallFS Instances**: application servers that handle API requests.
+- **Metadata Coordination Layer** (choose one):
+  - **Shared metadata store mode** (`postgres`, `sqlite`, `redis`): all nodes must point to the same metadata authority.
+  - **Raft consensus mode** (`metadata_store.type=raft`): each node has local Raft state; metadata is synchronized via replicated log and snapshots.
+- **A Distributed Lock Manager**: Redis (or local for non-distributed setups).
+- **An Internal Proxy Network**: peer-to-peer HTTP(S) routing between nodes.
+- **A Load Balancer**: distributes incoming traffic across CallFS instances.
 
 ```
           ┌───────────────┐
@@ -36,11 +38,30 @@ A CallFS cluster consists of:
 
 To configure a cluster, each CallFS node needs to know about its peers.
 
-**Key Configuration Parameters:**
+**Key Configuration Parameters (shared metadata mode):**
 - `instance_discovery.instance_id`: A unique name for each node.
 - `instance_discovery.peer_endpoints`: A map of all other nodes in the cluster, mapping their `instance_id` to their internal network address.
 - `auth.internal_proxy_secret`: A strong, shared secret used for authenticating communication between nodes.
-- `metadata_store.dsn` and `dlm.redis_addr`: Must point to the shared PostgreSQL and Redis clusters.
+- `metadata_store.*` and `dlm.*`: must point to shared metadata/lock infrastructure.
+
+**Key Configuration Parameters (Raft metadata mode):**
+- `metadata_store.type: raft`
+- `raft.node_id`, `raft.bind_addr`, `raft.data_dir`
+- `raft.peers`: node ID -> Raft transport address
+- `raft.api_peer_endpoints`: node ID -> HTTP(S) API endpoint used for follower-to-leader forwarding
+- `raft.bootstrap`: enable on exactly one node for first cluster bootstrap
+
+### Easy Node Join (Raft)
+
+After starting a new node, you can add it to the existing cluster with one command:
+
+```bash
+callfs cluster join \
+  --config /etc/callfs/config.yaml \
+  --leader http://callfs-node-1.internal:8443
+```
+
+The command reads `raft.node_id`, `raft.bind_addr`, `server.external_url`, and `auth.internal_proxy_secret` from the config file (or flags if provided) and calls the leader join endpoint.
 
 ### Example Configuration
 
@@ -67,8 +88,9 @@ instance_discovery:
 
 The true power of a CallFS cluster lies in its ability to handle operations that span multiple nodes seamlessly.
 
-- **Automatic Routing**: When a request for a file arrives at `Node A`, but the file is stored on the local filesystem of `Node B`, `Node A` will automatically proxy the request to `Node B`. This is completely transparent to the client.
-- **Conflict Detection**: When creating a new file or directory (`POST`), CallFS checks the entire cluster to ensure the path does not already exist on any other node. If it does, it returns a `409 Conflict` error, preventing data overwrites.
+- **Write Anywhere**: Clients can write to any node. In Raft mode, followers forward metadata mutations to the leader for consensus commit.
+- **Ownership-based Data Routing**: File bytes are written on the file owner node/backend. Other nodes proxy reads/writes to that owner.
+- **Automatic Routing**: Requests targeting data owned by another node are transparently proxied to that node.
 
 ## High Availability
 
@@ -79,8 +101,8 @@ The true power of a CallFS cluster lies in its ability to handle operations that
 
 You can deploy CallFS clusters in multiple geographic regions to reduce latency for users around the world.
 
-- **Architecture**: Each region would have its own cluster of CallFS nodes, a replica of the PostgreSQL database, and a Redis cache.
-- **Data Replication**: S3 backends can be configured with cross-region replication. For local filesystems, you would need a separate data replication strategy.
+- **Architecture**: Each region can run its own CallFS cluster.
+- **Important**: independent clusters do not automatically merge file bytes. Metadata synchronization is available in Raft mode within one Raft cluster; cross-region byte replication still requires storage-level strategy.
 - **Traffic Routing**: Use a GeoDNS service (like AWS Route 53) to direct users to the nearest regional cluster.
 
 ## Scaling

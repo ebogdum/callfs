@@ -41,9 +41,14 @@ type InternalProxyAdapter struct {
 func NewInternalProxyAdapter(peerEndpoints map[string]string, authToken string, skipTLSVerify bool, logger *zap.Logger) (*InternalProxyAdapter, error) {
 	// Configure HTTP transport with optional TLS skip verification
 	transport := &http.Transport{
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-		DisableCompression:  true, // Let the client handle compression
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          256,
+		MaxIdleConnsPerHost:   100,
+		MaxConnsPerHost:       200,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableCompression:    true, // Let the client handle compression
 	}
 
 	// Configure TLS settings if needed
