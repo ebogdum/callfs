@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:latest
     environment:
       POSTGRES_DB: callfs
       POSTGRES_USER: callfs
@@ -18,7 +18,7 @@ services:
       - /var/lib/postgresql/data
 
   redis:
-    image: redis:7-alpine
+    image: redis:latest
     ports:
       - "6379:6379"
     command: redis-server --appendonly no --save ""
@@ -29,35 +29,6 @@ services:
       retries: 5
     tmpfs:
       - /data
-
-  minio:
-    image: minio/minio:latest
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      MINIO_ROOT_USER: callfs
-      MINIO_ROOT_PASSWORD: callfs123
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
-    tmpfs:
-      - /data
-
-  minio-setup:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set minio http://minio:9000 callfs callfs123;
-      mc mb minio/callfs-test --ignore-existing;
-      exit 0;
-      "
 
 networks:
   default:

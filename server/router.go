@@ -101,6 +101,9 @@ func NewRouter(
 
 		// File operations
 		r.Route("/files", func(r chi.Router) {
+			// WebSocket file transfer endpoint (mode=download|upload)
+			r.Get("/ws/*", handlers.V1WebSocketTransfer(engine, authorizer, backendConfig, logger))
+
 			// Handle all paths with /*
 			r.Get("/*", handlers.V1GetFile(engine, authorizer, serverConfig, logger))
 			r.Head("/*", handlers.V1HeadFileEnhanced(engine, authorizer, logger))

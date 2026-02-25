@@ -36,7 +36,7 @@ func (a *UnixAuthorizer) Authorize(ctx context.Context, userID string, path stri
 			if perm == WritePerm {
 				return a.checkParentPermission(ctx, userID, path, WritePerm)
 			}
-			return ErrPermissionDenied
+			return metadata.ErrNotFound
 		}
 		return fmt.Errorf("failed to get metadata for authorization: %w", err)
 	}
@@ -49,7 +49,7 @@ func (a *UnixAuthorizer) Authorize(ctx context.Context, userID string, path stri
 // checkUnixPermissions performs Unix-style permission checking
 func (a *UnixAuthorizer) checkUnixPermissions(md *metadata.Metadata, userID string, perm PermissionType) error {
 	// Parse mode string (e.g., "0644" -> 644)
-	mode, err := strconv.ParseUint(strings.TrimPrefix(md.Mode, "0"), 8, 32)
+	mode, err := parseModeBits(md.Mode)
 	if err != nil {
 		return fmt.Errorf("invalid mode format: %s", md.Mode)
 	}
@@ -105,6 +105,20 @@ func (a *UnixAuthorizer) checkUnixPermissions(md *metadata.Metadata, userID stri
 	return nil
 }
 
+func parseModeBits(mode string) (uint64, error) {
+	switch mode {
+	case "0644":
+		return 0o644, nil
+	case "0755":
+		return 0o755, nil
+	case "0777":
+		return 0o777, nil
+	case "0600":
+		return 0o600, nil
+	}
+	return strconv.ParseUint(strings.TrimPrefix(mode, "0"), 8, 32)
+}
+
 // checkParentPermission checks permissions on parent directory
 func (a *UnixAuthorizer) checkParentPermission(ctx context.Context, userID string, path string, perm PermissionType) error {
 	// Extract parent directory path
@@ -122,6 +136,9 @@ func (a *UnixAuthorizer) checkParentPermission(ctx context.Context, userID strin
 	// Get parent metadata
 	parentMd, err := a.metadataStore.Get(ctx, parentPath)
 	if err != nil {
+		if err == metadata.ErrNotFound {
+			return metadata.ErrNotFound
+		}
 		return fmt.Errorf("failed to get parent metadata: %w", err)
 	}
 

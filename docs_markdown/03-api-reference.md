@@ -1,6 +1,6 @@
 # API Reference
 
-This document provides a comprehensive reference for the CallFS REST API. All endpoints are versioned under `/v1` and require TLS (HTTPS).
+This document provides a comprehensive reference for the CallFS REST API. All endpoints are versioned under `/v1`. Deployments can run with HTTP, HTTPS, or auto mode.
 
 ## Authentication
 
@@ -88,6 +88,14 @@ Deletes a file or an empty directory. This is an **enhanced** operation.
 curl -k -X DELETE -H "Authorization: Bearer <api-key>" \
   https://localhost:8443/v1/files/documents/obsolete-file.txt
 ```
+
+### `GET /v1/files/ws/{path}?mode=download|upload`
+
+Transfers files over WebSocket. Use `ws://` when running HTTP and `wss://` when running HTTPS.
+
+- `mode=download`: Streams file bytes from server to client as binary websocket messages.
+- `mode=upload`: Client sends binary websocket messages, server writes them as file content.
+- Authentication is required via standard bearer token header during websocket handshake.
 
 ## Enhanced Directory Listing
 

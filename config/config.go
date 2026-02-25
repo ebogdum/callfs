@@ -12,16 +12,21 @@ type AppConfig struct {
 	Metrics           MetricsConfig           `koanf:"metrics"`
 	Backend           BackendConfig           `koanf:"backend"`
 	MetadataStore     MetadataStoreConfig     `koanf:"metadata_store"`
+	Raft              RaftConfig              `koanf:"raft"`
 	DLM               DLMConfig               `koanf:"dlm"`
+	HA                HAConfig                `koanf:"ha"`
 	InstanceDiscovery InstanceDiscoveryConfig `koanf:"instance_discovery"`
 }
 
 // ServerConfig holds HTTP server configuration
 type ServerConfig struct {
 	ListenAddr        string        `koanf:"listen_addr"`
+	Protocol          string        `koanf:"protocol"`
 	ExternalURL       string        `koanf:"external_url"`
 	CertFile          string        `koanf:"cert_file"`
 	KeyFile           string        `koanf:"key_file"`
+	EnableQUIC        bool          `koanf:"enable_quic"`
+	QUICListenAddr    string        `koanf:"quic_listen_addr"`
 	ReadTimeout       time.Duration `koanf:"read_timeout"`
 	WriteTimeout      time.Duration `koanf:"write_timeout"`
 	FileOpTimeout     time.Duration `koanf:"file_op_timeout"`
@@ -63,13 +68,43 @@ type BackendConfig struct {
 
 // MetadataStoreConfig holds metadata store configuration
 type MetadataStoreConfig struct {
-	DSN string `koanf:"dsn"`
+	Type           string `koanf:"type"` // postgres | sqlite | redis | raft
+	DSN            string `koanf:"dsn"`
+	SQLitePath     string `koanf:"sqlite_path"`
+	RedisAddr      string `koanf:"redis_addr"`
+	RedisPassword  string `koanf:"redis_password"`
+	RedisDB        int    `koanf:"redis_db"`
+	RedisKeyPrefix string `koanf:"redis_key_prefix"`
+}
+
+// RaftConfig holds consensus and replication settings for independent cluster metadata synchronization.
+type RaftConfig struct {
+	Enabled             bool              `koanf:"enabled"`
+	NodeID              string            `koanf:"node_id"`
+	BindAddr            string            `koanf:"bind_addr"`
+	DataDir             string            `koanf:"data_dir"`
+	Bootstrap           bool              `koanf:"bootstrap"`
+	Peers               map[string]string `koanf:"peers"`              // node_id -> raft address
+	APIPeerEndpoints    map[string]string `koanf:"api_peer_endpoints"` // node_id -> http(s) endpoint
+	ApplyTimeout        time.Duration     `koanf:"apply_timeout"`
+	ForwardTimeout      time.Duration     `koanf:"forward_timeout"`
+	SnapshotInterval    time.Duration     `koanf:"snapshot_interval"`
+	SnapshotThreshold   uint64            `koanf:"snapshot_threshold"`
+	RetainSnapshotCount int               `koanf:"retain_snapshot_count"`
 }
 
 // DLMConfig holds distributed lock manager configuration
 type DLMConfig struct {
+	Type          string `koanf:"type"` // redis | local
 	RedisAddr     string `koanf:"redis_addr"`
 	RedisPassword string `koanf:"redis_password"`
+}
+
+// HAConfig controls optional high-availability replication behavior
+type HAConfig struct {
+	ReplicationEnabled    bool   `koanf:"replication_enabled"`
+	ReplicaBackend        string `koanf:"replica_backend"` // localfs | s3
+	RequireReplicaSuccess bool   `koanf:"require_replica_success"`
 }
 
 // InstanceDiscoveryConfig holds instance discovery configuration

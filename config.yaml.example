@@ -1,9 +1,12 @@
 # CallFS Configuration Example
 server:
   listen_addr: ":8443"
+  protocol: "https"            # http | https | auto
   external_url: "localhost:8443"  # Used for single-use download links
   cert_file: "server.crt"
   key_file: "server.key"
+  enable_quic: false
+  quic_listen_addr: ":8443"    # UDP address for HTTP/3 (QUIC)
 
 auth:
   api_keys:
@@ -26,11 +29,37 @@ backend:
   s3_bucket_name: ""
 
 metadata_store:
+  type: "postgres"            # postgres | sqlite | redis | raft
   dsn: "postgres://callfs:callfs@localhost/callfs?sslmode=disable"
-
-dlm:
+  sqlite_path: "./callfs.sqlite3"
   redis_addr: "localhost:6379"
   redis_password: ""
+  redis_db: 0
+  redis_key_prefix: "callfs:"
+
+raft:
+  enabled: false
+  node_id: "callfs-node-1"
+  bind_addr: "127.0.0.1:7000"
+  data_dir: "./raft"
+  bootstrap: false
+  peers: {}                     # node_id -> raft TCP address (e.g., 10.0.0.2:7000)
+  api_peer_endpoints: {}        # node_id -> API endpoint (e.g., http://10.0.0.2:8443)
+  apply_timeout: "10s"
+  forward_timeout: "10s"
+  snapshot_interval: "60s"
+  snapshot_threshold: 256
+  retain_snapshot_count: 2
+
+dlm:
+  type: "redis"               # redis | local
+  redis_addr: "localhost:6379"
+  redis_password: ""
+
+ha:
+  replication_enabled: false
+  replica_backend: ""         # localfs | s3
+  require_replica_success: false
 
 instance_discovery:
   instance_id: "callfs-instance-1"

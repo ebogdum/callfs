@@ -105,6 +105,10 @@ func (e *Engine) CreateFile(ctx context.Context, path string, reader io.Reader, 
 		return fmt.Errorf("failed to store metadata: %w", err)
 	}
 
+	if err := e.replicateFileToSecondaryBackend(ctx, path, size, md.BackendType); err != nil {
+		return err
+	}
+
 	// Invalidate parent directory cache entries
 	e.metadataCache.InvalidatePrefix(filepath.Dir(path))
 
@@ -163,6 +167,10 @@ func (e *Engine) UpdateFile(ctx context.Context, path string, reader io.Reader, 
 
 	if err := e.metadataStore.Update(ctx, existingMd); err != nil {
 		return fmt.Errorf("failed to update metadata: %w", err)
+	}
+
+	if err := e.replicateFileToSecondaryBackend(ctx, path, size, existingMd.BackendType); err != nil {
+		return err
 	}
 
 	// Invalidate cache for this file
@@ -224,6 +232,10 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 		return fmt.Errorf("failed to delete metadata: %w", err)
 	}
 
+	if err := e.deleteReplicatedFile(ctx, path, md.BackendType); err != nil {
+		return err
+	}
+
 	// Invalidate cache for this file and parent directory
 	e.metadataCache.Invalidate(path)
 	e.metadataCache.InvalidatePrefix(filepath.Dir(path))
@@ -254,4 +266,93 @@ func (e *Engine) GetMetadata(ctx context.Context, path string) (*metadata.Metada
 	e.logger.Debug("Cache miss for metadata - stored in cache", zap.String("path", path))
 
 	return md, nil
+}
+
+func (e *Engine) replicateFileToSecondaryBackend(ctx context.Context, path string, size int64, primaryBackend string) error {
+	if !e.replicationEnabled {
+		return nil
+	}
+
+	replicaBackend := strings.ToLower(strings.TrimSpace(e.replicaBackend))
+	if replicaBackend == "" || replicaBackend == strings.ToLower(primaryBackend) {
+		return nil
+	}
+
+	primaryStorage := e.selectBackendByType(primaryBackend)
+	replicaStorage := e.selectBackendByType(replicaBackend)
+	relativePath := strings.TrimPrefix(path, "/")
+
+	reader, err := primaryStorage.Open(ctx, relativePath)
+	if err != nil {
+		if e.requireReplicaAck {
+			return fmt.Errorf("failed to open source for replication: %w", err)
+		}
+		e.logger.Warn("Replication skipped: failed opening source",
+			zap.String("path", path),
+			zap.String("primary_backend", primaryBackend),
+			zap.String("replica_backend", replicaBackend),
+			zap.Error(err))
+		return nil
+	}
+	defer reader.Close()
+
+	err = replicaStorage.Update(ctx, relativePath, reader, size)
+	if err != nil {
+		reader2, openErr := primaryStorage.Open(ctx, relativePath)
+		if openErr != nil {
+			if e.requireReplicaAck {
+				return fmt.Errorf("failed to reopen source for replica create: %w", openErr)
+			}
+			e.logger.Warn("Replication skipped: failed reopening source",
+				zap.String("path", path),
+				zap.String("replica_backend", replicaBackend),
+				zap.Error(openErr))
+			return nil
+		}
+		defer reader2.Close()
+
+		err = replicaStorage.Create(ctx, relativePath, reader2, size)
+		if err != nil {
+			if e.requireReplicaAck {
+				return fmt.Errorf("failed to replicate file to secondary backend: %w", err)
+			}
+			e.logger.Warn("Replication to secondary backend failed",
+				zap.String("path", path),
+				zap.String("replica_backend", replicaBackend),
+				zap.Error(err))
+			return nil
+		}
+	}
+
+	e.logger.Debug("Replicated file to secondary backend",
+		zap.String("path", path),
+		zap.String("primary_backend", primaryBackend),
+		zap.String("replica_backend", replicaBackend))
+	return nil
+}
+
+func (e *Engine) deleteReplicatedFile(ctx context.Context, path string, primaryBackend string) error {
+	if !e.replicationEnabled {
+		return nil
+	}
+
+	replicaBackend := strings.ToLower(strings.TrimSpace(e.replicaBackend))
+	if replicaBackend == "" || replicaBackend == strings.ToLower(primaryBackend) {
+		return nil
+	}
+
+	replicaStorage := e.selectBackendByType(replicaBackend)
+	relativePath := strings.TrimPrefix(path, "/")
+	err := replicaStorage.Delete(ctx, relativePath)
+	if err != nil {
+		if e.requireReplicaAck {
+			return fmt.Errorf("failed to delete replicated file: %w", err)
+		}
+		e.logger.Warn("Failed deleting replicated file",
+			zap.String("path", path),
+			zap.String("replica_backend", replicaBackend),
+			zap.Error(err))
+	}
+
+	return nil
 }

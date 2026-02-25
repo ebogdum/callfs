@@ -101,8 +101,99 @@ func validateConfig(cfg *AppConfig) error {
 		return fmt.Errorf("server.listen_addr is required")
 	}
 
-	if cfg.MetadataStore.DSN == "" {
-		return fmt.Errorf("metadata_store.dsn is required")
+	if cfg.Server.Protocol == "" {
+		cfg.Server.Protocol = "https"
+	}
+
+	switch strings.ToLower(cfg.Server.Protocol) {
+	case "http", "https", "auto":
+	default:
+		return fmt.Errorf("server.protocol must be one of: http, https, auto")
+	}
+
+	if strings.ToLower(cfg.Server.Protocol) == "https" {
+		if cfg.Server.CertFile == "" || cfg.Server.KeyFile == "" {
+			return fmt.Errorf("server.cert_file and server.key_file are required when server.protocol=https")
+		}
+	}
+
+	if cfg.Server.EnableQUIC {
+		if cfg.Server.CertFile == "" || cfg.Server.KeyFile == "" {
+			return fmt.Errorf("server.cert_file and server.key_file are required when server.enable_quic=true")
+		}
+		if cfg.Server.QUICListenAddr == "" {
+			return fmt.Errorf("server.quic_listen_addr is required when server.enable_quic=true")
+		}
+	}
+
+	if cfg.MetadataStore.Type == "" {
+		cfg.MetadataStore.Type = "postgres"
+	}
+
+	switch strings.ToLower(cfg.MetadataStore.Type) {
+	case "postgres":
+		if cfg.MetadataStore.DSN == "" {
+			return fmt.Errorf("metadata_store.dsn is required when metadata_store.type=postgres")
+		}
+	case "sqlite":
+		if cfg.MetadataStore.SQLitePath == "" {
+			return fmt.Errorf("metadata_store.sqlite_path is required when metadata_store.type=sqlite")
+		}
+	case "redis":
+		if cfg.MetadataStore.RedisAddr == "" {
+			return fmt.Errorf("metadata_store.redis_addr is required when metadata_store.type=redis")
+		}
+	case "raft":
+		if !cfg.Raft.Enabled {
+			cfg.Raft.Enabled = true
+		}
+		if cfg.Raft.NodeID == "" {
+			return fmt.Errorf("raft.node_id is required when metadata_store.type=raft")
+		}
+		if cfg.Raft.BindAddr == "" {
+			return fmt.Errorf("raft.bind_addr is required when metadata_store.type=raft")
+		}
+		if cfg.Raft.DataDir == "" {
+			return fmt.Errorf("raft.data_dir is required when metadata_store.type=raft")
+		}
+		if cfg.Raft.ApplyTimeout <= 0 {
+			return fmt.Errorf("raft.apply_timeout must be > 0 when metadata_store.type=raft")
+		}
+		if cfg.Raft.ForwardTimeout <= 0 {
+			return fmt.Errorf("raft.forward_timeout must be > 0 when metadata_store.type=raft")
+		}
+		if cfg.Raft.SnapshotInterval <= 0 {
+			return fmt.Errorf("raft.snapshot_interval must be > 0 when metadata_store.type=raft")
+		}
+		if cfg.Raft.SnapshotThreshold == 0 {
+			return fmt.Errorf("raft.snapshot_threshold must be > 0 when metadata_store.type=raft")
+		}
+		if cfg.Raft.RetainSnapshotCount <= 0 {
+			return fmt.Errorf("raft.retain_snapshot_count must be > 0 when metadata_store.type=raft")
+		}
+	default:
+		return fmt.Errorf("metadata_store.type must be one of: postgres, sqlite, redis, raft")
+	}
+
+	if cfg.DLM.Type == "" {
+		cfg.DLM.Type = "redis"
+	}
+
+	switch strings.ToLower(cfg.DLM.Type) {
+	case "redis":
+		if cfg.DLM.RedisAddr == "" {
+			return fmt.Errorf("dlm.redis_addr is required when dlm.type=redis")
+		}
+	case "local":
+	default:
+		return fmt.Errorf("dlm.type must be one of: redis, local")
+	}
+
+	if cfg.HA.ReplicationEnabled {
+		replicaBackend := strings.ToLower(strings.TrimSpace(cfg.HA.ReplicaBackend))
+		if replicaBackend != "localfs" && replicaBackend != "s3" {
+			return fmt.Errorf("ha.replica_backend must be one of: localfs, s3 when ha.replication_enabled=true")
+		}
 	}
 
 	if cfg.InstanceDiscovery.InstanceID == "" {
