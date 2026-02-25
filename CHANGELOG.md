@@ -2,22 +2,22 @@
 
 ## [Unreleased] - TBD
 
-### 🚀 **New Features**
+### **New Features**
 - _No new features yet_
 
-### 🔧 **Enhancements**
+### **Enhancements**
 - _No enhancements yet_
 
-### 🐛 **Bug Fixes**
+### **Bug Fixes**
 - _No bug fixes yet_
 
-### 🏗️ **Internal Changes**
+### **Internal Changes**
 - _No internal changes yet_
 
-### 🧪 **Tests**
+### **Tests**
 - _No test changes yet_
 
-### 📚 **Documentation**
+### **Documentation**
 - _No documentation changes yet_
 
 ---

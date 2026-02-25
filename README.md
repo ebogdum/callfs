@@ -5,7 +5,7 @@ CallFS is an ultra-lightweight, high-performance REST API filesystem that provid
 [![Go Report Card](https://goreportcard.com/badge/github.com/ebogdum/callfs)](https://goreportcard.com/report/github.com/ebogdum/callfs)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🚀 Key Features
+## Key Features
 
 - **Multi-Backend Storage**: Seamlessly use Local Filesystem, Amazon S3, or other S3-compatible services (like MinIO) as storage backends.
 - **Distributed Architecture**: Scale horizontally by adding more CallFS instances. The system automatically routes operations to the correct node.
@@ -18,7 +18,7 @@ CallFS is an ultra-lightweight, high-performance REST API filesystem that provid
 - **First-Class Observability**: Structured logging (JSON/console) and extensive Prometheus metrics for deep operational insight.
 - **Zero-Copy I/O**: Efficiently streams large files without buffering them in memory, ensuring a low memory footprint.
 
-## 🏗️ Architecture
+## Architecture
 
 CallFS consists of several core components that work together to provide a unified, distributed filesystem API:
 
@@ -34,7 +34,7 @@ CallFS consists of several core components that work together to provide a unifi
 
 This modular design allows CallFS to be both powerful and flexible, suitable for a wide range of applications from simple file serving to complex, distributed storage architectures.
 
-## 🔗 API Endpoints
+## API Endpoints
 
 All API endpoints are prefixed with `/v1` and require `Bearer <api-key>` authentication, except where noted.
 
@@ -62,7 +62,7 @@ All API endpoints are prefixed with `/v1` and require `Bearer <api-key>` authent
 - `GET /health`: Returns the operational status of the server. **(No authentication required)**.
 - `GET /metrics`: Exposes detailed performance metrics in Prometheus format. **(No authentication required)**.
 
-## 🔧 Getting Started
+## Getting Started
 
 ### Prerequisites
 - **Go**: Version 1.21 or later.
@@ -97,7 +97,7 @@ CallFS includes a simple CLI for managing the server:
 - **`callfs config validate`**: Validates the configuration file and displays the loaded settings.
 - **`callfs --help`**: Shows all available commands and flags.
 
-## 📖 Full Documentation
+## Full Documentation
 
 For detailed information on configuration, API usage, security, and more, please refer to the `docs_markdown/` directory:
 
@@ -112,10 +112,10 @@ For detailed information on configuration, API usage, security, and more, please
 - [09 - Troubleshooting](docs_markdown/09-troubleshooting.md)
 - [10 - Enhanced Cross-Server Operations](docs_markdown/10-enhanced-cross-server.md)
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to participate in this project.
 
-## 📝 License
+## License
 
 CallFS is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
