@@ -16,6 +16,7 @@ type AppConfig struct {
 	DLM               DLMConfig               `koanf:"dlm"`
 	HA                HAConfig                `koanf:"ha"`
 	InstanceDiscovery InstanceDiscoveryConfig `koanf:"instance_discovery"`
+	Erasure           ErasureConfig           `koanf:"erasure"`
 }
 
 // ServerConfig holds HTTP server configuration
@@ -105,6 +106,16 @@ type HAConfig struct {
 	ReplicationEnabled    bool   `koanf:"replication_enabled"`
 	ReplicaBackend        string `koanf:"replica_backend"` // localfs | s3
 	RequireReplicaSuccess bool   `koanf:"require_replica_success"`
+}
+
+// ErasureConfig holds erasure coding configuration
+type ErasureConfig struct {
+	Enabled      bool   `koanf:"enabled"`
+	DataShards   int    `koanf:"data_shards"`   // default: 4
+	ParityShards int    `koanf:"parity_shards"` // default: 2
+	MinFileSize  int64  `koanf:"min_file_size"` // default: 1MB
+	ShardBackend string `koanf:"shard_backend"` // "localfs" or "s3"
+	ShardPath    string `koanf:"shard_path"`    // base path for shard storage
 }
 
 // InstanceDiscoveryConfig holds instance discovery configuration

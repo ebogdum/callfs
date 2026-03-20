@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -24,6 +25,15 @@ func (e *Engine) GetFile(ctx context.Context, path string) (io.ReadCloser, error
 
 	if md.Type != "file" {
 		return nil, fmt.Errorf("path is not a file")
+	}
+
+	// Handle erasure-coded files via server-side reassembly
+	if md.ErasureCoded && e.erasureManager != nil {
+		data, err := e.erasureManager.RetrieveFile(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve erasure-coded file: %w", err)
+		}
+		return io.NopCloser(bytes.NewReader(data)), nil
 	}
 
 	// Route to appropriate backend
@@ -219,6 +229,20 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 		}
 	}
 
+	// Handle erasure-coded files
+	if md.ErasureCoded && e.erasureManager != nil {
+		if err := e.erasureManager.DeleteFile(ctx, path); err != nil {
+			return fmt.Errorf("failed to delete erasure-coded file: %w", err)
+		}
+		if err := e.metadataStore.Delete(ctx, path); err != nil {
+			return fmt.Errorf("failed to delete metadata: %w", err)
+		}
+		e.metadataCache.Invalidate(path)
+		e.metadataCache.InvalidatePrefix(filepath.Dir(path))
+		e.logger.Info("Erasure-coded file deleted", zap.String("path", path))
+		return nil
+	}
+
 	// Delete from backend
 	ctx, storage := e.selectBackend(ctx, md)
 	// Convert absolute path to relative path for backend
@@ -244,6 +268,25 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 		zap.String("path", path),
 		zap.String("backend", md.BackendType))
 
+	return nil
+}
+
+// CreateErasureMetadata stores metadata for an erasure-coded file (no backend write, shards already distributed).
+func (e *Engine) CreateErasureMetadata(ctx context.Context, path string, md *metadata.Metadata) error {
+	// Ensure parent directories exist
+	if err := e.ensureParentDirectories(ctx, path, "localfs"); err != nil {
+		return fmt.Errorf("failed to ensure parent directories: %w", err)
+	}
+
+	md.Path = path
+	md.CreatedAt = time.Now()
+	md.UpdatedAt = time.Now()
+
+	if err := e.metadataStore.Create(ctx, md); err != nil {
+		return fmt.Errorf("failed to store erasure metadata: %w", err)
+	}
+
+	e.metadataCache.InvalidatePrefix(filepath.Dir(path))
 	return nil
 }
 

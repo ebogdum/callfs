@@ -27,7 +27,8 @@ type Metadata struct {
 	ATime            time.Time `json:"atime"`
 	MTime            time.Time `json:"mtime"`
 	CTime            time.Time `json:"ctime"`
-	BackendType      string    `json:"backend_type"`       // "localfs" or "s3"
+	BackendType      string    `json:"backend_type"`       // "localfs", "s3", or "erasure"
+	ErasureCoded     bool      `json:"erasure_coded"`      // true if file is erasure-coded
 	CallFSInstanceID *string   `json:"callfs_instance_id"` // Instance ID for the server that owns this file
 	SymlinkTarget    *string   `json:"symlink_target"`     // For future symlink support
 	CreatedAt        time.Time `json:"created_at"`
@@ -46,6 +47,33 @@ type SingleUseLink struct {
 	HMACSignature string     `json:"hmac_signature"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+// ErasureFileInfo holds erasure coding metadata (imported by metadata stores)
+type ErasureFileInfo struct {
+	FilePath     string              `json:"file_path"`
+	OriginalSize int64               `json:"original_size"`
+	DataShards   int                 `json:"data_shards"`
+	ParityShards int                 `json:"parity_shards"`
+	ShardSize    int64               `json:"shard_size"`
+	Shards       []ErasureShardInfo  `json:"shards"`
+}
+
+// ErasureShardInfo describes a single shard's storage location.
+type ErasureShardInfo struct {
+	Index       int    `json:"index"`
+	InstanceID  string `json:"instance_id"`
+	BackendType string `json:"backend_type"`
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	Checksum    string `json:"checksum"`
+}
+
+// ErasureMetadataStore defines the interface for erasure coding metadata operations.
+type ErasureMetadataStore interface {
+	CreateErasureInfo(ctx context.Context, filePath string, info *ErasureFileInfo) error
+	GetErasureInfo(ctx context.Context, filePath string) (*ErasureFileInfo, error)
+	DeleteErasureInfo(ctx context.Context, filePath string) error
 }
 
 // Store defines the interface for metadata storage operations

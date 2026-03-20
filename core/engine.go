@@ -7,6 +7,7 @@ import (
 
 	"github.com/ebogdum/callfs/backends"
 	"github.com/ebogdum/callfs/backends/internalproxy"
+	"github.com/ebogdum/callfs/erasure"
 	"github.com/ebogdum/callfs/locks"
 	"github.com/ebogdum/callfs/metadata"
 )
@@ -24,6 +25,7 @@ type Engine struct {
 	replicationEnabled   bool
 	replicaBackend       string
 	requireReplicaAck    bool
+	erasureManager       *erasure.Manager
 	metadataCache        *MetadataCache
 	logger               *zap.Logger
 }
@@ -63,6 +65,16 @@ func NewEngine(
 // GetCurrentInstanceID returns the current instance ID
 func (e *Engine) GetCurrentInstanceID() string {
 	return e.currentInstanceID
+}
+
+// SetErasureManager sets the erasure manager on the engine
+func (e *Engine) SetErasureManager(em *erasure.Manager) {
+	e.erasureManager = em
+}
+
+// GetErasureManager returns the erasure manager (may be nil)
+func (e *Engine) GetErasureManager() *erasure.Manager {
+	return e.erasureManager
 }
 
 // GetPeerEndpoint returns the endpoint URL for a given instance ID

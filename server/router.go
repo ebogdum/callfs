@@ -112,6 +112,13 @@ func NewRouter(
 			r.Delete("/*", handlers.V1DeleteFileEnhanced(engine, authorizer, logger))
 		})
 
+		// Shard download endpoint (for erasure-coded parallel downloads)
+		if em := engine.GetErasureManager(); em != nil {
+			r.Route("/shards", func(r chi.Router) {
+				r.Get("/*", handlers.V1GetShard(em, authorizer, logger))
+			})
+		}
+
 		// Directory listing API (moved from /api/directories to /directories)
 		r.Route("/directories", func(r chi.Router) {
 			r.Get("/*", handlers.V1ListDirectory(engine, authorizer, logger))

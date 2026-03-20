@@ -38,16 +38,17 @@ type Config struct {
 }
 
 type Command struct {
-	Op        string                  `json:"op"`
-	Path      string                  `json:"path,omitempty"`
-	Metadata  *metadata.Metadata      `json:"metadata,omitempty"`
-	Token     string                  `json:"token,omitempty"`
-	Link      *metadata.SingleUseLink `json:"link,omitempty"`
-	Status    string                  `json:"status,omitempty"`
-	UsedAt    *time.Time              `json:"used_at,omitempty"`
-	UsedByIP  *string                 `json:"used_by_ip,omitempty"`
-	Before    *time.Time              `json:"before,omitempty"`
-	OlderThan *time.Time              `json:"older_than,omitempty"`
+	Op          string                   `json:"op"`
+	Path        string                   `json:"path,omitempty"`
+	Metadata    *metadata.Metadata       `json:"metadata,omitempty"`
+	Token       string                   `json:"token,omitempty"`
+	Link        *metadata.SingleUseLink  `json:"link,omitempty"`
+	Status      string                   `json:"status,omitempty"`
+	UsedAt      *time.Time               `json:"used_at,omitempty"`
+	UsedByIP    *string                  `json:"used_by_ip,omitempty"`
+	Before      *time.Time               `json:"before,omitempty"`
+	OlderThan   *time.Time               `json:"older_than,omitempty"`
+	ErasureInfo *metadata.ErasureFileInfo `json:"erasure_info,omitempty"`
 }
 
 type CommandResult struct {
@@ -89,8 +90,9 @@ type Store struct {
 }
 
 type state struct {
-	MetadataByPath map[string]*metadata.Metadata      `json:"metadata_by_path"`
-	LinksByToken   map[string]*metadata.SingleUseLink `json:"links_by_token"`
+	MetadataByPath map[string]*metadata.Metadata       `json:"metadata_by_path"`
+	LinksByToken   map[string]*metadata.SingleUseLink  `json:"links_by_token"`
+	ErasureByPath  map[string]*metadata.ErasureFileInfo `json:"erasure_by_path"`
 }
 
 type fsm struct {
@@ -132,7 +134,11 @@ func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
 		return nil, fmt.Errorf("failed to create raft data dir: %w", err)
 	}
 
-	fsmInstance := &fsm{state: state{MetadataByPath: map[string]*metadata.Metadata{}, LinksByToken: map[string]*metadata.SingleUseLink{}}}
+	fsmInstance := &fsm{state: state{
+		MetadataByPath: map[string]*metadata.Metadata{},
+		LinksByToken:   map[string]*metadata.SingleUseLink{},
+		ErasureByPath:  map[string]*metadata.ErasureFileInfo{},
+	}}
 
 	raftCfg := hashiraft.DefaultConfig()
 	raftCfg.LocalID = hashiraft.ServerID(cfg.NodeID)
@@ -534,6 +540,15 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 			}
 		}
 		return CommandResult{CleanupCount: count}
+	case "create_erasure_info":
+		if cmd.ErasureInfo == nil {
+			return CommandResult{Err: "erasure_info_required"}
+		}
+		f.state.ErasureByPath[cmd.Path] = cloneErasureFileInfo(cmd.ErasureInfo)
+		return CommandResult{}
+	case "delete_erasure_info":
+		delete(f.state.ErasureByPath, cmd.Path)
+		return CommandResult{}
 	default:
 		return CommandResult{Err: "unknown_operation"}
 	}
@@ -542,7 +557,11 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 func (f *fsm) Snapshot() (hashiraft.FSMSnapshot, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-	return &stateSnapshot{state: state{MetadataByPath: cloneMetadataMap(f.state.MetadataByPath), LinksByToken: cloneLinkMap(f.state.LinksByToken)}}, nil
+	return &stateSnapshot{state: state{
+		MetadataByPath: cloneMetadataMap(f.state.MetadataByPath),
+		LinksByToken:   cloneLinkMap(f.state.LinksByToken),
+		ErasureByPath:  cloneErasureMap(f.state.ErasureByPath),
+	}}, nil
 }
 
 func (f *fsm) Restore(rc io.ReadCloser) error {
@@ -557,9 +576,16 @@ func (f *fsm) Restore(rc io.ReadCloser) error {
 	if restored.LinksByToken == nil {
 		restored.LinksByToken = map[string]*metadata.SingleUseLink{}
 	}
+	if restored.ErasureByPath == nil {
+		restored.ErasureByPath = map[string]*metadata.ErasureFileInfo{}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.state = state{MetadataByPath: cloneMetadataMap(restored.MetadataByPath), LinksByToken: cloneLinkMap(restored.LinksByToken)}
+	f.state = state{
+		MetadataByPath: cloneMetadataMap(restored.MetadataByPath),
+		LinksByToken:   cloneLinkMap(restored.LinksByToken),
+		ErasureByPath:  cloneErasureMap(restored.ErasureByPath),
+	}
 	return nil
 }
 
