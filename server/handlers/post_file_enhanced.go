@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,9 +13,42 @@ import (
 	"github.com/ebogdum/callfs/auth"
 	"github.com/ebogdum/callfs/config"
 	"github.com/ebogdum/callfs/core"
+	"github.com/ebogdum/callfs/erasure"
 	"github.com/ebogdum/callfs/metadata"
 	"github.com/ebogdum/callfs/server/middleware"
 )
+
+func parseErasureOptions(r *http.Request) *erasure.StoreOptions {
+	opts := &erasure.StoreOptions{}
+
+	if v := r.Header.Get("X-CallFS-Erasure-Data-Shards"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			opts.DataShards = n
+		}
+	} else if v := r.URL.Query().Get("data_shards"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			opts.DataShards = n
+		}
+	}
+
+	if v := r.Header.Get("X-CallFS-Erasure-Parity-Shards"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			opts.ParityShards = n
+		}
+	} else if v := r.URL.Query().Get("parity_shards"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			opts.ParityShards = n
+		}
+	}
+
+	if v := r.Header.Get("X-CallFS-Erasure-Instances"); v != "" {
+		opts.Instances = strings.Split(v, ",")
+	} else if v := r.URL.Query().Get("instances"); v != "" {
+		opts.Instances = strings.Split(v, ",")
+	}
+
+	return opts
+}
 
 // CrossServerConflictResponse represents a response when a file exists on another server
 type CrossServerConflictResponse struct {
@@ -158,8 +193,55 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 			// File creation (fileExists is false at this point)
 			size := r.ContentLength
 			if size < 0 {
-				// Chunked uploads don't provide a trusted content length here.
 				size = 0
+			}
+
+			// Check if erasure coding is requested
+			erasureRequested := r.Header.Get("X-CallFS-Erasure") == "true" || r.URL.Query().Get("erasure") == "true"
+			em := engine.GetErasureManager()
+
+			if erasureRequested && em != nil {
+				// Read the full body for erasure encoding
+				data, readErr := io.ReadAll(r.Body)
+				if readErr != nil {
+					SendErrorResponse(w, logger, readErr, http.StatusInternalServerError)
+					return
+				}
+				actualSize := int64(len(data))
+
+				opts := parseErasureOptions(r)
+
+				if _, storeErr := em.StoreFile(r.Context(), enginePath, data, actualSize, opts); storeErr != nil {
+					SendErrorResponse(w, logger, storeErr, http.StatusInternalServerError)
+					return
+				}
+
+				// Store metadata with erasure flag
+				md := &metadata.Metadata{
+					Name:         pathInfo.Name,
+					Type:         "file",
+					Size:         actualSize,
+					Mode:         "0644",
+					UID:          1000,
+					GID:          1000,
+					BackendType:  "erasure",
+					ErasureCoded: true,
+					ATime:        time.Now(),
+					MTime:        time.Now(),
+					CTime:        time.Now(),
+				}
+
+				if err := engine.CreateErasureMetadata(r.Context(), enginePath, md); err != nil {
+					SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+					return
+				}
+
+				w.WriteHeader(http.StatusCreated)
+				logger.Info("Erasure-coded file created",
+					zap.String("path", pathInfo.FullPath),
+					zap.String("user_id", userID),
+					zap.Int64("size", actualSize))
+				return
 			}
 
 			md := &metadata.Metadata{

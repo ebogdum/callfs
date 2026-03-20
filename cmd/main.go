@@ -46,6 +46,7 @@ import (
 	"github.com/ebogdum/callfs/backends/s3"
 	"github.com/ebogdum/callfs/config"
 	"github.com/ebogdum/callfs/core"
+	"github.com/ebogdum/callfs/erasure"
 	"github.com/ebogdum/callfs/links"
 	"github.com/ebogdum/callfs/locks"
 	"github.com/ebogdum/callfs/metadata"
@@ -55,6 +56,7 @@ import (
 	"github.com/ebogdum/callfs/metadata/schema"
 	metadatasqlite "github.com/ebogdum/callfs/metadata/sqlite"
 	"github.com/ebogdum/callfs/server"
+	"github.com/ebogdum/callfs/server/handlers"
 )
 
 var rootCmd = &cobra.Command{
@@ -389,6 +391,50 @@ func runServer(cmd *cobra.Command, args []string) error {
 		cfg.HA.RequireReplicaSuccess,
 		logger)
 
+	// Initialize erasure manager if enabled
+	if cfg.Erasure.Enabled {
+		logger.Info("Initializing erasure coding manager")
+
+		// Determine which metadata store implements ErasureMetadataStore
+		erasureMetaStore, ok := metadataStore.(metadata.ErasureMetadataStore)
+		if !ok {
+			return fmt.Errorf("metadata store type %s does not support erasure coding", cfg.MetadataStore.Type)
+		}
+
+		// Resolve shard backend
+		var shardBackend backends.Storage
+		shardBackendType := strings.ToLower(strings.TrimSpace(cfg.Erasure.ShardBackend))
+		switch shardBackendType {
+		case "s3":
+			shardBackend = s3Backend
+		default:
+			shardBackend = localFSBackend
+		}
+
+		// Build peer endpoints map including self
+		erasurePeers := make(map[string]string)
+		for id, ep := range cfg.InstanceDiscovery.PeerEndpoints {
+			erasurePeers[id] = ep
+		}
+		if cfg.Server.ExternalURL != "" {
+			erasurePeers[cfg.InstanceDiscovery.InstanceID] = cfg.Server.ExternalURL
+		}
+
+		em := erasure.NewManager(
+			erasureMetaStore,
+			shardBackend,
+			&cfg.Erasure,
+			cfg.InstanceDiscovery.InstanceID,
+			erasurePeers,
+			cfg.Auth.InternalProxySecret,
+			logger,
+		)
+		coreEngine.SetErasureManager(em)
+		logger.Info("Erasure coding manager initialized",
+			zap.Int("data_shards", cfg.Erasure.DataShards),
+			zap.Int("parity_shards", cfg.Erasure.ParityShards))
+	}
+
 	// Ensure root directory exists in metadata store
 	logger.Info("Ensuring root directory exists")
 	if raftMetadataStore != nil {
@@ -434,9 +480,28 @@ func runServer(cmd *cobra.Command, args []string) error {
 	router := server.NewRouter(coreEngine, authenticator, authorizer, linkManager, &cfg.Server, &cfg.Backend, cfg.Server.ExternalURL, logger)
 	rootHandler := http.Handler(router)
 
+	// Register internal shard endpoints if erasure is enabled
+	if cfg.Erasure.Enabled {
+		mux := http.NewServeMux()
+		mux.Handle("/", rootHandler)
+		mux.HandleFunc("/v1/internal/shards/", func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodPut:
+				handlers.InternalStoreShardHandler(localFSBackend, cfg.Auth.InternalProxySecret, logger)(w, r)
+			case http.MethodGet:
+				handlers.InternalGetShardHandler(localFSBackend, cfg.Auth.InternalProxySecret, logger)(w, r)
+			case http.MethodDelete:
+				handlers.InternalDeleteShardHandler(localFSBackend, cfg.Auth.InternalProxySecret, logger)(w, r)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		})
+		rootHandler = mux
+	}
+
 	if raftMetadataStore != nil {
 		mux := http.NewServeMux()
-		mux.Handle("/", router)
+		mux.Handle("/", rootHandler)
 		mux.HandleFunc("/v1/internal/raft/join", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)

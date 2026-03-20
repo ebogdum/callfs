@@ -50,7 +50,7 @@ type FileInfo struct {
 // @Failure 404 {object} ErrorResponse "Not Found"
 // @Failure 500 {object} ErrorResponse "Internal Server Error"
 // @Router /v1/files/{path} [get]
-func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc {
+func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc { //nolint:gocognit
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -107,6 +107,22 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 		}
 
 		if md.Type == "file" {
+			// Handle erasure-coded files
+			if md.ErasureCoded {
+				em := engine.GetErasureManager()
+				if em != nil {
+					if r.URL.Query().Get("manifest") == "true" {
+						HandleErasureManifest(w, r, em, enginePath, logger)
+						metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "200").Inc()
+						return
+					}
+					HandleErasureDownload(w, r, em, enginePath, md.Size, logger)
+					metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "200").Inc()
+					metrics.FileOperationsTotal.WithLabelValues("read", "erasure").Inc()
+					return
+				}
+			}
+
 			// Stream file content using file operation timeout
 			reader, err := engine.GetFile(fileCtx, enginePath)
 			if err != nil {

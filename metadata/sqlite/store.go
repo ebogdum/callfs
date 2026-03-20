@@ -37,6 +37,10 @@ func NewSQLiteStore(dbPath string, logger *zap.Logger) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.initErasureSchema(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	return store, nil
 }
