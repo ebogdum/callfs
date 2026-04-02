@@ -1,10 +1,34 @@
 package handlers
 
 import (
+	"io"
 	"strings"
+	"sync/atomic"
 
 	"github.com/ebogdum/callfs/internal/pathutil"
 )
+
+// CountingReader wraps an io.Reader and counts bytes read through it.
+type CountingReader struct {
+	reader io.Reader
+	count  atomic.Int64
+}
+
+// NewCountingReader wraps r and counts bytes read.
+func NewCountingReader(r io.Reader) *CountingReader {
+	return &CountingReader{reader: r}
+}
+
+func (cr *CountingReader) Read(p []byte) (int, error) {
+	n, err := cr.reader.Read(p)
+	cr.count.Add(int64(n))
+	return n, err
+}
+
+// BytesRead returns the total bytes read so far.
+func (cr *CountingReader) BytesRead() int64 {
+	return cr.count.Load()
+}
 
 // PathInfo represents parsed path information
 type PathInfo struct {

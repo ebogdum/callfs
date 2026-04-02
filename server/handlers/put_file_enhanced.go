@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -63,10 +64,22 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 			enginePath = strings.TrimSuffix(enginePath, "/")
 		}
 
+		// Limit upload body to 10 GiB
+		const maxUploadBytes int64 = 10 << 30
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+
 		size := r.ContentLength
-		if size < 0 {
-			// Chunked uploads don't provide a trusted content length here.
+		isChunked := size < 0
+		if isChunked {
 			size = 0
+		}
+
+		// Wrap body with counting reader when content-length is unknown (chunked),
+		// so we can determine actual bytes written for metadata accuracy.
+		var countReader *CountingReader
+		if isChunked {
+			countReader = NewCountingReader(r.Body)
+			r.Body = io.NopCloser(countReader)
 		}
 
 		// Authorize write access FIRST
@@ -125,7 +138,16 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 					return
 				}
 
-				// Proxy successful
+				// Update local metadata to reflect the new size/mtime after proxy write
+				existingMd.Size = size
+				existingMd.MTime = time.Now()
+				existingMd.UpdatedAt = time.Now()
+				if updateErr := engine.UpdateMetadataOnly(r.Context(), existingMd); updateErr != nil {
+					logger.Warn("Failed to update metadata after cross-server proxy write",
+						zap.String("path", enginePath),
+						zap.Error(updateErr))
+				}
+
 				w.WriteHeader(http.StatusOK)
 				logger.Info("File updated via cross-server proxy",
 					zap.String("path", pathInfo.FullPath),
@@ -139,6 +161,23 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 			if err := engine.UpdateFile(r.Context(), enginePath, r.Body, size, existingMd); err != nil {
 				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 				return
+			}
+		}
+
+		// For chunked uploads, correct the metadata size now that we know actual bytes written
+		if countReader != nil {
+			actualSize := countReader.BytesRead()
+			if actualSize != size {
+				existingMd.Size = actualSize
+				existingMd.MTime = time.Now()
+				existingMd.UpdatedAt = time.Now()
+				if updateErr := engine.UpdateMetadataOnly(r.Context(), existingMd); updateErr != nil {
+					logger.Warn("Failed to correct metadata size after chunked upload",
+						zap.String("path", enginePath),
+						zap.Int64("actual_size", actualSize),
+						zap.Error(updateErr))
+				}
+				size = actualSize
 			}
 		}
 

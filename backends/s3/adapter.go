@@ -42,7 +42,8 @@ func NewS3Adapter(cfg config.BackendConfig, logger *zap.Logger) (*S3Adapter, err
 	// Set custom endpoint if provided (for MinIO compatibility)
 	if cfg.S3Endpoint != "" {
 		awsConfig.Endpoint = aws.String(cfg.S3Endpoint)
-		awsConfig.DisableSSL = aws.Bool(true)                 // Custom MinIO-like endpoints typically use HTTP
+		// Only disable SSL if the endpoint is explicitly HTTP
+		awsConfig.DisableSSL = aws.Bool(strings.HasPrefix(cfg.S3Endpoint, "http://"))
 		awsConfig.S3ForcePathStyle = aws.Bool(true)              // Required for MinIO
 		awsConfig.S3DisableContentMD5Validation = aws.Bool(true) // Disable MD5 for MinIO
 	}
@@ -98,5 +99,12 @@ func (a *S3Adapter) keyToPath(key string) string {
 
 // isS3NotFound checks if an error indicates the object was not found
 func isS3NotFound(err error) bool {
-	return strings.Contains(err.Error(), "NoSuchKey") || strings.Contains(err.Error(), "NotFound")
+	if err == nil {
+		return false
+	}
+	// Check AWS SDK error types first
+	errStr := err.Error()
+	return strings.Contains(errStr, "NoSuchKey") ||
+		strings.Contains(errStr, "NotFound") ||
+		strings.Contains(errStr, "status code: 404")
 }

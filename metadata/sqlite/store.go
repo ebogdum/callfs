@@ -285,7 +285,8 @@ func (s *SQLiteStore) ListChildren(ctx context.Context, parentPath string) ([]*m
 			FROM inodes
 			WHERE path LIKE ? AND path NOT LIKE ?
 			ORDER BY type DESC, name ASC`
-		rows, err = s.db.QueryContext(ctx, query, parentPath+"/%", parentPath+"/%/%")
+		escapedPath := escapeLikePattern(parentPath)
+		rows, err = s.db.QueryContext(ctx, query, escapedPath+"/%", escapedPath+"/%/%")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to list children: %w", err)
@@ -387,7 +388,7 @@ func (s *SQLiteStore) UpdateSingleUseLink(ctx context.Context, token string, sta
 	query := `
 		UPDATE single_use_links
 		SET status = ?, used_at = ?, used_by_ip = ?, updated_at = ?
-		WHERE token = ?`
+		WHERE token = ? AND status = 'active'`
 	result, err := s.db.ExecContext(
 		ctx,
 		query,
@@ -414,7 +415,7 @@ func (s *SQLiteStore) UpdateSingleUseLink(ctx context.Context, token string, sta
 func (s *SQLiteStore) CleanupExpiredLinks(ctx context.Context, before time.Time) (int, error) {
 	result, err := s.db.ExecContext(
 		ctx,
-		`DELETE FROM single_use_links WHERE expires_at < ?`,
+		`DELETE FROM single_use_links WHERE status = 'active' AND expires_at < ?`,
 		before.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -525,6 +526,13 @@ func nullString(value *string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: *value, Valid: true}
+}
+
+// escapeLikePattern escapes SQL LIKE metacharacters (% and _) in a string
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
 }
 
 func nullStringTime(value *time.Time) sql.NullString {

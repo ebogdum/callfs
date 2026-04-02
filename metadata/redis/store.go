@@ -80,16 +80,24 @@ func (s *RedisStore) Create(ctx context.Context, md *metadata.Metadata) error {
 		return fmt.Errorf("failed to encode metadata: %w", err)
 	}
 
-	stored, err := s.client.SetNX(ctx, s.metadataKey(md.Path), raw, 0).Result()
-	if err != nil {
+	// Atomic create: SetNX + SAdd in a single Lua script to prevent
+	// invisible files (metadata exists but missing from parent's children set).
+	luaCreate := `
+		local stored = redis.call("SETNX", KEYS[1], ARGV[1])
+		if stored == 0 then
+			return redis.error_reply("already_exists")
+		end
+		redis.call("SADD", KEYS[2], ARGV[2])
+		return "OK"
+	`
+	mdKey := s.metadataKey(md.Path)
+	childKey := s.childrenKey(parentPath(md.Path))
+	result := s.client.Eval(ctx, luaCreate, []string{mdKey, childKey}, raw, md.Path)
+	if err := result.Err(); err != nil {
+		if strings.Contains(err.Error(), "already_exists") {
+			return metadata.ErrAlreadyExists
+		}
 		return fmt.Errorf("failed to create metadata: %w", err)
-	}
-	if !stored {
-		return metadata.ErrAlreadyExists
-	}
-
-	if err := s.client.SAdd(ctx, s.childrenKey(parentPath(md.Path)), md.Path).Err(); err != nil {
-		return fmt.Errorf("failed to index child metadata: %w", err)
 	}
 	return nil
 }
@@ -112,17 +120,28 @@ func (s *RedisStore) Update(ctx context.Context, md *metadata.Metadata) error {
 }
 
 func (s *RedisStore) Delete(ctx context.Context, path string) error {
-	if _, err := s.Get(ctx, path); err != nil {
-		return err
-	}
-
-	if err := s.client.Del(ctx, s.metadataKey(path)).Err(); err != nil {
+	// Atomic delete: check existence, DEL metadata, SREM from parent, DEL children set
+	// all in a single Lua script to prevent stale children-set entries.
+	luaDelete := `
+		local exists = redis.call("EXISTS", KEYS[1])
+		if exists == 0 then
+			return redis.error_reply("not_found")
+		end
+		redis.call("DEL", KEYS[1])
+		redis.call("SREM", KEYS[2], ARGV[1])
+		redis.call("DEL", KEYS[3])
+		return "OK"
+	`
+	mdKey := s.metadataKey(path)
+	parentChildKey := s.childrenKey(parentPath(path))
+	ownChildKey := s.childrenKey(path)
+	result := s.client.Eval(ctx, luaDelete, []string{mdKey, parentChildKey, ownChildKey}, path)
+	if err := result.Err(); err != nil {
+		if strings.Contains(err.Error(), "not_found") {
+			return metadata.ErrNotFound
+		}
 		return fmt.Errorf("failed to delete metadata: %w", err)
 	}
-	if err := s.client.SRem(ctx, s.childrenKey(parentPath(path)), path).Err(); err != nil {
-		return fmt.Errorf("failed to remove child index: %w", err)
-	}
-	_ = s.client.Del(ctx, s.childrenKey(path)).Err()
 	return nil
 }
 
@@ -200,22 +219,49 @@ func (s *RedisStore) CreateSingleUseLink(ctx context.Context, link *metadata.Sin
 }
 
 func (s *RedisStore) UpdateSingleUseLink(ctx context.Context, token string, status string, usedAt *time.Time, usedByIP *string) error {
-	link, err := s.GetSingleUseLink(ctx, token)
-	if err != nil {
-		return err
+	// Use a Lua script for atomic check-and-set to prevent double-spend
+	luaScript := `
+		local raw = redis.call("GET", KEYS[1])
+		if not raw then
+			return redis.error_reply("not_found")
+		end
+		local link = cjson.decode(raw)
+		if link.Status ~= "active" then
+			return redis.error_reply("not_active")
+		end
+		link.Status = ARGV[1]
+		if ARGV[2] ~= "" then
+			link.UsedAt = ARGV[2]
+		end
+		if ARGV[3] ~= "" then
+			link.UsedByIP = ARGV[3]
+		end
+		link.UpdatedAt = ARGV[4]
+		redis.call("SET", KEYS[1], cjson.encode(link))
+		return "OK"
+	`
+
+	now := time.Now().UTC()
+	usedAtStr := ""
+	if usedAt != nil {
+		usedAtStr = usedAt.UTC().Format(time.RFC3339Nano)
+	}
+	usedByIPStr := ""
+	if usedByIP != nil {
+		usedByIPStr = *usedByIP
 	}
 
-	link.Status = status
-	link.UsedAt = usedAt
-	link.UsedByIP = usedByIP
-	link.UpdatedAt = time.Now().UTC()
+	result := s.client.Eval(ctx, luaScript, []string{s.linkKey(token)},
+		status, usedAtStr, usedByIPStr, now.Format(time.RFC3339Nano))
 
-	raw, err := json.Marshal(link)
-	if err != nil {
-		return fmt.Errorf("failed to encode single-use link: %w", err)
-	}
-
-	if err := s.client.Set(ctx, s.linkKey(token), raw, 0).Err(); err != nil {
+	if err := result.Err(); err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "not_found") {
+			return metadata.ErrNotFound
+		}
+		if strings.Contains(errMsg, "not_active") {
+			return metadata.ErrNotFound // Link already consumed
+		}
 		return fmt.Errorf("failed to update single-use link: %w", err)
 	}
 	return nil

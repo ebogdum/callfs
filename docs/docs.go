@@ -9,11 +9,9 @@ const docTemplate = `{
     "info": {
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
-        "termsOfService": "http://swagger.io/terms/",
         "contact": {
-            "name": "CallFS Support",
-            "url": "http://callfs.io/support",
-            "email": "support@callfs.io"
+            "name": "CallFS Project",
+            "url": "https://github.com/ebogdum/callfs"
         },
         "license": {
             "name": "MIT",
@@ -504,6 +502,122 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/shards/{path}/{index}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieves an individual erasure-coded shard for parallel downloads of erasure-coded files.",
+                "tags": [
+                    "shards"
+                ],
+                "summary": "Download erasure-coded shard",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Shard index",
+                        "name": "index",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Shard content",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Shard not found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/files/ws/{path}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Upgrades to a WebSocket connection for streaming file transfers. Use query parameter mode=download to stream file content in 64KB binary messages, or mode=upload to send file content (max 100MB, memory-buffered). Origin validation is enforced to prevent CSRF.",
+                "tags": [
+                    "files"
+                ],
+                "summary": "WebSocket file transfer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Transfer mode (download or upload)",
+                        "name": "mode",
+                        "in": "query",
+                        "required": true,
+                        "enum": ["download", "upload"]
+                    }
+                ],
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols (WebSocket upgrade)"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/links/generate": {
             "post": {
                 "security": [
@@ -686,7 +800,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Type \"Bearer\" followed by a space and JWT token.",
+            "description": "Type \"Bearer\" followed by a space and your API key.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

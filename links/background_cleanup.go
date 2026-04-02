@@ -27,7 +27,7 @@ func StartCleanupWorker(ctx context.Context, metadataStore metadata.Store, inter
 		for {
 			select {
 			case <-ticker.C:
-				cleanupLinks(metadataStore, logger)
+				cleanupLinks(ctx, metadataStore, logger)
 			case <-ctx.Done():
 				logger.Info("Cleanup worker shutting down")
 				return
@@ -37,8 +37,9 @@ func StartCleanupWorker(ctx context.Context, metadataStore metadata.Store, inter
 }
 
 // cleanupLinks removes expired and used single-use links from the metadata store.
-func cleanupLinks(metadataStore metadata.Store, logger *zap.Logger) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// Uses the parent context so shutdown signals are respected.
+func cleanupLinks(parentCtx context.Context, metadataStore metadata.Store, logger *zap.Logger) {
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 
 	// Clean up expired active links

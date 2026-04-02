@@ -176,6 +176,10 @@ func (e *Engine) UpdateFile(ctx context.Context, path string, reader io.Reader, 
 	}
 
 	if err := e.metadataStore.Update(ctx, existingMd); err != nil {
+		e.logger.Error("Metadata update failed after backend write - inconsistent state",
+			zap.String("path", path), zap.Error(err))
+		// Invalidate cache so subsequent reads don't serve stale metadata
+		e.metadataCache.Invalidate(path)
 		return fmt.Errorf("failed to update metadata: %w", err)
 	}
 
@@ -183,8 +187,9 @@ func (e *Engine) UpdateFile(ctx context.Context, path string, reader io.Reader, 
 		return err
 	}
 
-	// Invalidate cache for this file
+	// Invalidate cache for this file and parent directory
 	e.metadataCache.Invalidate(path)
+	e.metadataCache.InvalidatePrefix(filepath.Dir(path))
 
 	e.logger.Info("File updated successfully",
 		zap.String("path", path),
@@ -243,17 +248,19 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 		return nil
 	}
 
-	// Delete from backend
 	ctx, storage := e.selectBackend(ctx, md)
-	// Convert absolute path to relative path for backend
 	relativePath := strings.TrimPrefix(path, "/")
-	if err := storage.Delete(ctx, relativePath); err != nil {
-		return fmt.Errorf("failed to delete from backend: %w", err)
-	}
 
-	// Delete metadata
+	// Delete metadata first — a crash here leaves an orphaned backend file (reclaimable)
+	// rather than orphaned metadata pointing to nothing (irrecoverable).
 	if err := e.metadataStore.Delete(ctx, path); err != nil {
 		return fmt.Errorf("failed to delete metadata: %w", err)
+	}
+
+	// Best-effort backend deletion
+	if err := storage.Delete(ctx, relativePath); err != nil {
+		e.logger.Warn("Failed to delete from backend after metadata removal",
+			zap.String("path", path), zap.Error(err))
 	}
 
 	if err := e.deleteReplicatedFile(ctx, path, md.BackendType); err != nil {
@@ -287,6 +294,16 @@ func (e *Engine) CreateErasureMetadata(ctx context.Context, path string, md *met
 	}
 
 	e.metadataCache.InvalidatePrefix(filepath.Dir(path))
+	return nil
+}
+
+// UpdateMetadataOnly updates metadata in the store without touching backend files.
+// Used after cross-server proxy writes to keep local metadata in sync.
+func (e *Engine) UpdateMetadataOnly(ctx context.Context, md *metadata.Metadata) error {
+	if err := e.metadataStore.Update(ctx, md); err != nil {
+		return fmt.Errorf("failed to update metadata: %w", err)
+	}
+	e.metadataCache.Invalidate(md.Path)
 	return nil
 }
 

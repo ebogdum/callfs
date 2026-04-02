@@ -40,7 +40,9 @@ func NewRouter(
 
 	// Basic middleware
 	r.Use(authMiddleware.V1RequestIDMiddleware())
-	r.Use(middleware.RealIP)
+	// NOTE: middleware.RealIP removed — it unconditionally trusts X-Forwarded-For
+	// and X-Real-IP headers from any client, allowing IP spoofing. Only re-enable
+	// behind a trusted reverse proxy with proper IP allowlisting.
 	r.Use(middleware.Recoverer)
 	r.Use(authMiddleware.V1SecurityHeaders())
 
@@ -91,8 +93,11 @@ func NewRouter(
 		}
 	})
 
-	// Metrics endpoint (no auth required)
-	r.Handle("/metrics", promhttp.Handler())
+	// Metrics endpoint - protected by auth to prevent information disclosure
+	r.Group(func(r chi.Router) {
+		r.Use(authMiddleware.V1AuthMiddleware(authenticator, logger))
+		r.Handle("/metrics", promhttp.Handler())
+	})
 
 	// API v1 routes with authentication
 	r.Route("/v1", func(r chi.Router) {
@@ -133,8 +138,10 @@ func NewRouter(
 		})
 	})
 
-	// Single-use download endpoint (no auth required)
-	r.Get("/download/{token}", linksHandlers.V1DownloadLinkHandler(engine, linkManager, logger))
+	// Single-use download endpoint (no auth required, rate-limited)
+	downloadRateLimiter := rate.NewLimiter(10, 5)
+	r.With(authMiddleware.V1RateLimitMiddleware(downloadRateLimiter, logger)).
+		Get("/download/{token}", linksHandlers.V1DownloadLinkHandler(engine, linkManager, logger))
 
 	logger.Info("HTTP router configured successfully")
 

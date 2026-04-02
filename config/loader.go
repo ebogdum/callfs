@@ -204,6 +204,34 @@ func validateConfig(cfg *AppConfig) error {
 		return fmt.Errorf("auth.api_keys must contain at least one key")
 	}
 
+	for _, key := range cfg.Auth.APIKeys {
+		if key == "default-api-key" {
+			return fmt.Errorf("auth.api_keys must not use default value 'default-api-key'")
+		}
+		if len(key) < 16 {
+			return fmt.Errorf("auth.api_keys: each key must be at least 16 characters")
+		}
+	}
+
+	if cfg.Erasure.Enabled {
+		if cfg.Erasure.DataShards < 2 {
+			cfg.Erasure.DataShards = 4
+		}
+		if cfg.Erasure.ParityShards < 1 {
+			cfg.Erasure.ParityShards = 2
+		}
+		if cfg.Erasure.DataShards+cfg.Erasure.ParityShards > 256 {
+			return fmt.Errorf("erasure.data_shards + erasure.parity_shards must not exceed 256")
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend.DefaultBackend)) {
+	case "localfs", "s3", "":
+		// valid
+	default:
+		return fmt.Errorf("backend.default_backend must be one of: localfs, s3 (got %q)", cfg.Backend.DefaultBackend)
+	}
+
 	if cfg.Auth.InternalProxySecret == "" || cfg.Auth.InternalProxySecret == "change-me-internal-secret" {
 		return fmt.Errorf("auth.internal_proxy_secret must be set and not use default value")
 	}

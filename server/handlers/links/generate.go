@@ -51,7 +51,8 @@ func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorize
 			return
 		}
 
-		// Parse JSON request
+		// Parse JSON request (limit body size to prevent memory exhaustion)
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		var req GenerateLinkRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			logger.Warn("Invalid JSON in link generation request", zap.Error(err))
@@ -100,8 +101,13 @@ func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorize
 			return
 		}
 
-		// Build full download URL
-		downloadURL := fmt.Sprintf("https://%s/download/%s", apiHost, token)
+		// Build full download URL — apiHost is validated at startup to be hostname:port only
+		sanitizedHost := strings.TrimSpace(apiHost)
+		if strings.Contains(sanitizedHost, "/") || strings.Contains(sanitizedHost, "://") {
+			handlers.SendErrorResponse(w, logger, errors.New("server misconfiguration: invalid external URL"), http.StatusInternalServerError)
+			return
+		}
+		downloadURL := fmt.Sprintf("https://%s/download/%s", sanitizedHost, token)
 
 		// Prepare response
 		response := GenerateLinkResponse{

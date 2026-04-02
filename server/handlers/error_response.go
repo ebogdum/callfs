@@ -54,9 +54,14 @@ func SendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, def
 
 	w.WriteHeader(statusCode)
 
+	message := err.Error()
+	if errorCode == "INTERNAL_ERROR" {
+		message = "an internal error occurred"
+	}
+
 	response := ErrorResponse{
 		Code:    errorCode,
-		Message: err.Error(),
+		Message: message,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -72,12 +77,17 @@ func SendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, def
 		zap.Error(err))
 }
 
-// SendJSONResponse sends a JSON response with any data structure
+// SendJSONResponse sends a JSON response with any data structure.
+// Marshals to a buffer first so that encoding errors don't produce malformed responses.
 func SendJSONResponse(w http.ResponseWriter, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Fallback error handling
+	buf, err := json.Marshal(data)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `{"error":"Failed to encode response"}`)
+		_, _ = w.Write([]byte(`{"error":"Failed to encode response"}`))
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(buf)
+	_, _ = w.Write([]byte("\n"))
 }

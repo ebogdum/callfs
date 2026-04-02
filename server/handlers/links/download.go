@@ -5,12 +5,14 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
+	"net/url"
+	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/core"
+	"github.com/ebogdum/callfs/internal/pathutil"
 	"github.com/ebogdum/callfs/links"
 	"github.com/ebogdum/callfs/server/handlers"
 )
@@ -63,6 +65,15 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 			return
 		}
 
+		// Defense-in-depth: re-validate the stored path before using it
+		if err := pathutil.ValidatePath(filePath); err != nil {
+			logger.Error("Stored link path failed validation",
+				zap.String("file_path", filePath),
+				zap.Error(err))
+			handlers.SendErrorResponse(w, logger, errors.New("link validation failed"), http.StatusInternalServerError)
+			return
+		}
+
 		// Get file from the core engine
 		reader, err := engine.GetFile(ctx, filePath)
 		if err != nil {
@@ -80,9 +91,10 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 			}
 		}()
 
-		// Set appropriate headers for file download
+		// Set appropriate headers for file download (RFC 5987 encoding for safety)
 		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Disposition", "attachment")
+		filename := filepath.Base(filePath)
+		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(filename))
 
 		// Stream the file content
 		_, err = io.Copy(w, reader)
@@ -102,25 +114,13 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 	}
 }
 
-// getUserIP extracts the real user IP address from the request.
+// getUserIP extracts the user IP address from the request.
+// Uses RemoteAddr as the authoritative source (which middleware.RealIP already
+// overwrites from trusted proxy headers). Appends X-Forwarded-For for audit context.
 func getUserIP(r *http.Request) string {
-	// Check X-Forwarded-For header (from load balancer/proxy)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.IndexByte(xff, ','); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
 	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr
-	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return ip
-	}
-
-	return r.RemoteAddr
+	return ip
 }

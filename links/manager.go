@@ -143,14 +143,16 @@ func (lm *LinkManager) ValidateAndInvalidateLink(ctx context.Context, token, use
 		return "", ErrLinkInvalid
 	}
 
-	// Atomically mark link as used
+	// Atomically mark link as used via conditional update (CAS on status).
+	// UpdateSingleUseLink must only update if status is still "active" and return
+	// an error (or 0 rows affected) if another request already consumed the token.
 	now := time.Now()
 	if err := lm.metadataStore.UpdateSingleUseLink(ctx, token, "used", &now, &userIP); err != nil {
 		lm.logger.Error("Failed to mark single-use link as used",
 			zap.String("token", TruncateToken(token)),
 			zap.String("user_ip", userIP),
 			zap.Error(err))
-		return "", fmt.Errorf("failed to invalidate link: %w", err)
+		return "", ErrLinkInvalid
 	}
 
 	lm.logger.Info("Single-use link consumed",

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -57,7 +58,21 @@ func (c *MetadataCache) Get(path string) (*metadata.Metadata, bool) {
 		return nil, false
 	}
 
-	return entry.Metadata, true
+	// Deep copy: clone pointer fields to prevent callers from mutating cached state
+	cp := *entry.Metadata
+	if cp.ParentID != nil {
+		v := *cp.ParentID
+		cp.ParentID = &v
+	}
+	if cp.CallFSInstanceID != nil {
+		v := *cp.CallFSInstanceID
+		cp.CallFSInstanceID = &v
+	}
+	if cp.SymlinkTarget != nil {
+		v := *cp.SymlinkTarget
+		cp.SymlinkTarget = &v
+	}
+	return &cp, true
 }
 
 // Set stores metadata in the cache
@@ -85,16 +100,21 @@ func (c *MetadataCache) Invalidate(path string) {
 	delete(c.cache, path)
 }
 
-// InvalidatePrefix removes all entries with the given path prefix
+// InvalidatePrefix removes all entries with the given path prefix (respecting path boundaries)
 func (c *MetadataCache) InvalidatePrefix(prefix string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for path := range c.cache {
-		if len(path) >= len(prefix) && path[:len(prefix)] == prefix {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			delete(c.cache, path)
 		}
 	}
+}
+
+// Close stops the background cleanup goroutine
+func (c *MetadataCache) Close() {
+	close(c.stopChan)
 }
 
 // evictOneEntry removes one entry to make space (caller must hold lock)

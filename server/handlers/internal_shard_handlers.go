@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bytes"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/backends"
+	"github.com/ebogdum/callfs/internal/pathutil"
 )
 
 // InternalStoreShardHandler handles PUT /v1/internal/shards/{path}/{index}
@@ -27,9 +30,19 @@ func InternalStoreShardHandler(localBackend backends.Storage, internalSecret str
 			return
 		}
 
-		if err := localBackend.Create(r.Context(), shardPath, r.Body, r.ContentLength); err != nil {
+		// Limit shard size to 256 MB and buffer body to allow retry
+		const maxShardBytes = 256 << 20
+		r.Body = http.MaxBytesReader(w, r.Body, maxShardBytes)
+		data, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			http.Error(w, "failed to read shard body", http.StatusBadRequest)
+			return
+		}
+		dataSize := int64(len(data))
+
+		if err := localBackend.Create(r.Context(), shardPath, bytes.NewReader(data), dataSize); err != nil {
 			// Try update if create fails (shard already exists)
-			if updateErr := localBackend.Update(r.Context(), shardPath, r.Body, r.ContentLength); updateErr != nil {
+			if updateErr := localBackend.Update(r.Context(), shardPath, bytes.NewReader(data), dataSize); updateErr != nil {
 				logger.Error("Failed to store shard", zap.String("path", shardPath), zap.Error(err))
 				http.Error(w, "failed to store shard", http.StatusInternalServerError)
 				return
@@ -93,9 +106,12 @@ func InternalDeleteShardHandler(localBackend backends.Storage, internalSecret st
 }
 
 func authorizeInternal(r *http.Request, secret string) bool {
+	if secret == "" {
+		return false // Reject all requests if no internal secret is configured
+	}
 	auth := r.Header.Get("Authorization")
-	token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer"))
-	return token == secret
+	token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	return subtle.ConstantTimeCompare([]byte(token), []byte(secret)) == 1
 }
 
 // parseShardPath extracts the shard storage path and index from a URL like
@@ -120,10 +136,15 @@ func parseShardPath(urlPath string) (string, int, error) {
 		return "", 0, fmt.Errorf("invalid shard index: %w", err)
 	}
 
-	// Build the shard storage path using same convention as manager
-	// The actual storage path is determined by erasure metadata, but for internal
-	// shard endpoints we use the filePath+index to look up from metadata.
-	// For direct storage, we use the erasure shard path convention.
+	// Validate the file path to prevent directory traversal
+	if err := pathutil.ValidatePath(filePath); err != nil {
+		return "", 0, fmt.Errorf("invalid shard file path: %w", err)
+	}
+
+	// Use content-hash based path matching erasure/manager.go convention.
+	// The filePath is used as-is since the caller (storeRemoteShard) already
+	// sends the hash-based prefix as the path component.
 	shardPath := fmt.Sprintf(".erasure/%s/%d", filePath, index)
+	// NOTE: This path scheme must match erasure.Manager.StoreFile's shardPath construction.
 	return shardPath, index, nil
 }

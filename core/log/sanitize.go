@@ -57,7 +57,9 @@ func SanitizePath(path string) string {
 		// Show full path (only for development)
 		return path
 	default:
-		return SanitizePath(path) // Default to production mode
+		// Default to production mode (non-recursive)
+		hash := sha256.Sum256([]byte(path))
+		return fmt.Sprintf("hash:%x", hash[:8])
 	}
 }
 
@@ -82,7 +84,9 @@ func SanitizeUserID(userID string) string {
 		// Show full user ID
 		return userID
 	default:
-		return SanitizeUserID(userID)
+		// Default to production mode (non-recursive)
+		hash := sha256.Sum256([]byte(userID))
+		return fmt.Sprintf("user_hash:%x", hash[:6])
 	}
 }
 
