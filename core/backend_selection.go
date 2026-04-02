@@ -91,7 +91,11 @@ func (e *Engine) ensureParentDirectories(ctx context.Context, path string, backe
 		BackendType: backendType,
 	}
 
-	return e.CreateDirectory(ctx, parentPath, parentMd)
+	err := e.CreateDirectory(ctx, parentPath, parentMd)
+	if err != nil && err == metadata.ErrAlreadyExists {
+		return nil // Suppress race: concurrent creates of same parent
+	}
+	return err
 }
 
 // EnsureRootDirectory ensures that the root directory metadata exists

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,13 +39,21 @@ func V1GetShard(em *erasure.Manager, authorizer auth.Authorizer, logger *zap.Log
 			return
 		}
 
-		filePath := "/" + urlPath[:lastSlash]
+		rawFilePath := urlPath[:lastSlash]
 		indexStr := urlPath[lastSlash+1:]
 		index, err := strconv.Atoi(indexStr)
 		if err != nil {
 			SendErrorResponse(w, logger, fmt.Errorf("invalid shard index"), http.StatusBadRequest)
 			return
 		}
+
+		// Validate and sanitize the file path before authorization
+		pathInfo := ParseFilePath(rawFilePath)
+		if pathInfo.IsInvalid {
+			SendErrorResponse(w, logger, fmt.Errorf("invalid shard file path"), http.StatusBadRequest)
+			return
+		}
+		filePath := pathInfo.FullPath
 
 		if err := authorizer.Authorize(r.Context(), userID, filePath, auth.ReadPerm); err != nil {
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
@@ -93,7 +102,7 @@ func HandleErasureDownload(w http.ResponseWriter, r *http.Request, em *erasure.M
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	if _, err := io.Copy(w, strings.NewReader(string(data))); err != nil {
+	if _, err := io.Copy(w, bytes.NewReader(data)); err != nil {
 		logger.Error("Failed to stream reassembled file", zap.Error(err))
 	}
 }

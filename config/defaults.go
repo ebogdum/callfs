@@ -44,7 +44,7 @@ func DefaultAppConfig() AppConfig {
 		},
 		MetadataStore: MetadataStoreConfig{
 			Type:           "postgres",
-			DSN:            "postgres://callfs:callfs@localhost/callfs?sslmode=disable",
+			DSN:            "postgres://callfs:callfs@localhost/callfs?sslmode=require",
 			SQLitePath:     "./callfs.sqlite3",
 			RedisAddr:      "localhost:6379",
 			RedisPassword:  "",

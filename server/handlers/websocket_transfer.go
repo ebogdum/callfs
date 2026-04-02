@@ -26,7 +26,21 @@ var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  wsChunkSize,
 	WriteBufferSize: wsChunkSize,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // Non-browser clients
+		}
+		// Parse origin as URL and compare host exactly to prevent substring bypass
+		// (e.g. evil.callfs.internal:8443.attacker.com matching callfs.internal:8443)
+		originHost := origin
+		if idx := strings.Index(origin, "://"); idx >= 0 {
+			originHost = origin[idx+3:]
+		}
+		// Strip any path component
+		if idx := strings.Index(originHost, "/"); idx >= 0 {
+			originHost = originHost[:idx]
+		}
+		return originHost == r.Host
 	},
 }
 
@@ -121,6 +135,7 @@ func V1WebSocketTransfer(engine *core.Engine, authorizer auth.Authorizer, backen
 			}
 
 			var payload bytes.Buffer
+			const maxWSUpload = 100 << 20 // 100 MB max for WebSocket uploads (memory-buffered)
 			for {
 				messageType, data, readErr := conn.ReadMessage()
 				if readErr != nil {
@@ -134,6 +149,13 @@ func V1WebSocketTransfer(engine *core.Engine, authorizer auth.Authorizer, backen
 
 				if messageType != websocket.BinaryMessage {
 					continue
+				}
+
+				if int64(payload.Len())+int64(len(data)) > maxWSUpload {
+					_ = conn.WriteControl(websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.CloseMessageTooBig, "upload too large"),
+						time.Now().Add(5*time.Second))
+					return
 				}
 
 				if _, err := payload.Write(data); err != nil {

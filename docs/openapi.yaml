@@ -190,6 +190,75 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /shards/{path}/{index}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: File path
+        schema:
+          type: string
+      - name: index
+        in: path
+        required: true
+        description: Shard index
+        schema:
+          type: integer
+
+    get:
+      summary: Download erasure-coded shard
+      description: Retrieves an individual erasure-coded shard for parallel downloads of erasure-coded files.
+      responses:
+        '200':
+          description: Shard content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /files/ws/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: File path
+        schema:
+          type: string
+
+    get:
+      summary: WebSocket file transfer
+      description: |
+        Upgrades to a WebSocket connection for streaming file transfers.
+        Use query parameter mode=download to stream file content in 64KB binary
+        messages, or mode=upload to send file content (max 100MB, memory-buffered).
+        Origin validation is enforced to prevent CSRF.
+      parameters:
+        - name: mode
+          in: query
+          required: true
+          description: Transfer mode
+          schema:
+            type: string
+            enum: [download, upload]
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket upgrade)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /links/generate:
     post:
       summary: Generate single-use download link
@@ -401,7 +470,7 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: Use "Bearer <api-key>" format
+      description: 'Use "Bearer <api-key>" format. Authentication uses static API keys, not JWT.'
 
   schemas:
     FileInfo:

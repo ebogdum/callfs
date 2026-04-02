@@ -83,15 +83,13 @@ definitions:
 host: localhost:8443
 info:
   contact:
-    email: support@callfs.io
-    name: CallFS Support
-    url: http://callfs.io/support
+    name: CallFS Project
+    url: https://github.com/ebogdum/callfs
   description: CallFS is an ultra-lightweight, high-performance REST API filesystem
     that provides precise Linux filesystem semantics over various backends.
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
-  termsOfService: http://swagger.io/terms/
   title: CallFS API
   version: "1.0"
 paths:
@@ -415,6 +413,88 @@ paths:
       summary: Update file with cross-server support
       tags:
       - files
+  /v1/shards/{path}/{index}:
+    get:
+      description: Retrieves an individual erasure-coded shard for parallel downloads
+        of erasure-coded files.
+      parameters:
+      - description: File path
+        in: path
+        name: path
+        required: true
+        type: string
+      - description: Shard index
+        in: path
+        name: index
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: Shard content
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Shard not found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Download erasure-coded shard
+      tags:
+      - shards
+  /v1/files/ws/{path}:
+    get:
+      description: |
+        Upgrades to a WebSocket connection for streaming file transfers.
+        Use query parameter mode=download to stream file content in 64KB binary
+        messages, or mode=upload to send file content (max 100MB, memory-buffered).
+        Origin validation is enforced to prevent CSRF.
+      parameters:
+      - description: File path
+        in: path
+        name: path
+        required: true
+        type: string
+      - description: Transfer mode (download or upload)
+        in: query
+        name: mode
+        required: true
+        type: string
+        enum:
+        - download
+        - upload
+      responses:
+        "101":
+          description: Switching Protocols (WebSocket upgrade)
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: WebSocket file transfer
+      tags:
+      - files
   /v1/links/generate:
     post:
       consumes:
@@ -454,7 +534,7 @@ paths:
       - links
 securityDefinitions:
   BearerAuth:
-    description: Type "Bearer" followed by a space and JWT token.
+    description: Type "Bearer" followed by a space and your API key.
     in: header
     name: Authorization
     type: apiKey

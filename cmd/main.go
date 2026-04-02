@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -390,6 +391,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		cfg.HA.ReplicaBackend,
 		cfg.HA.RequireReplicaSuccess,
 		logger)
+	defer coreEngine.Close()
 
 	// Initialize erasure manager if enabled
 	if cfg.Erasure.Enabled {
@@ -480,11 +482,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 	router := server.NewRouter(coreEngine, authenticator, authorizer, linkManager, &cfg.Server, &cfg.Backend, cfg.Server.ExternalURL, logger)
 	rootHandler := http.Handler(router)
 
-	// Register internal shard endpoints if erasure is enabled
+	// Register internal shard endpoints if erasure is enabled.
+	// These endpoints are protected by the InternalProxySecret bearer token.
 	if cfg.Erasure.Enabled {
 		mux := http.NewServeMux()
 		mux.Handle("/", rootHandler)
-		mux.HandleFunc("/v1/internal/shards/", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/v1/internal/shards/", recoverMiddleware(logger, func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
 			case http.MethodPut:
 				handlers.InternalStoreShardHandler(localFSBackend, cfg.Auth.InternalProxySecret, logger)(w, r)
@@ -495,21 +498,21 @@ func runServer(cmd *cobra.Command, args []string) error {
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
-		})
+		}))
 		rootHandler = mux
 	}
 
 	if raftMetadataStore != nil {
 		mux := http.NewServeMux()
 		mux.Handle("/", rootHandler)
-		mux.HandleFunc("/v1/internal/raft/join", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/v1/internal/raft/join", recoverMiddleware(logger, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
 
 			authHeader := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
-			if authHeader != cfg.Auth.InternalProxySecret {
+			if subtle.ConstantTimeCompare([]byte(authHeader), []byte(cfg.Auth.InternalProxySecret)) != 1 {
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: "unauthorized"})
 				return
@@ -522,6 +525,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			}
 
 			var req metadataraft.JoinRequest
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: fmt.Sprintf("invalid request: %v", err)})
@@ -540,21 +544,22 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "joined", LeaderID: raftMetadataStore.LeaderID()})
-		})
-		mux.HandleFunc("/v1/internal/raft/metadata/apply", func(w http.ResponseWriter, r *http.Request) {
+		}))
+		mux.HandleFunc("/v1/internal/raft/metadata/apply", recoverMiddleware(logger, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
 
-			authHeader := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
-			if authHeader != cfg.Auth.InternalProxySecret {
+			authHeader2 := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
+			if subtle.ConstantTimeCompare([]byte(authHeader2), []byte(cfg.Auth.InternalProxySecret)) != 1 {
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: "unauthorized"})
 				return
 			}
 
 			var req metadataraft.ForwardApplyRequest
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: fmt.Sprintf("invalid request: %v", err)})
@@ -579,7 +584,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			if err := json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{CleanupCount: res.CleanupCount}); err != nil {
 				logger.Error("Failed to encode raft apply response", zap.Error(err))
 			}
-		})
+		}))
 		rootHandler = mux
 	}
 
@@ -594,18 +599,23 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	var metricsSrv *http.Server
 	var quicSrv *http3.Server
+	serverErrCh := make(chan error, 3)
+
 	if cfg.Metrics.ListenAddr != "" {
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle("/metrics", promhttp.Handler())
 		metricsSrv = &http.Server{
-			Addr:    cfg.Metrics.ListenAddr,
-			Handler: metricsMux,
+			Addr:         cfg.Metrics.ListenAddr,
+			Handler:      metricsMux,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+			IdleTimeout:  120 * time.Second,
 		}
 
 		go func() {
 			logger.Info("Starting metrics server", zap.String("addr", cfg.Metrics.ListenAddr))
 			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.Fatal("Failed to start metrics server", zap.Error(err))
+				serverErrCh <- fmt.Errorf("metrics server failed: %w", err)
 			}
 		}()
 	}
@@ -624,7 +634,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 				zap.String("addr", cfg.Server.QUICListenAddr),
 				zap.String("protocol", "quic/http3"))
 			if err := quicSrv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil {
-				logger.Fatal("Failed to start QUIC server", zap.Error(err))
+				serverErrCh <- fmt.Errorf("QUIC server failed: %w", err)
 			}
 		}()
 	}
@@ -640,33 +650,40 @@ func runServer(cmd *cobra.Command, args []string) error {
 		case "http":
 			logger.Info("Starting HTTP server", zap.String("addr", cfg.Server.ListenAddr))
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.Fatal("Failed to start HTTP server", zap.Error(err))
+				serverErrCh <- fmt.Errorf("HTTP server failed: %w", err)
 			}
 		case "auto":
 			if cfg.Server.CertFile != "" && cfg.Server.KeyFile != "" {
 				logger.Info("Starting HTTPS server (auto mode)", zap.String("addr", cfg.Server.ListenAddr))
 				if err := srv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil && err != http.ErrServerClosed {
-					logger.Fatal("Failed to start HTTPS server", zap.Error(err))
+					serverErrCh <- fmt.Errorf("HTTPS server (auto) failed: %w", err)
 				}
 				return
 			}
 
 			logger.Info("Starting HTTP server (auto mode fallback)", zap.String("addr", cfg.Server.ListenAddr))
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.Fatal("Failed to start HTTP server", zap.Error(err))
+				serverErrCh <- fmt.Errorf("HTTP server (auto) failed: %w", err)
 			}
 		default:
 			logger.Info("Starting HTTPS server", zap.String("addr", cfg.Server.ListenAddr))
 			if err := srv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil && err != http.ErrServerClosed {
-				logger.Fatal("Failed to start HTTPS server", zap.Error(err))
+				serverErrCh <- fmt.Errorf("HTTPS server failed: %w", err)
 			}
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown the server
+	// Wait for interrupt signal or server error
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	select {
+	case <-quit:
+		// Normal shutdown
+	case err := <-serverErrCh:
+		logger.Error("Server startup failed", zap.Error(err))
+		cancel()
+		return err
+	}
 
 	logger.Info("Shutting down server...")
 
@@ -680,18 +697,28 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Shut down all ancillary servers; collect errors but don't short-circuit
+	// so every server gets a shutdown attempt (prevents leaking QUIC server
+	// when metrics shutdown fails, etc.)
+	var shutdownErr error
 	if metricsSrv != nil {
 		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
 			logger.Error("Metrics server forced to shutdown", zap.Error(err))
-			return err
+			shutdownErr = err
 		}
 	}
 
 	if quicSrv != nil {
 		if err := quicSrv.Close(); err != nil {
 			logger.Error("QUIC server forced to shutdown", zap.Error(err))
-			return err
+			if shutdownErr == nil {
+				shutdownErr = err
+			}
 		}
+	}
+
+	if shutdownErr != nil {
+		return shutdownErr
 	}
 
 	logger.Info("Server exited gracefully")
@@ -732,6 +759,21 @@ func maskDSN(dsn string) string {
 		return dsn[:10] + "***" + dsn[len(dsn)-7:]
 	}
 	return "***"
+}
+
+// recoverMiddleware wraps an http.HandlerFunc with panic recovery and logging.
+func recoverMiddleware(logger *zap.Logger, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rvr := recover(); rvr != nil {
+				logger.Error("Internal handler panic",
+					zap.Any("panic", rvr),
+					zap.String("path", r.URL.Path))
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		}()
+		next(w, r)
+	}
 }
 
 // initializeLogger creates a zap logger based on configuration

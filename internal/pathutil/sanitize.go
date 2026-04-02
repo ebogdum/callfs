@@ -84,33 +84,35 @@ func SafeJoin(root, rel string) (string, error) {
 	// Use EvalSymlinks to resolve any symbolic links and check the real path
 	resolved, err := filepath.EvalSymlinks(joined)
 	if err != nil {
-		// If we can't resolve symlinks, that's ok - file might not exist yet
-		// But we still need to check the directory components exist and are safe
+		// File might not exist yet — resolve the parent directory to detect symlink escapes
 		dir := filepath.Dir(joined)
 		if dir != cleanRoot {
 			resolvedDir, dirErr := filepath.EvalSymlinks(dir)
 			if dirErr == nil {
-				// Check if the resolved directory is still within root
 				relDir, relErr := filepath.Rel(cleanRoot, resolvedDir)
 				if relErr != nil || strings.HasPrefix(relDir, "..") {
 					return "", metadata.ErrForbidden
 				}
+				// Reconstruct using the resolved parent to prevent TOCTOU symlink swap
+				return filepath.Join(resolvedDir, filepath.Base(joined)), nil
 			}
 		}
-		// If we can't resolve, but the basic check passes, return the joined path
+		// Parent is root or unresolvable — validate the joined path structurally
 		relPath, relErr := filepath.Rel(cleanRoot, joined)
 		if relErr != nil || strings.HasPrefix(relPath, "..") {
 			return "", metadata.ErrForbidden
 		}
-	} else {
-		// We successfully resolved symlinks, check if it's within root
-		relPath, relErr := filepath.Rel(cleanRoot, resolved)
-		if relErr != nil || strings.HasPrefix(relPath, "..") {
-			return "", metadata.ErrForbidden
-		}
+		return joined, nil
 	}
 
-	return joined, nil
+	// Symlinks fully resolved — verify the resolved path is within root
+	relPath, relErr := filepath.Rel(cleanRoot, resolved)
+	if relErr != nil || strings.HasPrefix(relPath, "..") {
+		return "", metadata.ErrForbidden
+	}
+
+	// Return the resolved path to prevent TOCTOU symlink race
+	return resolved, nil
 }
 
 // ValidatePath performs comprehensive path validation for security.
@@ -125,9 +127,16 @@ func ValidatePath(path string) error {
 		return metadata.ErrForbidden
 	}
 
-	// Check for control characters
+	// Check for control characters and Unicode BiDi overrides
 	for _, char := range path {
 		if char < 32 && char != '\t' {
+			return metadata.ErrForbidden
+		}
+		// Block Unicode bidirectional override characters (log injection risk)
+		if char >= 0x202A && char <= 0x202E {
+			return metadata.ErrForbidden
+		}
+		if char >= 0x2066 && char <= 0x2069 {
 			return metadata.ErrForbidden
 		}
 	}

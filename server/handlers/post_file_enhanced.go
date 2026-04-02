@@ -192,7 +192,8 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 		} else {
 			// File creation (fileExists is false at this point)
 			size := r.ContentLength
-			if size < 0 {
+			isChunked := size < 0
+			if isChunked {
 				size = 0
 			}
 
@@ -201,7 +202,9 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 			em := engine.GetErasureManager()
 
 			if erasureRequested && em != nil {
-				// Read the full body for erasure encoding
+				// Limit erasure upload body to 1 GB
+				const maxErasureUpload = 1 << 30
+				r.Body = http.MaxBytesReader(w, r.Body, maxErasureUpload)
 				data, readErr := io.ReadAll(r.Body)
 				if readErr != nil {
 					SendErrorResponse(w, logger, readErr, http.StatusInternalServerError)
@@ -244,6 +247,17 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 				return
 			}
 
+			// Limit normal upload body to 10 GiB
+			const maxUploadBytes = 10 << 30
+			r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+
+			// Wrap body with counting reader for chunked uploads to determine actual size
+			var countReader *CountingReader
+			if isChunked {
+				countReader = NewCountingReader(r.Body)
+				r.Body = io.NopCloser(countReader)
+			}
+
 			md := &metadata.Metadata{
 				Name:        pathInfo.Name,
 				Type:        "file",
@@ -260,6 +274,23 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 			if err := engine.CreateFile(r.Context(), enginePath, r.Body, size, md); err != nil {
 				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 				return
+			}
+
+			// For chunked uploads, correct the metadata size now that we know actual bytes
+			if countReader != nil {
+				actualSize := countReader.BytesRead()
+				if actualSize != size {
+					md.Size = actualSize
+					md.MTime = time.Now()
+					md.UpdatedAt = time.Now()
+					if updateErr := engine.UpdateMetadataOnly(r.Context(), md); updateErr != nil {
+						logger.Warn("Failed to correct metadata size after chunked upload",
+							zap.String("path", enginePath),
+							zap.Int64("actual_size", actualSize),
+							zap.Error(updateErr))
+					}
+					size = actualSize
+				}
 			}
 
 			w.WriteHeader(http.StatusCreated)

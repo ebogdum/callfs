@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -71,9 +72,12 @@ func V1RequestIDMiddleware() func(http.Handler) http.Handler {
 
 // generateRequestID creates a random request ID
 func generateRequestID() string {
-	bytes := make([]byte, 8)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: use zero bytes rather than panicking
+		return "0000000000000000"
+	}
+	return hex.EncodeToString(b)
 }
 
 // GetUserID extracts the user ID from request context
@@ -102,10 +106,13 @@ func sendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, sta
 		"message": err.Error(),
 	}
 
-	// For simplicity, write a basic JSON response
-	// In production, you'd use a proper JSON encoder
-	jsonResponse := `{"code":"` + response["code"] + `","message":"` + response["message"] + `"}`
-	if _, err := w.Write([]byte(jsonResponse)); err != nil {
+	// Use json.Marshal for safe encoding
+	jsonBytes, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		logger.Error("Failed to marshal error response", zap.Error(marshalErr))
+		return
+	}
+	if _, err := w.Write(jsonBytes); err != nil {
 		logger.Error("Failed to write error response", zap.Error(err))
 	}
 

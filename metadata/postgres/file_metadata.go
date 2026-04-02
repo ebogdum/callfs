@@ -4,9 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+
+	"github.com/lib/pq"
 
 	"github.com/ebogdum/callfs/metadata"
 )
+
+// escapeLikePattern escapes SQL LIKE metacharacters (% and _)
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
+}
 
 // Get retrieves metadata for a file or directory by path
 func (s *PostgresStore) Get(ctx context.Context, path string) (*metadata.Metadata, error) {
@@ -97,6 +107,9 @@ func (s *PostgresStore) Create(ctx context.Context, md *metadata.Metadata) error
 	).Scan(&md.ID, &md.CreatedAt, &md.UpdatedAt)
 
 	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			return metadata.ErrAlreadyExists
+		}
 		return fmt.Errorf("failed to create metadata: %w", err)
 	}
 
@@ -115,7 +128,7 @@ func (s *PostgresStore) Update(ctx context.Context, md *metadata.Metadata) error
 		symlinkTarget = sql.NullString{String: *md.SymlinkTarget, Valid: true}
 	}
 
-	_, err := s.db.ExecContext(ctx, _SQL_UPDATE_INODE,
+	result, err := s.db.ExecContext(ctx, _SQL_UPDATE_INODE,
 		md.Size,
 		md.Mode,
 		md.UID,
@@ -131,6 +144,14 @@ func (s *PostgresStore) Update(ctx context.Context, md *metadata.Metadata) error
 
 	if err != nil {
 		return fmt.Errorf("failed to update metadata: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return metadata.ErrNotFound
 	}
 
 	return nil
@@ -160,11 +181,11 @@ func (s *PostgresStore) Delete(ctx context.Context, path string) error {
 // ListChildren lists all direct children of a directory
 func (s *PostgresStore) ListChildren(ctx context.Context, parentPath string) ([]*metadata.Metadata, error) {
 	query := `
-		SELECT id, parent_id, name, path, type, size, mode, uid, gid, 
+		SELECT id, parent_id, name, path, type, size, mode, uid, gid,
 		       atime, mtime, ctime, backend_type, callfs_instance_id,
 		       symlink_target, created_at, updated_at
 		FROM inodes
-		WHERE path LIKE $1 || '/%' AND path NOT LIKE $1 || '/%/%'
+		WHERE path LIKE $1 || '/%' ESCAPE '\' AND path NOT LIKE $1 || '/%/%' ESCAPE '\'
 		ORDER BY type DESC, name ASC`
 
 	var (
@@ -182,7 +203,9 @@ func (s *PostgresStore) ListChildren(ctx context.Context, parentPath string) ([]
 			ORDER BY type DESC, name ASC`
 		rows, err = s.db.QueryContext(ctx, rootQuery)
 	} else {
-		rows, err = s.db.QueryContext(ctx, query, parentPath)
+		// Escape LIKE metacharacters to prevent wildcard injection
+		escapedPath := escapeLikePattern(parentPath)
+		rows, err = s.db.QueryContext(ctx, query, escapedPath)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to list children: %w", err)

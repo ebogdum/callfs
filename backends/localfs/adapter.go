@@ -63,22 +63,41 @@ func (a *LocalFSAdapter) Create(ctx context.Context, path string, reader io.Read
 		return fmt.Errorf("failed to create parent directory: %w", err)
 	}
 
-	// Create file with exclusive flag
-	file, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	// Write to a temp file, fsync, then rename for atomicity
+	tmpFile, err := os.CreateTemp(filepath.Dir(fullPath), ".callfs-tmp-*")
 	if err != nil {
-		if os.IsExist(err) {
-			return metadata.ErrAlreadyExists
-		}
-		return fmt.Errorf("failed to create file %s: %w", path, err)
+		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer file.Close()
+	tmpPath := tmpFile.Name()
 
-	// Copy content from reader
-	_, err = io.Copy(file, reader)
-	if err != nil {
-		// Clean up partially created file
-		os.Remove(fullPath)
-		return fmt.Errorf("failed to write file content: %w", err)
+	_, copyErr := io.Copy(tmpFile, reader)
+	if copyErr != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to write file content: %w", copyErr)
+	}
+
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to fsync file: %w", err)
+	}
+	tmpFile.Close()
+
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to set file permissions: %w", err)
+	}
+
+	// Check if destination already exists (O_EXCL equivalent)
+	if _, statErr := os.Lstat(fullPath); statErr == nil {
+		os.Remove(tmpPath)
+		return metadata.ErrAlreadyExists
+	}
+
+	if err := os.Rename(tmpPath, fullPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
 	return nil
@@ -96,17 +115,35 @@ func (a *LocalFSAdapter) Update(ctx context.Context, path string, reader io.Read
 		return fmt.Errorf("failed to create parent directory: %w", err)
 	}
 
-	// Create or truncate file
-	file, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	// Write to temp file, fsync, then atomic rename to avoid data loss
+	tmpFile, err := os.CreateTemp(filepath.Dir(fullPath), ".callfs-tmp-*")
 	if err != nil {
-		return fmt.Errorf("failed to open file for update %s: %w", path, err)
+		return fmt.Errorf("failed to create temp file for update: %w", err)
 	}
-	defer file.Close()
+	tmpPath := tmpFile.Name()
 
-	// Copy content from reader
-	_, err = io.Copy(file, reader)
-	if err != nil {
-		return fmt.Errorf("failed to write file content: %w", err)
+	_, copyErr := io.Copy(tmpFile, reader)
+	if copyErr != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to write file content: %w", copyErr)
+	}
+
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to fsync file: %w", err)
+	}
+	tmpFile.Close()
+
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to set file permissions: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, fullPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
 	return nil

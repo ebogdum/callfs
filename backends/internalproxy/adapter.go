@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -90,9 +91,9 @@ func (a *InternalProxyAdapter) OpenFromInstance(ctx context.Context, instanceID,
 	}
 
 	// Construct request URL
-	url := fmt.Sprintf("%s/v1/files/%s", strings.TrimRight(endpoint, "/"), strings.TrimLeft(path, "/"))
+	reqURL := buildProxyURL(endpoint, path)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -103,7 +104,7 @@ func (a *InternalProxyAdapter) OpenFromInstance(ctx context.Context, instanceID,
 	a.logger.Debug("Proxying file open request",
 		zap.String("instance_id", instanceID),
 		zap.String("path", path),
-		zap.String("url", url))
+		zap.String("url", reqURL))
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -143,9 +144,9 @@ func (a *InternalProxyAdapter) UpdateOnInstance(ctx context.Context, instanceID,
 	}
 
 	// Construct request URL
-	url := fmt.Sprintf("%s/v1/files/%s", strings.TrimRight(endpoint, "/"), strings.TrimLeft(path, "/"))
+	reqURL := buildProxyURL(endpoint, path)
 
-	req, err := http.NewRequestWithContext(ctx, "PUT", url, reader)
+	req, err := http.NewRequestWithContext(ctx, "PUT", reqURL, reader)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -160,7 +161,7 @@ func (a *InternalProxyAdapter) UpdateOnInstance(ctx context.Context, instanceID,
 	a.logger.Debug("Proxying file update request",
 		zap.String("instance_id", instanceID),
 		zap.String("path", path),
-		zap.String("url", url))
+		zap.String("url", reqURL))
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -195,9 +196,9 @@ func (a *InternalProxyAdapter) DeleteOnInstance(ctx context.Context, instanceID,
 	}
 
 	// Construct request URL
-	url := fmt.Sprintf("%s/v1/files/%s", strings.TrimRight(endpoint, "/"), strings.TrimLeft(path, "/"))
+	reqURL := buildProxyURL(endpoint, path)
 
-	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -208,7 +209,7 @@ func (a *InternalProxyAdapter) DeleteOnInstance(ctx context.Context, instanceID,
 	a.logger.Debug("Proxying file delete request",
 		zap.String("instance_id", instanceID),
 		zap.String("path", path),
-		zap.String("url", url))
+		zap.String("url", reqURL))
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -243,9 +244,9 @@ func (a *InternalProxyAdapter) StatOnInstance(ctx context.Context, instanceID, p
 	}
 
 	// Construct request URL
-	url := fmt.Sprintf("%s/v1/files/%s", strings.TrimRight(endpoint, "/"), strings.TrimLeft(path, "/"))
+	reqURL := buildProxyURL(endpoint, path)
 
-	req, err := http.NewRequestWithContext(ctx, "HEAD", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "HEAD", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -324,9 +325,9 @@ func (a *InternalProxyAdapter) ListDirectoryOnInstance(ctx context.Context, inst
 	}
 
 	// Construct request URL
-	url := fmt.Sprintf("%s/v1/files/%s", strings.TrimRight(endpoint, "/"), strings.TrimLeft(path, "/"))
+	reqURL := buildProxyURL(endpoint, path)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -337,7 +338,7 @@ func (a *InternalProxyAdapter) ListDirectoryOnInstance(ctx context.Context, inst
 	a.logger.Debug("Proxying directory list request",
 		zap.String("instance_id", instanceID),
 		zap.String("path", path),
-		zap.String("url", url))
+		zap.String("url", reqURL))
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -427,4 +428,17 @@ func (a *InternalProxyAdapter) getInstanceIDFromContext(ctx context.Context) str
 // WithInstanceID returns a new context with the instance ID
 func WithInstanceID(ctx context.Context, instanceID string) context.Context {
 	return context.WithValue(ctx, instanceIDKey, instanceID)
+}
+
+// buildProxyURL constructs a properly encoded URL for proxying to a peer instance.
+// Uses url.JoinPath for correct per-segment encoding of multi-segment paths.
+func buildProxyURL(endpoint, path string) string {
+	base := strings.TrimRight(endpoint, "/")
+	cleanPath := strings.TrimLeft(path, "/")
+	result, err := url.JoinPath(base, "v1", "files", cleanPath)
+	if err != nil {
+		// Fallback: manual construction (should not happen with valid inputs)
+		return base + "/v1/files/" + url.PathEscape(cleanPath)
+	}
+	return result
 }

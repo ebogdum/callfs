@@ -77,6 +77,11 @@ func (e *Engine) GetErasureManager() *erasure.Manager {
 	return e.erasureManager
 }
 
+// Close shuts down the engine and releases background resources.
+func (e *Engine) Close() {
+	e.metadataCache.Close()
+}
+
 // GetPeerEndpoint returns the endpoint URL for a given instance ID
 func (e *Engine) GetPeerEndpoint(instanceID string) string {
 	if endpoint, exists := e.peerEndpoints[instanceID]; exists {

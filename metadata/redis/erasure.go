@@ -20,8 +20,12 @@ func (s *RedisStore) CreateErasureInfo(ctx context.Context, filePath string, inf
 	if err != nil {
 		return fmt.Errorf("failed to encode erasure info: %w", err)
 	}
-	if err := s.client.Set(ctx, s.erasureKey(filePath), raw, 0).Err(); err != nil {
+	stored, err := s.client.SetNX(ctx, s.erasureKey(filePath), raw, 0).Result()
+	if err != nil {
 		return fmt.Errorf("failed to store erasure info: %w", err)
+	}
+	if !stored {
+		return metadata.ErrAlreadyExists
 	}
 	return nil
 }

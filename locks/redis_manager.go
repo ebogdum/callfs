@@ -11,7 +11,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// RedisManager implements distributed locking using Redis with Redlock algorithm
+// RedisManager implements distributed locking using Redis with single-node SET NX.
+// Note: this is NOT Redlock (which requires quorum across 3+ independent Redis nodes).
+// A single-node Redis lock is lost on Redis restart or failover.
 type RedisManager struct {
 	client  *redis.Client
 	logger  *zap.Logger

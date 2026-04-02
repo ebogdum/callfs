@@ -80,6 +80,8 @@ type JoinResponse struct {
 type Store struct {
 	raft              *hashiraft.Raft
 	fsm               *fsm
+	logStore          *raftboltdb.BoltStore
+	stableStore       *raftboltdb.BoltStore
 	nodeID            string
 	apiPeerMu         sync.RWMutex
 	apiPeerEndpoints  map[string]string
@@ -153,11 +155,12 @@ func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create raft stable store: %w", err)
 	}
-	snapshotStore, err := hashiraft.NewFileSnapshotStore(cfg.DataDir, cfg.RetainSnapshotCount, os.Stderr)
+	raftLogWriter := zap.NewStdLog(logger).Writer()
+	snapshotStore, err := hashiraft.NewFileSnapshotStore(cfg.DataDir, cfg.RetainSnapshotCount, raftLogWriter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create raft snapshot store: %w", err)
 	}
-	transport, err := hashiraft.NewTCPTransport(cfg.BindAddr, nil, 3, 10*time.Second, os.Stderr)
+	transport, err := hashiraft.NewTCPTransport(cfg.BindAddr, nil, 3, 10*time.Second, raftLogWriter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create raft transport: %w", err)
 	}
@@ -170,12 +173,22 @@ func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
 	store := &Store{
 		raft:              raftNode,
 		fsm:               fsmInstance,
+		logStore:          logStore,
+		stableStore:       stableStore,
 		nodeID:            cfg.NodeID,
 		apiPeerEndpoints:  copyStringMap(cfg.APIPeerEndpoints),
 		internalAuthToken: cfg.InternalAuthToken,
-		forwardClient:     &http.Client{Timeout: cfg.ForwardTimeout},
-		applyTimeout:      cfg.ApplyTimeout,
-		logger:            logger,
+		forwardClient: &http.Client{
+			Timeout: cfg.ForwardTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        64,
+				MaxIdleConnsPerHost: 16,
+				MaxConnsPerHost:     32,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
+		applyTimeout: cfg.ApplyTimeout,
+		logger:       logger,
 	}
 
 	if cfg.Bootstrap {
@@ -315,7 +328,7 @@ func (s *Store) ListChildren(ctx context.Context, parentPath string) ([]*metadat
 		if md.Path == "/" {
 			continue
 		}
-		if filepath.Dir(md.Path) == parentPath {
+		if pathDir(md.Path) == parentPath {
 			children = append(children, cloneMetadata(md))
 		}
 	}
@@ -367,7 +380,18 @@ func (s *Store) Close() error {
 	if err := f.Error(); err != nil {
 		return fmt.Errorf("failed to shutdown raft: %w", err)
 	}
-	return nil
+	var firstErr error
+	if s.logStore != nil {
+		if err := s.logStore.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("failed to close raft log store: %w", err)
+		}
+	}
+	if s.stableStore != nil {
+		if err := s.stableStore.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("failed to close raft stable store: %w", err)
+		}
+	}
+	return firstErr
 }
 
 func (s *Store) ApplyForwardedCommand(ctx context.Context, cmd Command) (CommandResult, error) {
@@ -510,6 +534,10 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 		if !exists {
 			return CommandResult{Err: "not_found"}
 		}
+		// Only allow transitions from "active" status to prevent replay/reactivation
+		if link.Status != "active" {
+			return CommandResult{Err: "not_found"}
+		}
 		link.Status = cmd.Status
 		link.UsedAt = cloneTimePtr(cmd.UsedAt)
 		link.UsedByIP = cloneStringPtr(cmd.UsedByIP)
@@ -522,7 +550,7 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 		}
 		count := 0
 		for token, link := range f.state.LinksByToken {
-			if link.ExpiresAt.Before(*cmd.Before) {
+			if link.Status == "active" && link.ExpiresAt.Before(*cmd.Before) {
 				delete(f.state.LinksByToken, token)
 				count++
 			}
@@ -543,6 +571,9 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 	case "create_erasure_info":
 		if cmd.ErasureInfo == nil {
 			return CommandResult{Err: "erasure_info_required"}
+		}
+		if _, exists := f.state.ErasureByPath[cmd.Path]; exists {
+			return CommandResult{Err: "already_exists"}
 		}
 		f.state.ErasureByPath[cmd.Path] = cloneErasureFileInfo(cmd.ErasureInfo)
 		return CommandResult{}
@@ -590,12 +621,11 @@ func (f *fsm) Restore(rc io.ReadCloser) error {
 }
 
 func (s *stateSnapshot) Persist(sink hashiraft.SnapshotSink) error {
-	defer sink.Close()
 	if err := json.NewEncoder(sink).Encode(s.state); err != nil {
 		sink.Cancel()
 		return err
 	}
-	return nil
+	return sink.Close()
 }
 
 func (s *stateSnapshot) Release() {}
@@ -659,6 +689,19 @@ func cloneTimePtr(in *time.Time) *time.Time {
 	}
 	v := *in
 	return &v
+}
+
+// pathDir returns the parent directory using forward-slash separator (not filepath.Dir
+// which uses OS-specific separators and breaks on Windows for Unix-style paths).
+func pathDir(p string) string {
+	if p == "/" {
+		return "/"
+	}
+	lastSlash := strings.LastIndex(p, "/")
+	if lastSlash <= 0 {
+		return "/"
+	}
+	return p[:lastSlash]
 }
 
 func copyStringMap(in map[string]string) map[string]string {

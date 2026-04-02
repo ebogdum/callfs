@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -20,15 +21,17 @@ import (
 
 // Manager orchestrates erasure coding: encoding, shard distribution, retrieval, and deletion.
 type Manager struct {
-	codec        *Codec
-	placement    PlacementStrategy
-	erasureStore metadata.ErasureMetadataStore
-	localBackend backends.Storage
-	config       *config.ErasureConfig
-	instanceID   string
+	codec         *Codec
+	placement     PlacementStrategy
+	erasureStore  metadata.ErasureMetadataStore
+	localBackend  backends.Storage
+	config        *config.ErasureConfig
+	instanceID    string
+	selfEndpoint  string
 	peerEndpoints map[string]string
 	internalToken string
-	logger       *zap.Logger
+	httpClient    *http.Client
+	logger        *zap.Logger
 }
 
 // NewManager creates a new erasure Manager.
@@ -41,6 +44,18 @@ func NewManager(
 	internalToken string,
 	logger *zap.Logger,
 ) *Manager {
+	// Derive selfEndpoint from peerEndpoints (includes self when populated in cmd/main.go)
+	selfEndpoint := peerEndpoints[instanceID]
+
+	// Warn if any peer endpoint uses unencrypted HTTP (internal secret would be sent in plaintext)
+	for id, ep := range peerEndpoints {
+		if strings.HasPrefix(ep, "http://") {
+			logger.Warn("Peer endpoint uses unencrypted HTTP - internal token will be sent in plaintext",
+				zap.String("peer_id", id),
+				zap.String("endpoint", ep))
+		}
+	}
+
 	return &Manager{
 		codec:         NewCodec(),
 		placement:     &RoundRobinPlacement{},
@@ -48,14 +63,21 @@ func NewManager(
 		localBackend:  localBackend,
 		config:        cfg,
 		instanceID:    instanceID,
+		selfEndpoint:  selfEndpoint,
 		peerEndpoints: peerEndpoints,
 		internalToken: internalToken,
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
 		logger:        logger,
 	}
 }
 
 // StoreFile erasure-encodes data and distributes shards across instances.
 func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, originalSize int64, opts *StoreOptions) (*ErasureFileInfo, error) {
+	// Validate originalSize matches actual data length
+	if originalSize != int64(len(data)) {
+		return nil, fmt.Errorf("originalSize %d does not match data length %d", originalSize, len(data))
+	}
+
 	dataShards := m.config.DataShards
 	parityShards := m.config.ParityShards
 	if dataShards <= 0 {
@@ -128,7 +150,7 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 			if instanceForShard == m.instanceID {
 				writeErr = m.localBackend.Create(ctx, shardPath, bytes.NewReader(shards[idx]), int64(len(shards[idx])))
 			} else {
-				writeErr = m.storeRemoteShard(ctx, instanceForShard, path, idx, shards[idx])
+				writeErr = m.storeRemoteShard(ctx, instanceForShard, hashPrefix, idx, shards[idx])
 			}
 
 			mu.Lock()
@@ -153,6 +175,28 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 	wg.Wait()
 
 	if storeErr != nil {
+		// Cleanup orphaned shards — use a background context since the request ctx may already be cancelled
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		var cleanupWg sync.WaitGroup
+		for i := 0; i < totalShards; i++ {
+			if shardInfos[i].Path == "" {
+				continue
+			}
+			cleanupWg.Add(1)
+			go func(si ShardInfo) {
+				defer cleanupWg.Done()
+				if si.InstanceID == m.instanceID {
+					_ = m.localBackend.Delete(cleanupCtx, si.Path)
+				} else {
+					shardPrefix := extractShardPrefix(si.Path)
+					_ = m.deleteRemoteShard(cleanupCtx, si.InstanceID, shardPrefix, si.Index)
+				}
+			}(shardInfos[i])
+		}
+		go func() {
+			cleanupWg.Wait()
+			cleanupCancel()
+		}()
 		return nil, storeErr
 	}
 
@@ -185,6 +229,28 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 	mdInfo.Shards = mdShards
 
 	if err := m.erasureStore.CreateErasureInfo(ctx, path, mdInfo); err != nil {
+		// Clean up all successfully-written shards since metadata write failed
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		var cleanupWg sync.WaitGroup
+		for i := 0; i < totalShards; i++ {
+			if shardInfos[i].Path == "" {
+				continue
+			}
+			cleanupWg.Add(1)
+			go func(si ShardInfo) {
+				defer cleanupWg.Done()
+				if si.InstanceID == m.instanceID {
+					_ = m.localBackend.Delete(cleanupCtx, si.Path)
+				} else {
+					shardPrefix := extractShardPrefix(si.Path)
+					_ = m.deleteRemoteShard(cleanupCtx, si.InstanceID, shardPrefix, si.Index)
+				}
+			}(shardInfos[i])
+		}
+		go func() {
+			cleanupWg.Wait()
+			cleanupCancel()
+		}()
 		return nil, fmt.Errorf("failed to store erasure metadata: %w", err)
 	}
 
@@ -210,6 +276,10 @@ func (m *Manager) RetrieveFile(ctx context.Context, path string) ([]byte, error)
 	var wg sync.WaitGroup
 	successCount := 0
 
+	// Use a cancellable context so we can abort remaining fetches once we have enough shards
+	fetchCtx, fetchCancel := context.WithCancel(ctx)
+	defer fetchCancel()
+
 	for _, si := range mdInfo.Shards {
 		wg.Add(1)
 		go func(si metadata.ErasureShardInfo) {
@@ -219,9 +289,10 @@ func (m *Manager) RetrieveFile(ctx context.Context, path string) ([]byte, error)
 			var fetchErr error
 
 			if si.InstanceID == m.instanceID {
-				data, fetchErr = m.readLocalShard(ctx, si.Path)
+				data, fetchErr = m.readLocalShard(fetchCtx, si.Path)
 			} else {
-				data, fetchErr = m.fetchRemoteShard(ctx, si.InstanceID, path, si.Index)
+				shardPrefix := extractShardPrefix(si.Path)
+				data, fetchErr = m.fetchRemoteShard(fetchCtx, si.InstanceID, shardPrefix, si.Index)
 			}
 
 			mu.Lock()
@@ -234,7 +305,6 @@ func (m *Manager) RetrieveFile(ctx context.Context, path string) ([]byte, error)
 				return
 			}
 
-			// Verify checksum
 			if ShardChecksum(data) != si.Checksum {
 				m.logger.Warn("Shard checksum mismatch",
 					zap.Int("index", si.Index),
@@ -244,6 +314,11 @@ func (m *Manager) RetrieveFile(ctx context.Context, path string) ([]byte, error)
 
 			shards[si.Index] = data
 			successCount++
+
+			// Short-circuit: cancel remaining fetches once we have enough shards
+			if successCount >= mdInfo.DataShards {
+				fetchCancel()
+			}
 		}(si)
 	}
 	wg.Wait()
@@ -280,15 +355,15 @@ func (m *Manager) GetManifest(ctx context.Context, path string) (*ChunkManifest,
 
 	shardEndpoints := make([]ShardEndpoint, 0, len(mdInfo.Shards))
 	for _, si := range mdInfo.Shards {
-		endpoint := m.peerEndpoints[si.InstanceID]
+		var endpoint string
 		if si.InstanceID == m.instanceID {
-			// Use own external endpoint
-			for id, ep := range m.peerEndpoints {
-				if id == m.instanceID {
-					endpoint = ep
-					break
-				}
-			}
+			endpoint = m.selfEndpoint
+		} else {
+			endpoint = m.peerEndpoints[si.InstanceID]
+		}
+
+		if endpoint == "" {
+			return nil, fmt.Errorf("no endpoint found for instance %s (shard %d)", si.InstanceID, si.Index)
 		}
 
 		shardEndpoints = append(shardEndpoints, ShardEndpoint{
@@ -303,7 +378,7 @@ func (m *Manager) GetManifest(ctx context.Context, path string) (*ChunkManifest,
 	return manifest, nil
 }
 
-// GetShard reads a single local shard by path and index.
+// GetShard reads a single local shard by path and index, verifying checksum before returning.
 func (m *Manager) GetShard(ctx context.Context, path string, index int) ([]byte, error) {
 	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, path)
 	if err != nil {
@@ -312,44 +387,70 @@ func (m *Manager) GetShard(ctx context.Context, path string, index int) ([]byte,
 
 	for _, si := range mdInfo.Shards {
 		if si.Index == index && si.InstanceID == m.instanceID {
-			return m.readLocalShard(ctx, si.Path)
+			data, readErr := m.readLocalShard(ctx, si.Path)
+			if readErr != nil {
+				return nil, readErr
+			}
+			if ShardChecksum(data) != si.Checksum {
+				return nil, fmt.Errorf("shard %d checksum mismatch: data corrupted on disk", index)
+			}
+			return data, nil
 		}
 	}
 
 	return nil, ErrShardNotFound
 }
 
-// DeleteFile removes all shards (local + remote) and erasure metadata.
+// DeleteFile removes erasure metadata first, then best-effort deletes all shards.
+// Metadata-first ordering ensures a crash leaves orphan shards (reclaimable) rather
+// than orphan metadata pointing to partially-deleted shards (irrecoverable).
 func (m *Manager) DeleteFile(ctx context.Context, path string) error {
 	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, path)
 	if err != nil {
 		return fmt.Errorf("failed to get erasure info for delete: %w", err)
 	}
 
+	// Delete metadata first — makes the file logically gone
+	if err := m.erasureStore.DeleteErasureInfo(ctx, path); err != nil {
+		return fmt.Errorf("failed to delete erasure metadata: %w", err)
+	}
+
+	// Best-effort shard cleanup
 	var wg sync.WaitGroup
 	for _, si := range mdInfo.Shards {
 		wg.Add(1)
 		go func(si metadata.ErasureShardInfo) {
 			defer wg.Done()
 			if si.InstanceID == m.instanceID {
-				if err := m.localBackend.Delete(ctx, si.Path); err != nil {
+				if delErr := m.localBackend.Delete(ctx, si.Path); delErr != nil {
 					m.logger.Warn("Failed to delete local shard",
 						zap.Int("index", si.Index),
-						zap.Error(err))
+						zap.Error(delErr))
 				}
 			} else {
-				if err := m.deleteRemoteShard(ctx, si.InstanceID, path, si.Index); err != nil {
+				shardPrefix := extractShardPrefix(si.Path)
+				if delErr := m.deleteRemoteShard(ctx, si.InstanceID, shardPrefix, si.Index); delErr != nil {
 					m.logger.Warn("Failed to delete remote shard",
 						zap.Int("index", si.Index),
 						zap.String("instance", si.InstanceID),
-						zap.Error(err))
+						zap.Error(delErr))
 				}
 			}
 		}(si)
 	}
 	wg.Wait()
 
-	return m.erasureStore.DeleteErasureInfo(ctx, path)
+	return nil
+}
+
+// extractShardPrefix extracts the hash prefix from a shard path like ".erasure/<prefix>/<idx>".
+func extractShardPrefix(shardPath string) string {
+	trimmed := strings.TrimPrefix(shardPath, ".erasure/")
+	lastSlash := strings.LastIndex(trimmed, "/")
+	if lastSlash < 0 {
+		return trimmed
+	}
+	return trimmed[:lastSlash]
 }
 
 func (m *Manager) readLocalShard(ctx context.Context, shardPath string) ([]byte, error) {
@@ -361,13 +462,13 @@ func (m *Manager) readLocalShard(ctx context.Context, shardPath string) ([]byte,
 	return io.ReadAll(reader)
 }
 
-func (m *Manager) storeRemoteShard(ctx context.Context, instanceID, filePath string, index int, data []byte) error {
+func (m *Manager) storeRemoteShard(ctx context.Context, instanceID, hashPrefix string, index int, data []byte) error {
 	endpoint, ok := m.peerEndpoints[instanceID]
 	if !ok {
 		return fmt.Errorf("no endpoint for instance %s", instanceID)
 	}
 
-	url := strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", strings.TrimPrefix(filePath, "/"), index)
+	url := strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", hashPrefix, index)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
 	if err != nil {
 		return err
@@ -376,11 +477,14 @@ func (m *Manager) storeRemoteShard(ctx context.Context, instanceID, filePath str
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = int64(len(data))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("remote shard store failed with status %d", resp.StatusCode)
@@ -388,20 +492,20 @@ func (m *Manager) storeRemoteShard(ctx context.Context, instanceID, filePath str
 	return nil
 }
 
-func (m *Manager) fetchRemoteShard(ctx context.Context, instanceID, filePath string, index int) ([]byte, error) {
+func (m *Manager) fetchRemoteShard(ctx context.Context, instanceID, shardPrefix string, index int) ([]byte, error) {
 	endpoint, ok := m.peerEndpoints[instanceID]
 	if !ok {
 		return nil, fmt.Errorf("no endpoint for instance %s", instanceID)
 	}
 
-	url := strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", strings.TrimPrefix(filePath, "/"), index)
+	url := strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", shardPrefix, index)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+m.internalToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -411,27 +515,31 @@ func (m *Manager) fetchRemoteShard(ctx context.Context, instanceID, filePath str
 		return nil, fmt.Errorf("remote shard fetch failed with status %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
+	const maxShardReadBytes = 256 << 20
+	return io.ReadAll(io.LimitReader(resp.Body, maxShardReadBytes))
 }
 
-func (m *Manager) deleteRemoteShard(ctx context.Context, instanceID, filePath string, index int) error {
+func (m *Manager) deleteRemoteShard(ctx context.Context, instanceID, shardPrefix string, index int) error {
 	endpoint, ok := m.peerEndpoints[instanceID]
 	if !ok {
 		return fmt.Errorf("no endpoint for instance %s", instanceID)
 	}
 
-	url := strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", strings.TrimPrefix(filePath, "/"), index)
+	url := strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", shardPrefix, index)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+m.internalToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("remote shard delete failed with status %d", resp.StatusCode)
