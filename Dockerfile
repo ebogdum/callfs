@@ -21,14 +21,21 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags='-w -s -extldflags "-static"' \
     -o callfs ./cmd
 
+# Build the healthcheck binary
+COPY tests/integration/healthcheck.go /tmp/healthcheck.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags='-w -s' \
+    -o callfs-healthcheck /tmp/healthcheck.go
+
 # Final stage
 FROM scratch
 
 # Copy CA certificates for HTTPS
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Copy the binary
+# Copy the binaries
 COPY --from=builder /build/callfs /callfs
+COPY --from=builder /build/callfs-healthcheck /callfs-healthcheck
 
 # Expose the default port
 EXPOSE 8443

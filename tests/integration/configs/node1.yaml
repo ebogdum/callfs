@@ -1,0 +1,61 @@
+server:
+  listen_addr: ":8443"
+  protocol: "http"
+  external_url: "http://node1:8443"
+  read_timeout: "30s"
+  write_timeout: "30s"
+  file_op_timeout: "30s"
+  metadata_op_timeout: "10s"
+
+auth:
+  api_keys:
+    - "test-api-key-integration-0123456"
+  internal_proxy_secret: "test-internal-secret-0123456789"
+  single_use_link_secret: "test-link-secret-01234567890123"
+
+backend:
+  default_backend: "localfs"
+  localfs_root_path: "/data"
+
+metadata_store:
+  type: "raft"
+
+raft:
+  enabled: true
+  node_id: "node-1"
+  bind_addr: "node1:7000"
+  data_dir: "/raft-data"
+  bootstrap: true
+  peers:
+    node-2: "node2:7000"
+    node-3: "node3:7000"
+  api_peer_endpoints:
+    node-2: "http://node2:8443"
+    node-3: "http://node3:8443"
+  apply_timeout: "10s"
+  forward_timeout: "10s"
+  snapshot_interval: "60s"
+  snapshot_threshold: 256
+  retain_snapshot_count: 2
+
+dlm:
+  type: "redis"
+  redis_addr: "redis:6379"
+
+instance_discovery:
+  instance_id: "node-1"
+  peer_endpoints:
+    node-2: "http://node2:8443"
+    node-3: "http://node3:8443"
+
+erasure:
+  enabled: true
+  data_shards: 2
+  parity_shards: 1
+  min_file_size: 1024
+  shard_backend: "localfs"
+  shard_path: "/data/.erasure"
+
+log:
+  level: "debug"
+  format: "json"

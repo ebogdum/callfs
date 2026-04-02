@@ -81,13 +81,13 @@ func (e *Engine) ensureParentDirectories(ctx context.Context, path string, backe
 		backendType = "localfs"
 	}
 
-	// Create parent directory
+	// Create parent directory (world-writable so any authenticated user can create children)
 	parentMd := &metadata.Metadata{
 		Name:        filepath.Base(parentPath),
 		Type:        "directory",
-		Mode:        "0755",
-		UID:         1000,
-		GID:         1000,
+		Mode:        "0777",
+		UID:         0,
+		GID:         0,
 		BackendType: backendType,
 	}
 
@@ -111,7 +111,7 @@ func (e *Engine) EnsureRootDirectory(ctx context.Context) error {
 		Name:        "/",
 		Path:        "/",
 		Type:        "directory",
-		Mode:        "0755",
+		Mode:        "0777",
 		UID:         0,         // Root user
 		GID:         0,         // Root group
 		BackendType: "localfs", // Default backend for root
