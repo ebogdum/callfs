@@ -1,0 +1,29 @@
+server:
+  listen_addr: ":8443"
+  protocol: "http"
+  external_url: "http://node1:8443"
+
+auth:
+  api_keys:
+    - "test-api-key-integration-0123456"
+  internal_proxy_secret: "test-internal-secret-0123456789"
+  single_use_link_secret: "test-link-secret-01234567890123"
+
+backend:
+  default_backend: "localfs"
+  localfs_root_path: "/data"
+
+metadata_store:
+  type: "postgres"
+  dsn: "postgres://callfs:callfs@postgres:5432/callfs?sslmode=disable"
+
+dlm:
+  type: "redis"
+  redis_addr: "redis:6379"
+
+instance_discovery:
+  instance_id: "node-1"
+
+log:
+  level: "debug"
+  format: "json"
