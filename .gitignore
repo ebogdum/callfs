@@ -39,7 +39,6 @@ _removed/
 /dist/
 /data/
 /builds/
-/.github/
 
 # Logs
 *.log
