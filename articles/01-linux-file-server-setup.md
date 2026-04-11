@@ -85,19 +85,7 @@ For a single-node setup, the combination of local filesystem storage and SQLite 
 
 ## Installation
 
-### Option 1: Install with Go
-
-If Go 1.24 or later is installed:
-
-```bash
-go install github.com/ebogdum/callfs/cmd@latest
-```
-
-This downloads, compiles, and places the `callfs` binary in `$GOPATH/bin` (typically `~/go/bin`). Make sure that directory is in your `PATH`.
-
-### Option 2: Download a Prebuilt Binary
-
-Prebuilt binaries for Linux (amd64, arm64) and macOS are available on the [GitHub releases page](https://github.com/ebogdum/callfs/releases). Download the binary for your platform, mark it executable, and move it somewhere on your `PATH`:
+Download a prebuilt binary from the [GitHub releases page](https://github.com/ebogdum/callfs/releases). CallFS ships as a single static binary with no external dependencies. Binaries are available for Linux (amd64, arm64), macOS, Windows, FreeBSD, and OpenBSD.
 
 ```bash
 # Example for Linux amd64 -- check the releases page for the current version
