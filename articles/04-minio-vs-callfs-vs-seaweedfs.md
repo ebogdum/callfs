@@ -81,8 +81,9 @@ curl -F "file=@file.txt" http://localhost:9333/dir/assign
 ### Getting Started: CallFS
 
 ```bash
-# Download binary or build from source
-go build -o callfs ./cmd/main.go
+# Download the binary for your platform from GitHub releases
+curl -Lo callfs https://github.com/ebogdum/callfs/releases/latest/download/callfs-linux-amd64
+chmod +x callfs
 
 # Minimal config (SQLite, no TLS, local disk)
 cp config.yaml.example config.yaml
