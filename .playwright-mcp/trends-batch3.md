@@ -1,0 +1,865 @@
+- generic [active] [ref=e1]:
+  - region "This site uses cookies from Google to deliver and enhance the quality of its services and to analyze traffic." [ref=e2]:
+    - generic [ref=e3]:
+      - text: This site uses cookies from Google to deliver and enhance the quality of its services and to analyze traffic.
+      - generic [ref=e4]:
+        - link "Learn more" [ref=e5] [cursor=pointer]:
+          - /url: https://policies.google.com/technologies/cookies?hl=en
+        - button "OK, got it" [ref=e6] [cursor=pointer]
+  - generic [ref=e9]:
+    - banner [ref=e10]:
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - button [ref=e17] [cursor=pointer]:
+              - generic "Open menu" [ref=e18]:
+                - generic [ref=e19]:
+                  - img
+            - generic [ref=e20]:
+              - link [ref=e21] [cursor=pointer]:
+                - /url: /trends?geo=&hl=en-US
+              - generic [ref=e23]:
+                - link "Home" [ref=e25] [cursor=pointer]:
+                  - /url: /trends/?geo=&hl=en-US
+                  - text: Home
+                - link "Explore" [ref=e27] [cursor=pointer]:
+                  - /url: /trends/explore?geo=&hl=en-US
+                  - text: Explore
+                - link "Trending Now" [ref=e30] [cursor=pointer]:
+                  - /url: /trends/trendingsearches/daily?geo=&hl=en-US
+                  - text: Trending Now
+          - generic [ref=e31]:
+            - button "Share" [ref=e33] [cursor=pointer]:
+              - generic [ref=e34]: share
+            - button "feedback" [ref=e35] [cursor=pointer]:
+              - generic [ref=e36]: feedback
+            - generic [ref=e40]:
+              - button "Google apps" [ref=e44] [cursor=pointer]:
+                - img [ref=e45]
+              - link "Sign in" [ref=e48] [cursor=pointer]:
+                - /url: https://accounts.google.com/ServiceLogin?passive=1209600&continue=https://trends.google.com/trends/explore?q%3DNFS%2Balternative,file%2Bstorage%2BAPI,distributed%2Bfile%2Bsystem,self%2Bhosted%2Bcloud%2Bstorage,file%2Bserver%2Blinux%26hl%3Den-US&followup=https://trends.google.com/trends/explore?q%3DNFS%2Balternative,file%2Bstorage%2BAPI,distributed%2Bfile%2Bsystem,self%2Bhosted%2Bcloud%2Bstorage,file%2Bserver%2Blinux%26hl%3Den-US&hl=en-US&ec=GAZAPA
+        - generic [ref=e49]:
+          - generic [ref=e50]:
+            - generic [ref=e94]:
+              - generic [ref=e97]:
+                - generic [ref=e98]: •
+                - generic [ref=e100]:
+                  - listbox [ref=e101]:
+                    - searchbox "Add a search term" [ref=e102]: NFS alternative
+                  - status [ref=e103]
+                - button [ref=e104] [cursor=pointer]:
+                  - generic [ref=e105]:
+                    - img
+                - generic [ref=e107]: Search term
+              - generic [ref=e110]:
+                - generic [ref=e111]: •
+                - generic [ref=e113]:
+                  - listbox [ref=e114]:
+                    - searchbox "Add a search term" [ref=e115]: file storage API
+                  - status [ref=e116]
+                - button [ref=e117] [cursor=pointer]:
+                  - generic [ref=e118]:
+                    - img
+                - generic [ref=e120]: Search term
+              - generic [ref=e123]:
+                - generic [ref=e124]: •
+                - generic [ref=e126]:
+                  - listbox [ref=e127]:
+                    - searchbox "Add a search term" [ref=e128]: distributed file system
+                  - status [ref=e129]
+                - button [ref=e130] [cursor=pointer]:
+                  - generic [ref=e131]:
+                    - img
+                - generic [ref=e133]: Search term
+              - generic [ref=e136]:
+                - generic [ref=e137]: •
+                - generic [ref=e139]:
+                  - listbox [ref=e140]:
+                    - searchbox "Add a search term" [ref=e141]: self hosted cloud storage
+                  - status [ref=e142]
+                - button [ref=e143] [cursor=pointer]:
+                  - generic [ref=e144]:
+                    - img
+                - generic [ref=e146]: Search term
+              - generic [ref=e149]:
+                - generic [ref=e150]: •
+                - generic [ref=e152]:
+                  - listbox [ref=e153]:
+                    - searchbox "Add a search term" [ref=e154]: file server linux
+                  - status [ref=e155]
+                - button [ref=e156] [cursor=pointer]:
+                  - generic [ref=e157]:
+                    - img
+                - generic [ref=e159]: Search term
+            - generic [ref=e52]:
+              - button "Worldwide" [ref=e55] [cursor=pointer]:
+                - generic:
+                  - generic: Worldwide
+                  - generic: ▼
+              - 'listbox "Select time period: Past 12 months" [ref=e58]':
+                - generic [ref=e59]:
+                  - generic [ref=e60]: Past 12 months
+                  - generic [ref=e61]: ▼
+              - button "All categories" [ref=e64] [cursor=pointer]:
+                - generic:
+                  - generic: All categories
+                  - generic: ▼
+              - 'listbox "Select stories location: Web Search" [ref=e65]':
+                - generic [ref=e66]:
+                  - generic [ref=e67]: Web Search
+                  - generic [ref=e68]: ▼
+          - generic [ref=e70] [cursor=pointer]:
+            - generic [ref=e71]:
+              - generic "NFS alternative" [ref=e160]:
+                - generic [ref=e162]: NFS alternative
+              - generic "file storage API" [ref=e163]:
+                - generic [ref=e165]: file storage API
+              - generic "distributed file system" [ref=e166]:
+                - generic [ref=e168]: distributed file system
+              - generic "self hosted cloud storage" [ref=e169]:
+                - generic [ref=e171]: self hosted cloud storage
+              - generic "file server linux" [ref=e172]:
+                - generic [ref=e174]: file server linux
+            - generic [ref=e87]: Worldwide, Past 12 months
+    - generic [ref=e177]:
+      - generic [ref=e184]:
+        - generic [ref=e185]:
+          - generic [ref=e186]:
+            - text: Interest over time
+            - button "help_outline" [ref=e188] [cursor=pointer]:
+              - generic [ref=e189]: help_outline
+          - generic [ref=e191]:
+            - button "file_download" [ref=e192] [cursor=pointer]:
+              - generic [ref=e193]: file_download
+            - button "code" [ref=e194] [cursor=pointer]:
+              - generic [ref=e195]: code
+            - button "share" [ref=e196] [cursor=pointer]:
+              - generic [ref=e197]: share
+        - generic [ref=e201]:
+          - generic "A chart." [ref=e206]:
+            - img "A chart." [ref=e207]:
+              - generic [ref=e227]: Average
+            - generic "A tabular representation of the data in the chart." [ref=e228]:
+              - table [ref=e229]:
+                - rowgroup [ref=e230]:
+                  - row "x1 NFS alternative file storage API distributed file system self hosted cloud storage file server linux" [ref=e231]:
+                    - columnheader "x1" [ref=e232]
+                    - columnheader "NFS alternative" [ref=e233]
+                    - columnheader "file storage API" [ref=e234]
+                    - columnheader "distributed file system" [ref=e235]
+                    - columnheader "self hosted cloud storage" [ref=e236]
+                    - columnheader "file server linux" [ref=e237]
+                - rowgroup [ref=e238]:
+                  - row "Average 3 35 19 3 77" [ref=e239]:
+                    - cell "Average" [ref=e240]
+                    - cell "3" [ref=e241]
+                    - cell "35" [ref=e242]
+                    - cell "19" [ref=e243]
+                    - cell "3" [ref=e244]
+                    - cell "77" [ref=e245]
+          - generic "A chart." [ref=e250]:
+            - img "A chart." [ref=e251]:
+              - generic [ref=e268]:
+                - generic [ref=e270]: ‪Apr 6, 2025‬
+                - generic [ref=e272]: ‪Aug 24, 2025‬
+                - generic [ref=e274]: ‪Jan 11, 2026‬
+                - generic [ref=e276]: "25"
+                - generic [ref=e278]: "50"
+                - generic [ref=e280]: "75"
+                - generic [ref=e282]: "100"
+            - generic "A tabular representation of the data in the chart." [ref=e283]:
+              - table [ref=e284]:
+                - rowgroup [ref=e285]:
+                  - row "x y1 y2 y3 y4 y5" [ref=e286]:
+                    - columnheader "x" [ref=e287]
+                    - columnheader "y1" [ref=e288]
+                    - columnheader "y2" [ref=e289]
+                    - columnheader "y3" [ref=e290]
+                    - columnheader "y4" [ref=e291]
+                    - columnheader "y5" [ref=e292]
+                - rowgroup [ref=e293]:
+                  - row "‪Apr 6, 2025‬ 0 9 14 0 80" [ref=e294]:
+                    - cell "‪Apr 6, 2025‬" [ref=e295]
+                    - cell "0" [ref=e296]
+                    - cell "9" [ref=e297]
+                    - cell "14" [ref=e298]
+                    - cell "0" [ref=e299]
+                    - cell "80" [ref=e300]
+                  - row "‪Apr 13, 2025‬ 0 7 15 0 89" [ref=e301]:
+                    - cell "‪Apr 13, 2025‬" [ref=e302]
+                    - cell "0" [ref=e303]
+                    - cell "7" [ref=e304]
+                    - cell "15" [ref=e305]
+                    - cell "0" [ref=e306]
+                    - cell "89" [ref=e307]
+                  - row "‪Apr 20, 2025‬ 0 8 23 4 83" [ref=e308]:
+                    - cell "‪Apr 20, 2025‬" [ref=e309]
+                    - cell "0" [ref=e310]
+                    - cell "8" [ref=e311]
+                    - cell "23" [ref=e312]
+                    - cell "4" [ref=e313]
+                    - cell "83" [ref=e314]
+                  - row "‪Apr 27, 2025‬ 0 7 20 0 76" [ref=e315]:
+                    - cell "‪Apr 27, 2025‬" [ref=e316]
+                    - cell "0" [ref=e317]
+                    - cell "7" [ref=e318]
+                    - cell "20" [ref=e319]
+                    - cell "0" [ref=e320]
+                    - cell "76" [ref=e321]
+                  - row "‪May 4, 2025‬ 0 7 16 0 76" [ref=e322]:
+                    - cell "‪May 4, 2025‬" [ref=e323]
+                    - cell "0" [ref=e324]
+                    - cell "7" [ref=e325]
+                    - cell "16" [ref=e326]
+                    - cell "0" [ref=e327]
+                    - cell "76" [ref=e328]
+                  - row "‪May 11, 2025‬ 0 7 13 0 80" [ref=e329]:
+                    - cell "‪May 11, 2025‬" [ref=e330]
+                    - cell "0" [ref=e331]
+                    - cell "7" [ref=e332]
+                    - cell "13" [ref=e333]
+                    - cell "0" [ref=e334]
+                    - cell "80" [ref=e335]
+                  - row "‪May 18, 2025‬ 0 9 13 0 74" [ref=e336]:
+                    - cell "‪May 18, 2025‬" [ref=e337]
+                    - cell "0" [ref=e338]
+                    - cell "9" [ref=e339]
+                    - cell "13" [ref=e340]
+                    - cell "0" [ref=e341]
+                    - cell "74" [ref=e342]
+                  - row "‪May 25, 2025‬ 0 9 14 0 67" [ref=e343]:
+                    - cell "‪May 25, 2025‬" [ref=e344]
+                    - cell "0" [ref=e345]
+                    - cell "9" [ref=e346]
+                    - cell "14" [ref=e347]
+                    - cell "0" [ref=e348]
+                    - cell "67" [ref=e349]
+                  - row "‪Jun 1, 2025‬ 0 10 13 0 85" [ref=e350]:
+                    - cell "‪Jun 1, 2025‬" [ref=e351]
+                    - cell "0" [ref=e352]
+                    - cell "10" [ref=e353]
+                    - cell "13" [ref=e354]
+                    - cell "0" [ref=e355]
+                    - cell "85" [ref=e356]
+                  - row "‪Jun 8, 2025‬ 0 14 18 0 76" [ref=e357]:
+                    - cell "‪Jun 8, 2025‬" [ref=e358]
+                    - cell "0" [ref=e359]
+                    - cell "14" [ref=e360]
+                    - cell "18" [ref=e361]
+                    - cell "0" [ref=e362]
+                    - cell "76" [ref=e363]
+                  - row "‪Jun 15, 2025‬ 0 14 11 0 77" [ref=e364]:
+                    - cell "‪Jun 15, 2025‬" [ref=e365]
+                    - cell "0" [ref=e366]
+                    - cell "14" [ref=e367]
+                    - cell "11" [ref=e368]
+                    - cell "0" [ref=e369]
+                    - cell "77" [ref=e370]
+                  - row "‪Jun 22, 2025‬ 0 14 12 0 73" [ref=e371]:
+                    - cell "‪Jun 22, 2025‬" [ref=e372]
+                    - cell "0" [ref=e373]
+                    - cell "14" [ref=e374]
+                    - cell "12" [ref=e375]
+                    - cell "0" [ref=e376]
+                    - cell "73" [ref=e377]
+                  - row "‪Jun 29, 2025‬ 3 12 14 0 70" [ref=e378]:
+                    - cell "‪Jun 29, 2025‬" [ref=e379]
+                    - cell "3" [ref=e380]
+                    - cell "12" [ref=e381]
+                    - cell "14" [ref=e382]
+                    - cell "0" [ref=e383]
+                    - cell "70" [ref=e384]
+                  - row "‪Jul 6, 2025‬ 3 9 11 4 76" [ref=e385]:
+                    - cell "‪Jul 6, 2025‬" [ref=e386]
+                    - cell "3" [ref=e387]
+                    - cell "9" [ref=e388]
+                    - cell "11" [ref=e389]
+                    - cell "4" [ref=e390]
+                    - cell "76" [ref=e391]
+                  - row "‪Jul 13, 2025‬ 0 12 13 0 68" [ref=e392]:
+                    - cell "‪Jul 13, 2025‬" [ref=e393]
+                    - cell "0" [ref=e394]
+                    - cell "12" [ref=e395]
+                    - cell "13" [ref=e396]
+                    - cell "0" [ref=e397]
+                    - cell "68" [ref=e398]
+                  - row "‪Jul 20, 2025‬ 0 10 16 0 72" [ref=e399]:
+                    - cell "‪Jul 20, 2025‬" [ref=e400]
+                    - cell "0" [ref=e401]
+                    - cell "10" [ref=e402]
+                    - cell "16" [ref=e403]
+                    - cell "0" [ref=e404]
+                    - cell "72" [ref=e405]
+                  - row "‪Jul 27, 2025‬ 0 14 13 0 68" [ref=e406]:
+                    - cell "‪Jul 27, 2025‬" [ref=e407]
+                    - cell "0" [ref=e408]
+                    - cell "14" [ref=e409]
+                    - cell "13" [ref=e410]
+                    - cell "0" [ref=e411]
+                    - cell "68" [ref=e412]
+                  - row "‪Aug 3, 2025‬ 7 32 17 4 73" [ref=e413]:
+                    - cell "‪Aug 3, 2025‬" [ref=e414]
+                    - cell "7" [ref=e415]
+                    - cell "32" [ref=e416]
+                    - cell "17" [ref=e417]
+                    - cell "4" [ref=e418]
+                    - cell "73" [ref=e419]
+                  - row "‪Aug 10, 2025‬ 7 78 19 0 72" [ref=e420]:
+                    - cell "‪Aug 10, 2025‬" [ref=e421]
+                    - cell "7" [ref=e422]
+                    - cell "78" [ref=e423]
+                    - cell "19" [ref=e424]
+                    - cell "0" [ref=e425]
+                    - cell "72" [ref=e426]
+                  - row "‪Aug 17, 2025‬ 4 59 14 0 75" [ref=e427]:
+                    - cell "‪Aug 17, 2025‬" [ref=e428]
+                    - cell "4" [ref=e429]
+                    - cell "59" [ref=e430]
+                    - cell "14" [ref=e431]
+                    - cell "0" [ref=e432]
+                    - cell "75" [ref=e433]
+                  - row "‪Aug 24, 2025‬ 3 49 18 4 80" [ref=e434]:
+                    - cell "‪Aug 24, 2025‬" [ref=e435]
+                    - cell "3" [ref=e436]
+                    - cell "49" [ref=e437]
+                    - cell "18" [ref=e438]
+                    - cell "4" [ref=e439]
+                    - cell "80" [ref=e440]
+                  - row "‪Aug 31, 2025‬ 6 47 13 5 74" [ref=e441]:
+                    - cell "‪Aug 31, 2025‬" [ref=e442]
+                    - cell "6" [ref=e443]
+                    - cell "47" [ref=e444]
+                    - cell "13" [ref=e445]
+                    - cell "5" [ref=e446]
+                    - cell "74" [ref=e447]
+                  - row "‪Sep 7, 2025‬ 7 42 15 4 80" [ref=e448]:
+                    - cell "‪Sep 7, 2025‬" [ref=e449]
+                    - cell "7" [ref=e450]
+                    - cell "42" [ref=e451]
+                    - cell "15" [ref=e452]
+                    - cell "4" [ref=e453]
+                    - cell "80" [ref=e454]
+                  - row "‪Sep 14, 2025‬ 0 36 19 5 79" [ref=e455]:
+                    - cell "‪Sep 14, 2025‬" [ref=e456]
+                    - cell "0" [ref=e457]
+                    - cell "36" [ref=e458]
+                    - cell "19" [ref=e459]
+                    - cell "5" [ref=e460]
+                    - cell "79" [ref=e461]
+                  - row "‪Sep 21, 2025‬ 3 34 19 5 78" [ref=e462]:
+                    - cell "‪Sep 21, 2025‬" [ref=e463]
+                    - cell "3" [ref=e464]
+                    - cell "34" [ref=e465]
+                    - cell "19" [ref=e466]
+                    - cell "5" [ref=e467]
+                    - cell "78" [ref=e468]
+                  - row "‪Sep 28, 2025‬ 5 33 14 4 73" [ref=e469]:
+                    - cell "‪Sep 28, 2025‬" [ref=e470]
+                    - cell "5" [ref=e471]
+                    - cell "33" [ref=e472]
+                    - cell "14" [ref=e473]
+                    - cell "4" [ref=e474]
+                    - cell "73" [ref=e475]
+                  - row "‪Oct 5, 2025‬ 4 38 17 0 70" [ref=e476]:
+                    - cell "‪Oct 5, 2025‬" [ref=e477]
+                    - cell "4" [ref=e478]
+                    - cell "38" [ref=e479]
+                    - cell "17" [ref=e480]
+                    - cell "0" [ref=e481]
+                    - cell "70" [ref=e482]
+                  - row "‪Oct 12, 2025‬ 4 37 17 0 79" [ref=e483]:
+                    - cell "‪Oct 12, 2025‬" [ref=e484]
+                    - cell "4" [ref=e485]
+                    - cell "37" [ref=e486]
+                    - cell "17" [ref=e487]
+                    - cell "0" [ref=e488]
+                    - cell "79" [ref=e489]
+                  - row "‪Oct 19, 2025‬ 4 40 13 0 75" [ref=e490]:
+                    - cell "‪Oct 19, 2025‬" [ref=e491]
+                    - cell "4" [ref=e492]
+                    - cell "40" [ref=e493]
+                    - cell "13" [ref=e494]
+                    - cell "0" [ref=e495]
+                    - cell "75" [ref=e496]
+                  - row "‪Oct 26, 2025‬ 4 31 17 3 82" [ref=e497]:
+                    - cell "‪Oct 26, 2025‬" [ref=e498]
+                    - cell "4" [ref=e499]
+                    - cell "31" [ref=e500]
+                    - cell "17" [ref=e501]
+                    - cell "3" [ref=e502]
+                    - cell "82" [ref=e503]
+                  - row "‪Nov 2, 2025‬ 0 36 17 4 83" [ref=e504]:
+                    - cell "‪Nov 2, 2025‬" [ref=e505]
+                    - cell "0" [ref=e506]
+                    - cell "36" [ref=e507]
+                    - cell "17" [ref=e508]
+                    - cell "4" [ref=e509]
+                    - cell "83" [ref=e510]
+                  - row "‪Nov 9, 2025‬ 0 43 18 0 86" [ref=e511]:
+                    - cell "‪Nov 9, 2025‬" [ref=e512]
+                    - cell "0" [ref=e513]
+                    - cell "43" [ref=e514]
+                    - cell "18" [ref=e515]
+                    - cell "0" [ref=e516]
+                    - cell "86" [ref=e517]
+                  - row "‪Nov 16, 2025‬ 5 39 26 6 82" [ref=e518]:
+                    - cell "‪Nov 16, 2025‬" [ref=e519]
+                    - cell "5" [ref=e520]
+                    - cell "39" [ref=e521]
+                    - cell "26" [ref=e522]
+                    - cell "6" [ref=e523]
+                    - cell "82" [ref=e524]
+                  - row "‪Nov 23, 2025‬ 4 59 24 4 86" [ref=e525]:
+                    - cell "‪Nov 23, 2025‬" [ref=e526]
+                    - cell "4" [ref=e527]
+                    - cell "59" [ref=e528]
+                    - cell "24" [ref=e529]
+                    - cell "4" [ref=e530]
+                    - cell "86" [ref=e531]
+                  - row "‪Nov 30, 2025‬ 4 57 23 6 90" [ref=e532]:
+                    - cell "‪Nov 30, 2025‬" [ref=e533]
+                    - cell "4" [ref=e534]
+                    - cell "57" [ref=e535]
+                    - cell "23" [ref=e536]
+                    - cell "6" [ref=e537]
+                    - cell "90" [ref=e538]
+                  - row "‪Dec 7, 2025‬ 4 44 24 5 93" [ref=e539]:
+                    - cell "‪Dec 7, 2025‬" [ref=e540]
+                    - cell "4" [ref=e541]
+                    - cell "44" [ref=e542]
+                    - cell "24" [ref=e543]
+                    - cell "5" [ref=e544]
+                    - cell "93" [ref=e545]
+                  - row "‪Dec 14, 2025‬ 3 54 28 4 81" [ref=e546]:
+                    - cell "‪Dec 14, 2025‬" [ref=e547]
+                    - cell "3" [ref=e548]
+                    - cell "54" [ref=e549]
+                    - cell "28" [ref=e550]
+                    - cell "4" [ref=e551]
+                    - cell "81" [ref=e552]
+                  - row "‪Dec 21, 2025‬ 5 42 17 3 67" [ref=e553]:
+                    - cell "‪Dec 21, 2025‬" [ref=e554]
+                    - cell "5" [ref=e555]
+                    - cell "42" [ref=e556]
+                    - cell "17" [ref=e557]
+                    - cell "3" [ref=e558]
+                    - cell "67" [ref=e559]
+                  - row "‪Dec 28, 2025‬ 5 34 20 4 51" [ref=e560]:
+                    - cell "‪Dec 28, 2025‬" [ref=e561]
+                    - cell "5" [ref=e562]
+                    - cell "34" [ref=e563]
+                    - cell "20" [ref=e564]
+                    - cell "4" [ref=e565]
+                    - cell "51" [ref=e566]
+                  - row "‪Jan 4, 2026‬ 4 40 24 4 77" [ref=e567]:
+                    - cell "‪Jan 4, 2026‬" [ref=e568]
+                    - cell "4" [ref=e569]
+                    - cell "40" [ref=e570]
+                    - cell "24" [ref=e571]
+                    - cell "4" [ref=e572]
+                    - cell "77" [ref=e573]
+                  - row "‪Jan 11, 2026‬ 0 51 20 5 75" [ref=e574]:
+                    - cell "‪Jan 11, 2026‬" [ref=e575]
+                    - cell "0" [ref=e576]
+                    - cell "51" [ref=e577]
+                    - cell "20" [ref=e578]
+                    - cell "5" [ref=e579]
+                    - cell "75" [ref=e580]
+                  - row "‪Jan 18, 2026‬ 6 53 22 4 83" [ref=e581]:
+                    - cell "‪Jan 18, 2026‬" [ref=e582]
+                    - cell "6" [ref=e583]
+                    - cell "53" [ref=e584]
+                    - cell "22" [ref=e585]
+                    - cell "4" [ref=e586]
+                    - cell "83" [ref=e587]
+                  - row "‪Jan 25, 2026‬ 0 60 27 5 68" [ref=e588]:
+                    - cell "‪Jan 25, 2026‬" [ref=e589]
+                    - cell "0" [ref=e590]
+                    - cell "60" [ref=e591]
+                    - cell "27" [ref=e592]
+                    - cell "5" [ref=e593]
+                    - cell "68" [ref=e594]
+                  - row "‪Feb 1, 2026‬ 0 53 24 4 76" [ref=e595]:
+                    - cell "‪Feb 1, 2026‬" [ref=e596]
+                    - cell "0" [ref=e597]
+                    - cell "53" [ref=e598]
+                    - cell "24" [ref=e599]
+                    - cell "4" [ref=e600]
+                    - cell "76" [ref=e601]
+                  - row "‪Feb 8, 2026‬ 4 52 33 4 86" [ref=e602]:
+                    - cell "‪Feb 8, 2026‬" [ref=e603]
+                    - cell "4" [ref=e604]
+                    - cell "52" [ref=e605]
+                    - cell "33" [ref=e606]
+                    - cell "4" [ref=e607]
+                    - cell "86" [ref=e608]
+                  - row "‪Feb 15, 2026‬ 5 66 28 4 82" [ref=e609]:
+                    - cell "‪Feb 15, 2026‬" [ref=e610]
+                    - cell "5" [ref=e611]
+                    - cell "66" [ref=e612]
+                    - cell "28" [ref=e613]
+                    - cell "4" [ref=e614]
+                    - cell "82" [ref=e615]
+                  - row "‪Feb 22, 2026‬ 6 68 35 0 78" [ref=e616]:
+                    - cell "‪Feb 22, 2026‬" [ref=e617]
+                    - cell "6" [ref=e618]
+                    - cell "68" [ref=e619]
+                    - cell "35" [ref=e620]
+                    - cell "0" [ref=e621]
+                    - cell "78" [ref=e622]
+                  - row "‪Mar 1, 2026‬ 4 68 21 5 100" [ref=e623]:
+                    - cell "‪Mar 1, 2026‬" [ref=e624]
+                    - cell "4" [ref=e625]
+                    - cell "68" [ref=e626]
+                    - cell "21" [ref=e627]
+                    - cell "5" [ref=e628]
+                    - cell "100" [ref=e629]
+                  - row "‪Mar 8, 2026‬ 5 65 26 7 83" [ref=e630]:
+                    - cell "‪Mar 8, 2026‬" [ref=e631]
+                    - cell "5" [ref=e632]
+                    - cell "65" [ref=e633]
+                    - cell "26" [ref=e634]
+                    - cell "7" [ref=e635]
+                    - cell "83" [ref=e636]
+                  - row "‪Mar 15, 2026‬ 7 55 26 5 80" [ref=e637]:
+                    - cell "‪Mar 15, 2026‬" [ref=e638]
+                    - cell "7" [ref=e639]
+                    - cell "55" [ref=e640]
+                    - cell "26" [ref=e641]
+                    - cell "5" [ref=e642]
+                    - cell "80" [ref=e643]
+                  - row "‪Mar 22, 2026‬ 4 55 37 4 82" [ref=e644]:
+                    - cell "‪Mar 22, 2026‬" [ref=e645]
+                    - cell "4" [ref=e646]
+                    - cell "55" [ref=e647]
+                    - cell "37" [ref=e648]
+                    - cell "4" [ref=e649]
+                    - cell "82" [ref=e650]
+                  - row "‪Mar 29, 2026‬ 3 17 15 2 56" [ref=e651]:
+                    - cell "‪Mar 29, 2026‬" [ref=e652]
+                    - cell "3" [ref=e653]
+                    - cell "17" [ref=e654]
+                    - cell "15" [ref=e655]
+                    - cell "2" [ref=e656]
+                    - cell "56" [ref=e657]
+                  - row "‪Apr 5, 2026‬ 3 17 17 2 55" [ref=e658]:
+                    - cell "‪Apr 5, 2026‬" [ref=e659]
+                    - cell "3" [ref=e660]
+                    - cell "17" [ref=e661]
+                    - cell "17" [ref=e662]
+                    - cell "2" [ref=e663]
+                    - cell "55" [ref=e664]
+      - generic [ref=e671]:
+        - generic [ref=e672]:
+          - generic [ref=e673]: Compared breakdown by region
+          - 'listbox "Select resolution: Region" [ref=e675]':
+            - generic [ref=e676]:
+              - generic [ref=e677]: Region
+              - generic [ref=e678]: ▼
+          - generic [ref=e680]:
+            - button "file_download" [ref=e681] [cursor=pointer]:
+              - generic [ref=e682]: file_download
+            - button "code" [ref=e683] [cursor=pointer]:
+              - generic [ref=e684]: code
+            - button "share" [ref=e685] [cursor=pointer]:
+              - generic [ref=e686]: share
+        - generic [ref=e688]:
+          - generic [ref=e689]:
+            - generic [ref=e690]:
+              - generic [ref=e691]:
+                - generic [ref=e692]:
+                  - generic [ref=e695]: NFS alternative
+                  - generic [ref=e698]: file storage API
+                  - generic [ref=e701]: distributed file system
+                  - generic [ref=e704]: self hosted cloud storage
+                  - generic [ref=e707]: file server linux
+                - img "A chart." [ref=e715]
+              - generic [ref=e1492]:
+                - text: Color intensity represents percentage of searches
+                - link "LEARN MORE" [ref=e1493] [cursor=pointer]:
+                  - /url: https://support.google.com/trends/answer/4355212
+            - checkbox "Include low search volume regions" [ref=e1496] [cursor=pointer]:
+              - generic [ref=e1499]: Include low search volume regions
+          - generic [ref=e1503]:
+            - text: ▼
+            - generic [ref=e1505]:
+              - generic [ref=e1507]:
+                - generic [ref=e1508]: "Sort:"
+                - 'listbox "Sort by term: Interest for NFS alternative" [ref=e1509]':
+                  - generic [ref=e1510]:
+                    - generic [ref=e1511]: Interest for NFS alternative
+                    - generic [ref=e1512]: ▼
+              - button "1 Germany" [ref=e1515] [cursor=pointer]:
+                - generic [ref=e1516]:
+                  - generic [ref=e1517]: "1"
+                  - generic [ref=e1518]: Germany
+              - button "2 France" [ref=e1528] [cursor=pointer]:
+                - generic [ref=e1529]:
+                  - generic [ref=e1530]: "2"
+                  - generic [ref=e1531]: France
+              - button "3 Australia" [ref=e1540] [cursor=pointer]:
+                - generic [ref=e1541]:
+                  - generic [ref=e1542]: "3"
+                  - generic [ref=e1543]: Australia
+              - button "4 United States" [ref=e1553] [cursor=pointer]:
+                - generic [ref=e1554]:
+                  - generic [ref=e1555]: "4"
+                  - generic [ref=e1556]: United States
+              - button "5 United Kingdom" [ref=e1566] [cursor=pointer]:
+                - generic [ref=e1567]:
+                  - generic [ref=e1568]: "5"
+                  - generic [ref=e1569]: United Kingdom
+              - generic [ref=e1579]:
+                - button "Previous" [disabled] [ref=e1580]
+                - text: Showing 1-5 of 10 regions
+                - button "Next" [ref=e1582] [cursor=pointer]
+      - generic [ref=e1592]: NFS alternative
+      - generic [ref=e1599]:
+        - generic [ref=e1600]:
+          - generic [ref=e1601]:
+            - generic [ref=e1602]: Interest by region
+            - button "help_outline" [ref=e1604] [cursor=pointer]:
+              - generic [ref=e1605]: help_outline
+          - 'listbox "Select resolution: Region" [ref=e1607]':
+            - generic [ref=e1608]:
+              - generic [ref=e1609]: Region
+              - generic [ref=e1610]: ▼
+          - button "List view" [ref=e1613] [cursor=pointer]
+          - generic [ref=e1615]:
+            - button "file_download" [ref=e1616] [cursor=pointer]:
+              - generic [ref=e1617]: file_download
+            - button "code" [ref=e1618] [cursor=pointer]:
+              - generic [ref=e1619]: code
+            - button "share" [ref=e1620] [cursor=pointer]:
+              - generic [ref=e1621]: share
+        - generic [ref=e1625]:
+          - img "A chart." [ref=e1633]
+          - checkbox "Include low search volume regions" [ref=e2412] [cursor=pointer]:
+            - generic [ref=e2415]: Include low search volume regions
+      - generic [ref=e2422]:
+        - generic [ref=e2423]:
+          - generic [ref=e2424]:
+            - text: Related queries
+            - button "help_outline" [ref=e2426] [cursor=pointer]:
+              - generic [ref=e2427]: help_outline
+          - generic [ref=e2429]:
+            - button "file_download" [ref=e2430] [cursor=pointer]:
+              - generic [ref=e2431]: file_download
+            - button "code" [ref=e2432] [cursor=pointer]:
+              - generic [ref=e2433]: code
+            - button "share" [ref=e2434] [cursor=pointer]:
+              - generic [ref=e2435]: share
+        - generic [ref=e2438]:
+          - generic [ref=e2439]: warning
+          - paragraph [ref=e2440]: Hmm, your search doesn't have enough data to show here.
+          - paragraph [ref=e2441]: Please make sure everything is spelled correctly, or try a more general term.
+      - generic [ref=e2450]: file storage API
+      - generic [ref=e2457]:
+        - generic [ref=e2458]:
+          - generic [ref=e2459]:
+            - generic [ref=e2460]: Interest by region
+            - button "help_outline" [ref=e2462] [cursor=pointer]:
+              - generic [ref=e2463]: help_outline
+          - 'listbox "Select resolution: Region" [ref=e2465]':
+            - generic [ref=e2466]:
+              - generic [ref=e2467]: Region
+              - generic [ref=e2468]: ▼
+          - button "List view" [ref=e2471] [cursor=pointer]
+          - generic [ref=e2473]:
+            - button "file_download" [ref=e2474] [cursor=pointer]:
+              - generic [ref=e2475]: file_download
+            - button "code" [ref=e2476] [cursor=pointer]:
+              - generic [ref=e2477]: code
+            - button "share" [ref=e2478] [cursor=pointer]:
+              - generic [ref=e2479]: share
+        - generic [ref=e2483]:
+          - img "A chart." [ref=e2491]
+          - checkbox "Include low search volume regions" [ref=e3270] [cursor=pointer]:
+            - generic [ref=e3273]: Include low search volume regions
+      - generic [ref=e3280]:
+        - generic [ref=e3281]:
+          - generic [ref=e3282]:
+            - text: Related queries
+            - button "help_outline" [ref=e3284] [cursor=pointer]:
+              - generic [ref=e3285]: help_outline
+          - generic [ref=e3287]:
+            - button "file_download" [ref=e3288] [cursor=pointer]:
+              - generic [ref=e3289]: file_download
+            - button "code" [ref=e3290] [cursor=pointer]:
+              - generic [ref=e3291]: code
+            - button "share" [ref=e3292] [cursor=pointer]:
+              - generic [ref=e3293]: share
+        - generic [ref=e3296]:
+          - generic [ref=e3297]: warning
+          - paragraph [ref=e3298]: Hmm, your search doesn't have enough data to show here.
+          - paragraph [ref=e3299]: Please make sure everything is spelled correctly, or try a more general term.
+      - generic [ref=e3308]: distributed file system
+      - generic [ref=e3315]:
+        - generic [ref=e3316]:
+          - generic [ref=e3317]:
+            - generic [ref=e3318]: Interest by region
+            - button "help_outline" [ref=e3320] [cursor=pointer]:
+              - generic [ref=e3321]: help_outline
+          - 'listbox "Select resolution: Region" [ref=e3323]':
+            - generic [ref=e3324]:
+              - generic [ref=e3325]: Region
+              - generic [ref=e3326]: ▼
+          - button "List view" [ref=e3329] [cursor=pointer]
+          - generic [ref=e3331]:
+            - button "file_download" [ref=e3332] [cursor=pointer]:
+              - generic [ref=e3333]: file_download
+            - button "code" [ref=e3334] [cursor=pointer]:
+              - generic [ref=e3335]: code
+            - button "share" [ref=e3336] [cursor=pointer]:
+              - generic [ref=e3337]: share
+        - generic [ref=e3341]:
+          - img "A chart." [ref=e3349]
+          - checkbox "Include low search volume regions" [ref=e4128] [cursor=pointer]:
+            - generic [ref=e4131]: Include low search volume regions
+      - generic [ref=e4138]:
+        - generic [ref=e4139]:
+          - generic [ref=e4140]:
+            - text: Related queries
+            - button "help_outline" [ref=e4142] [cursor=pointer]:
+              - generic [ref=e4143]: help_outline
+          - 'listbox "Select bullets view: Top" [ref=e4145]':
+            - generic [ref=e4146]:
+              - generic [ref=e4147]: Top
+              - generic [ref=e4148]: ▼
+          - generic [ref=e4150]:
+            - button "file_download" [ref=e4151] [cursor=pointer]:
+              - generic [ref=e4152]: file_download
+            - button "code" [ref=e4153] [cursor=pointer]:
+              - generic [ref=e4154]: code
+            - button "share" [ref=e4155] [cursor=pointer]:
+              - generic [ref=e4156]: share
+        - generic [ref=e4158]:
+          - generic "Explore distributed file system in distributed system" [ref=e4160]:
+            - link "1 distributed file system in distributed system 100" [ref=e4161] [cursor=pointer]:
+              - /url: /trends/explore?q=distributed+file+system+in+distributed+system&date=today+12-m
+              - generic [ref=e4162]:
+                - generic [ref=e4163]: "1"
+                - generic [ref=e4164]: distributed file system in distributed system
+                - generic [ref=e4165]: "100"
+            - button "more_vert" [ref=e4168] [cursor=pointer]:
+              - generic [ref=e4169]: more_vert
+          - generic "Explore what is distributed file system" [ref=e4171]:
+            - link "2 what is distributed file system 53" [ref=e4172] [cursor=pointer]:
+              - /url: /trends/explore?q=what+is+distributed+file+system&date=today+12-m
+              - generic [ref=e4173]:
+                - generic [ref=e4174]: "2"
+                - generic [ref=e4175]: what is distributed file system
+                - generic [ref=e4176]: "53"
+            - button "more_vert" [ref=e4179] [cursor=pointer]:
+              - generic [ref=e4180]: more_vert
+          - generic "Explore hadoop distributed file system" [ref=e4182]:
+            - link "3 hadoop distributed file system 35" [ref=e4183] [cursor=pointer]:
+              - /url: /trends/explore?q=hadoop+distributed+file+system&date=today+12-m
+              - generic [ref=e4184]:
+                - generic [ref=e4185]: "3"
+                - generic [ref=e4186]: hadoop distributed file system
+                - generic [ref=e4187]: "35"
+            - button "more_vert" [ref=e4190] [cursor=pointer]:
+              - generic [ref=e4191]: more_vert
+          - generic "Explore distributed file systems" [ref=e4193]:
+            - link "4 distributed file systems 26" [ref=e4194] [cursor=pointer]:
+              - /url: /trends/explore?q=distributed+file+systems&date=today+12-m
+              - generic [ref=e4195]:
+                - generic [ref=e4196]: "4"
+                - generic [ref=e4197]: distributed file systems
+                - generic [ref=e4198]: "26"
+            - button "more_vert" [ref=e4201] [cursor=pointer]:
+              - generic [ref=e4202]: more_vert
+          - generic "Explore distributed file system architecture" [ref=e4204]:
+            - link "5 distributed file system architecture 19" [ref=e4205] [cursor=pointer]:
+              - /url: /trends/explore?q=distributed+file+system+architecture&date=today+12-m
+              - generic [ref=e4206]:
+                - generic [ref=e4207]: "5"
+                - generic [ref=e4208]: distributed file system architecture
+                - generic [ref=e4209]: "19"
+            - button "more_vert" [ref=e4212] [cursor=pointer]:
+              - generic [ref=e4213]: more_vert
+          - generic [ref=e4216]:
+            - button "Previous" [disabled] [ref=e4217]
+            - text: Showing 1-5 of 11 queries
+            - button "Next" [ref=e4219] [cursor=pointer]
+      - generic [ref=e4229]: self hosted cloud storage
+      - generic [ref=e4236]:
+        - generic [ref=e4237]:
+          - generic [ref=e4238]:
+            - generic [ref=e4239]: Interest by region
+            - button "help_outline" [ref=e4241] [cursor=pointer]:
+              - generic [ref=e4242]: help_outline
+          - 'listbox "Select resolution: Region" [ref=e4244]':
+            - generic [ref=e4245]:
+              - generic [ref=e4246]: Region
+              - generic [ref=e4247]: ▼
+          - button "List view" [ref=e4250] [cursor=pointer]
+          - generic [ref=e4252]:
+            - button "file_download" [ref=e4253] [cursor=pointer]:
+              - generic [ref=e4254]: file_download
+            - button "code" [ref=e4255] [cursor=pointer]:
+              - generic [ref=e4256]: code
+            - button "share" [ref=e4257] [cursor=pointer]:
+              - generic [ref=e4258]: share
+        - generic [ref=e4262]:
+          - img "A chart." [ref=e4270]
+          - checkbox "Include low search volume regions" [ref=e5049] [cursor=pointer]:
+            - generic [ref=e5052]: Include low search volume regions
+      - generic [ref=e5059]:
+        - generic [ref=e5060]:
+          - generic [ref=e5061]:
+            - text: Related queries
+            - button "help_outline" [ref=e5063] [cursor=pointer]:
+              - generic [ref=e5064]: help_outline
+          - generic [ref=e5066]:
+            - button "file_download" [ref=e5067] [cursor=pointer]:
+              - generic [ref=e5068]: file_download
+            - button "code" [ref=e5069] [cursor=pointer]:
+              - generic [ref=e5070]: code
+            - button "share" [ref=e5071] [cursor=pointer]:
+              - generic [ref=e5072]: share
+        - generic [ref=e5075]:
+          - generic [ref=e5076]: warning
+          - paragraph [ref=e5077]: Hmm, your search doesn't have enough data to show here.
+          - paragraph [ref=e5078]: Please make sure everything is spelled correctly, or try a more general term.
+      - generic [ref=e5087]: file server linux
+      - generic [ref=e5094]:
+        - generic [ref=e5095]:
+          - generic [ref=e5096]:
+            - generic [ref=e5097]: Interest by region
+            - button "help_outline" [ref=e5099] [cursor=pointer]:
+              - generic [ref=e5100]: help_outline
+          - 'listbox "Select resolution: Region" [ref=e5102]':
+            - generic [ref=e5103]:
+              - generic [ref=e5104]: Region
+              - generic [ref=e5105]: ▼
+          - button "List view" [ref=e5108] [cursor=pointer]
+          - generic [ref=e5110]:
+            - button "file_download" [ref=e5111] [cursor=pointer]:
+              - generic [ref=e5112]: file_download
+            - button "code" [ref=e5113] [cursor=pointer]:
+              - generic [ref=e5114]: code
+            - button "share" [ref=e5115] [cursor=pointer]:
+              - generic [ref=e5116]: share
+        - generic [ref=e5120]:
+          - img "A chart." [ref=e5128]
+          - checkbox "Include low search volume regions" [ref=e5907] [cursor=pointer]:
+            - generic [ref=e5910]: Include low search volume regions
+      - generic [ref=e5917]:
+        - generic [ref=e5918]:
+          - generic [ref=e5919]:
+            - text: Related queries
+            - button "help_outline" [ref=e5921] [cursor=pointer]:
+              - generic [ref=e5922]: help_outline
+          - generic [ref=e5924]:
+            - button "file_download" [ref=e5925] [cursor=pointer]:
+              - generic [ref=e5926]: file_download
+            - button "code" [ref=e5927] [cursor=pointer]:
+              - generic [ref=e5928]: code
+            - button "share" [ref=e5929] [cursor=pointer]:
+              - generic [ref=e5930]: share
+        - generic [ref=e5933]:
+          - generic [ref=e5934]: warning
+          - paragraph [ref=e5935]: Hmm, your search doesn't have enough data to show here.
+          - paragraph [ref=e5936]: Please make sure everything is spelled correctly, or try a more general term.

@@ -1,0 +1,119 @@
+- generic [ref=e1]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e8] [cursor=pointer]:
+        - button "Play" [ref=e10]
+        - img "Mike Mindel takes you through the Wordttracker keyword tool"
+      - button "×" [ref=e11] [cursor=pointer]
+    - generic [ref=e12]:
+      - banner [ref=e13]:
+        - link "Wordtracker" [ref=e14] [cursor=pointer]:
+          - /url: /#/search
+          - heading "Wordtracker" [level=1] [ref=e15]:
+            - strong: Wordtracker
+        - list [ref=e16]:
+          - listitem [ref=e17]:
+            - link "By Search" [ref=e18] [cursor=pointer]:
+              - /url: /search
+          - listitem [ref=e19]:
+            - link "By Domain" [ref=e20] [cursor=pointer]:
+              - /url: /domain
+          - listitem [ref=e21]:
+            - link "By Rank" [ref=e22] [cursor=pointer]:
+              - /url: /ranking
+        - list [ref=e23]:
+          - listitem [ref=e24]:
+            - link "Log in" [ref=e25] [cursor=pointer]:
+              - /url: /login
+          - listitem [ref=e26]:
+            - button " Unlock full tool" [ref=e27] [cursor=pointer]
+          - text: 
+      - search [ref=e29]:
+        - generic: 
+        - generic [ref=e32]: 0 free searches remaining. Unlock now...
+        - generic [ref=e35]:
+          - generic [ref=e36]:
+            - text:  Enter a seed term to reveal what people search for online
+            - textbox " Enter a seed term to reveal what people search for online" [active] [ref=e37]:
+              - /placeholder: eg, trainers
+              - text: file upload api
+          - generic [ref=e38]:
+            - text:  Territory
+            - generic [ref=e39]:
+              - button " Territory" [ref=e40] [cursor=pointer]:  United States
+              - text:                                                                                                                                                                                                                                           
+          - button "Search" [ref=e41] [cursor=pointer]
+          - button [ref=e43] [cursor=pointer]:  Import...
+          - button " Show search options..." [ref=e45] [cursor=pointer]
+        - generic [ref=e47]:  Enter any idea or keyword to begin...
+  - generic [ref=e51]:
+    - button " Close" [ref=e52] [cursor=pointer]
+    - generic [ref=e54]:
+      - generic [ref=e56]:
+        - generic [ref=e57]: Continue your search
+        - generic [ref=e58]:
+          - heading "Get 15 more free searches" [level=2] [ref=e59]
+          - paragraph [ref=e60]: See real keyword data for 15 more searches — no card needed
+        - list [ref=e61]:
+          - listitem [ref=e62]:
+            - generic [ref=e63]: 
+            - text: Keyword volumes & competition data
+          - listitem [ref=e64]:
+            - generic [ref=e65]: 
+            - text: Keywords driving traffic to competitors
+          - listitem [ref=e66]:
+            - generic [ref=e67]: 
+            - text: Longtail keyword suggestions
+        - generic [ref=e68]:
+          - textbox [ref=e71]:
+            - /placeholder: name@example.com
+          - button "Get 15 more searches" [ref=e72] [cursor=pointer]:
+            - text: Get 15 more searches
+            - generic [ref=e73]: 
+          - paragraph [ref=e74]:
+            - text: We'll also send you a few helpful keyword tips. Unsubscribe anytime.
+            - link "Privacy Policy" [ref=e75] [cursor=pointer]:
+              - /url: /privacy
+      - generic:
+        - generic: OR
+      - generic [ref=e77]:
+        - generic [ref=e78]: Full access
+        - heading "Full access" [level=2] [ref=e80]
+        - generic [ref=e81]:
+          - generic [ref=e82]: $10
+          - text: /month
+        - list [ref=e83]:
+          - listitem [ref=e84]:
+            - generic [ref=e85]: 
+            - text: Unlimited searches
+          - listitem [ref=e86]:
+            - generic [ref=e87]: 
+            - text: Up to 1000 results
+          - listitem [ref=e88]:
+            - generic [ref=e89]: 
+            - text: Analyze unlimited domains
+          - listitem [ref=e90]:
+            - generic [ref=e91]: 
+            - text: Track rank of up to 1000 keywords
+          - listitem [ref=e92]:
+            - generic [ref=e93]: 
+            - text: Full data exports
+        - generic [ref=e94]:
+          - button "Unlock everything for $10" [ref=e95] [cursor=pointer]
+          - paragraph [ref=e96]: Cancel anytime.
+  - dialog "Mike Mindel helps you discover the keywords your competitors rank for":
+    - generic [ref=e101]:
+      - generic "Mike Mindel helps you discover the keywords your competitors rank for" [ref=e103]
+      - generic [ref=e105]:
+        - generic [ref=e106]:
+          - generic:
+            - 'button "Play Video: Mike Mindel helps you discover the keywords your competitors rank for"'
+          - img "Mike Mindel takes you through the Wordttracker keyword tool" [ref=e108]
+        - 'button "Play Video: Mike Mindel helps you discover the keywords your competitors rank for" [ref=e110] [cursor=pointer]':
+          - img [ref=e113]
+    - button "Close" [ref=e115] [cursor=pointer]:
+      - img "Click to close video" [ref=e116]
+  - iframe [ref=e119]:
+    - generic [ref=f39e6]:
+      - text: protected by
+      - strong [ref=f39e7]: reCAPTCHA
