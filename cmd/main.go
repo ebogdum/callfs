@@ -1,7 +1,7 @@
 package main
 
 //	@title		CallFS API
-//	@version	1.3.0
+//	@version	1.4.0
 //	@description	CallFS is an ultra-lightweight, high-performance REST API filesystem that provides precise Linux filesystem semantics over various backends.
 //	@termsOfService	http://swagger.io/terms/
 

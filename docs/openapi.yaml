@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: CallFS API
   description: Ultra-lightweight REST API filesystem providing Linux filesystem semantics
-  version: 1.3.0
+  version: 1.4.0
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
