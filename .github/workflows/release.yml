@@ -17,10 +17,39 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Trigger Go module proxy
-        run: GOPROXY=https://proxy.golang.org go list -m github.com/ebogdum/callfs@${GITHUB_REF_NAME}
+      - name: Build binaries for all platforms
+        run: |
+          mkdir -p builds
+          PLATFORMS=(
+            "linux/amd64"
+            "linux/arm64"
+            "windows/amd64"
+            "darwin/amd64"
+            "darwin/arm64"
+            "freebsd/amd64"
+            "freebsd/arm64"
+            "openbsd/amd64"
+            "openbsd/arm64"
+          )
+          for platform in "${PLATFORMS[@]}"; do
+            IFS='/' read -r GOOS GOARCH <<< "$platform"
+            OUTPUT="builds/callfs-${GOOS}-${GOARCH}"
+            if [ "$GOOS" = "windows" ]; then
+              OUTPUT="${OUTPUT}.exe"
+            fi
+            echo "Building ${GOOS}/${GOARCH}..."
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags="-s -w" -o "$OUTPUT" ./cmd
+          done
+          ls -lh builds/
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release with binaries
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --title "${GITHUB_REF_NAME}"
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            builds/* \
+            --generate-notes \
+            --title "${GITHUB_REF_NAME}"
+
+      - name: Trigger Go module proxy
+        run: GOPROXY=https://proxy.golang.org go list -m github.com/ebogdum/callfs@${GITHUB_REF_NAME}
