@@ -9,9 +9,11 @@ const docTemplate = `{
     "info": {
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
+        "termsOfService": "http://swagger.io/terms/",
         "contact": {
-            "name": "CallFS Project",
-            "url": "https://github.com/ebogdum/callfs"
+            "name": "CallFS Support",
+            "url": "http://callfs.io/support",
+            "email": "support@callfs.io"
         },
         "license": {
             "name": "MIT",
@@ -51,25 +53,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Token not found",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse"
                         }
                     },
                     "410": {
                         "description": "Token expired or already used",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse"
                         }
                     }
                 }
@@ -112,31 +114,31 @@ const docTemplate = `{
                     "200": {
                         "description": "Directory listing",
                         "schema": {
-                            "$ref": "#/definitions/handlers.DirectoryListingResponse"
+                            "$ref": "#/definitions/server_handlers.DirectoryListingResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     }
                 }
@@ -170,10 +172,6 @@ const docTemplate = `{
                             "type": "string"
                         },
                         "headers": {
-                            "X-CallFS-GID": {
-                                "type": "string",
-                                "description": "Group ID"
-                            },
                             "X-CallFS-MTime": {
                                 "type": "string",
                                 "description": "Last modified time"
@@ -182,38 +180,38 @@ const docTemplate = `{
                                 "type": "string",
                                 "description": "File mode (permissions)"
                             },
+                            "X-CallFS-Owner": {
+                                "type": "string",
+                                "description": "Resource owner (app user ID)"
+                            },
                             "X-CallFS-Size": {
                                 "type": "string",
                                 "description": "File size in bytes"
-                            },
-                            "X-CallFS-UID": {
-                                "type": "string",
-                                "description": "User ID"
                             }
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     }
                 }
@@ -257,37 +255,37 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "Bad Gateway (cross-server proxy error)",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     }
                 }
@@ -330,31 +328,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "Conflict - resource exists on another server",
                         "schema": {
-                            "$ref": "#/definitions/handlers.CrossServerConflictResponse"
+                            "$ref": "#/definitions/server_handlers.CrossServerConflictResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     }
                 }
@@ -386,31 +384,31 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "Bad Gateway (cross-server proxy error)",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     }
                 }
@@ -439,10 +437,6 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "headers": {
-                            "X-CallFS-GID": {
-                                "type": "string",
-                                "description": "Group ID"
-                            },
                             "X-CallFS-Instance-ID": {
                                 "type": "string",
                                 "description": "Instance ID where file is located"
@@ -455,6 +449,10 @@ const docTemplate = `{
                                 "type": "string",
                                 "description": "File mode (permissions)"
                             },
+                            "X-CallFS-Owner": {
+                                "type": "string",
+                                "description": "Resource owner (app user ID)"
+                            },
                             "X-CallFS-Size": {
                                 "type": "string",
                                 "description": "File size in bytes"
@@ -462,157 +460,37 @@ const docTemplate = `{
                             "X-CallFS-Type": {
                                 "type": "string",
                                 "description": "File type (file or directory)"
-                            },
-                            "X-CallFS-UID": {
-                                "type": "string",
-                                "description": "User ID"
                             }
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     },
                     "502": {
                         "description": "Bad Gateway (cross-server proxy error)",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/shards/{path}/{index}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Retrieves an individual erasure-coded shard for parallel downloads of erasure-coded files.",
-                "tags": [
-                    "shards"
-                ],
-                "summary": "Download erasure-coded shard",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "File path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Shard index",
-                        "name": "index",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Shard content",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Shard not found",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/files/ws/{path}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Upgrades to a WebSocket connection for streaming file transfers. Use query parameter mode=download to stream file content in 64KB binary messages, or mode=upload to send file content (max 100MB, memory-buffered). Origin validation is enforced to prevent CSRF.",
-                "tags": [
-                    "files"
-                ],
-                "summary": "WebSocket file transfer",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "File path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Transfer mode (download or upload)",
-                        "name": "mode",
-                        "in": "query",
-                        "required": true,
-                        "enum": ["download", "upload"]
-                    }
-                ],
-                "responses": {
-                    "101": {
-                        "description": "Switching Protocols (WebSocket upgrade)"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/server_handlers.ErrorResponse"
                         }
                     }
                 }
@@ -643,7 +521,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/links.GenerateLinkRequest"
+                            "$ref": "#/definitions/server_handlers_links.GenerateLinkRequest"
                         }
                     }
                 ],
@@ -651,25 +529,25 @@ const docTemplate = `{
                     "201": {
                         "description": "Link generated successfully",
                         "schema": {
-                            "$ref": "#/definitions/links.GenerateLinkResponse"
+                            "$ref": "#/definitions/server_handlers_links.GenerateLinkResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse"
                         }
                     }
                 }
@@ -677,7 +555,18 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "handlers.CrossServerConflictResponse": {
+        "github_com_ebogdum_callfs_server_handlers.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "server_handlers.CrossServerConflictResponse": {
             "type": "object",
             "properties": {
                 "backend_type": {
@@ -700,7 +589,7 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.DirectoryListingResponse": {
+        "server_handlers.DirectoryListingResponse": {
             "type": "object",
             "properties": {
                 "count": {
@@ -709,7 +598,7 @@ const docTemplate = `{
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/handlers.FileInfo"
+                        "$ref": "#/definitions/server_handlers.FileInfo"
                     }
                 },
                 "max_depth": {
@@ -727,7 +616,7 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.ErrorResponse": {
+        "server_handlers.ErrorResponse": {
             "type": "object",
             "properties": {
                 "code": {
@@ -738,12 +627,9 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.FileInfo": {
+        "server_handlers.FileInfo": {
             "type": "object",
             "properties": {
-                "gid": {
-                    "type": "integer"
-                },
                 "mode": {
                     "type": "string"
                 },
@@ -751,6 +637,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "owner": {
                     "type": "string"
                 },
                 "path": {
@@ -761,13 +650,10 @@ const docTemplate = `{
                 },
                 "type": {
                     "type": "string"
-                },
-                "uid": {
-                    "type": "integer"
                 }
             }
         },
-        "links.GenerateLinkRequest": {
+        "server_handlers_links.GenerateLinkRequest": {
             "type": "object",
             "properties": {
                 "expiry_seconds": {
@@ -780,7 +666,7 @@ const docTemplate = `{
                 }
             }
         },
-        "links.GenerateLinkResponse": {
+        "server_handlers_links.GenerateLinkResponse": {
             "type": "object",
             "properties": {
                 "expires": {
@@ -800,7 +686,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Type \"Bearer\" followed by a space and your API key.",
+            "description": "Type \"Bearer\" followed by a space and JWT token.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

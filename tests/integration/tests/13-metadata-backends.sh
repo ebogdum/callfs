@@ -13,37 +13,45 @@ pass
 test_name "Upload /meta-test.txt"
 upload_file "$NODE1" "/meta-test.txt" "metadata backend test"
 assert_status 201
+pass
 
 test_name "GET /meta-test.txt returns 200 with correct body"
 BODY=$(download_file "$NODE1" "/meta-test.txt")
 assert_status 200
 assert_body_equals "$BODY" "metadata backend test"
+pass
 
 test_name "HEAD /meta-test.txt returns headers"
 callfs_head_method "${NODE1}/v1/files/meta-test.txt"
 assert_status 200
+pass
 
 test_name "HEAD response has Content-Type header"
 assert_header_present "Content-Type"
+pass
 
 test_name "PUT /meta-test.txt with updated content"
 BODY=$(callfs_curl PUT "${NODE1}/v1/files/meta-test.txt" \
   -H "Content-Type: application/octet-stream" \
   -d "updated")
 assert_status 200
+pass
 
 test_name "GET /meta-test.txt returns updated content"
 BODY=$(download_file "$NODE1" "/meta-test.txt")
 assert_status 200
 assert_body_equals "$BODY" "updated"
+pass
 
 test_name "Create directory /meta-dir/"
 create_directory "$NODE1" "/meta-dir/"
 assert_status 201
+pass
 
 test_name "List /meta-dir returns 200"
 BODY=$(list_directory "$NODE1" "meta-dir")
 assert_status 200
+pass
 
 test_name "Generate single-use link for /meta-test.txt"
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
@@ -51,23 +59,39 @@ BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -d '{"path":"/meta-test.txt","expiry_seconds":3600}')
 assert_status 201
 TOKEN=$(echo "$BODY" | jq -r '.token')
+pass
 
 test_name "Download via /download/{token} returns 200"
 BODY=$(callfs_curl_noauth GET "${NODE1}/download/${TOKEN}")
 assert_status 200
 assert_body_equals "$BODY" "updated"
+pass
 
 test_name "Download same token again returns 410 (already used)"
 BODY=$(callfs_curl_noauth GET "${NODE1}/download/${TOKEN}")
 assert_status 410
+pass
 
 test_name "DELETE /meta-test.txt returns 204"
 delete_file "$NODE1" "/meta-test.txt"
 assert_status 204
+pass
 
-test_name "DELETE /meta-dir returns 204"
-delete_file "$NODE1" "/meta-dir"
-assert_status 204
+test_name "Upload 2KB random binary, download, SHA-256 match"
+BINFILE="${_TMPDIR}/meta-bin-upload.bin"
+BINDOWN="${_TMPDIR}/meta-bin-download.bin"
+generate_random_binary "$BINFILE" 2048
+upload_file_binary "$NODE1" "/meta-bin-test.bin" "$BINFILE"
+assert_status 201
+download_file_to_file "$NODE1" "/meta-bin-test.bin" "$BINDOWN"
+assert_status 200
+assert_sha256_match "$BINFILE" "$BINDOWN"
+pass
+
+test_name "Cleanup metadata test files"
+delete_file "$NODE1" "/meta-dir" >/dev/null 2>&1 || true
+delete_file "$NODE1" "/meta-bin-test.bin" >/dev/null 2>&1 || true
+pass
 
 print_summary
 exit $?

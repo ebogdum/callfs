@@ -66,8 +66,7 @@ func (a *S3Adapter) Create(ctx context.Context, path string, reader io.Reader, s
 		putInput.ContentType = aws.String(contentType)
 	}
 
-	uploader := s3manager.NewUploaderWithClient(a.client)
-	_, err := uploader.UploadWithContext(ctx, putInput)
+	_, err := a.uploader.UploadWithContext(ctx, putInput)
 	if err != nil {
 		return fmt.Errorf("failed to put object to S3: %w", err)
 	}
@@ -128,8 +127,6 @@ func (a *S3Adapter) Stat(ctx context.Context, path string) (*metadata.Metadata, 
 		Type:        "file",
 		Size:        *result.ContentLength,
 		Mode:        "0644",
-		UID:         1000,
-		GID:         1000,
 		BackendType: "s3",
 	}
 

@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -33,18 +33,18 @@ func SendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, def
 	var statusCode int
 	var errorCode string
 
-	// Map specific errors to HTTP status codes and error codes
-	switch err {
-	case metadata.ErrNotFound:
+	// Map specific errors to HTTP status codes and error codes (using errors.Is for wrapped errors)
+	switch {
+	case errors.Is(err, metadata.ErrNotFound):
 		statusCode = http.StatusNotFound
 		errorCode = "FILE_NOT_FOUND"
-	case metadata.ErrAlreadyExists:
+	case errors.Is(err, metadata.ErrAlreadyExists):
 		statusCode = http.StatusConflict
 		errorCode = "FILE_ALREADY_EXISTS"
-	case auth.ErrAuthenticationFailed:
+	case errors.Is(err, auth.ErrAuthenticationFailed):
 		statusCode = http.StatusUnauthorized
 		errorCode = "AUTHENTICATION_FAILED"
-	case auth.ErrPermissionDenied:
+	case errors.Is(err, auth.ErrPermissionDenied):
 		statusCode = http.StatusForbidden
 		errorCode = "PERMISSION_DENIED"
 	default:
@@ -64,14 +64,20 @@ func SendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, def
 		Message: message,
 	}
 
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logger.Error("Failed to encode error response", zap.Error(err))
-		// Fallback to plain text
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "Internal error occurred")
+	jsonBytes, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		logger.Error("Failed to marshal error response", zap.Error(marshalErr))
+		return
+	}
+	if _, writeErr := w.Write(jsonBytes); writeErr != nil {
+		logger.Error("Failed to write error response", zap.Error(writeErr))
 	}
 
-	logger.Info("Error response sent",
+	logLevel := logger.Info
+	if statusCode >= 500 {
+		logLevel = logger.Error
+	}
+	logLevel("Error response sent",
 		zap.String("error_code", errorCode),
 		zap.Int("status_code", statusCode),
 		zap.Error(err))

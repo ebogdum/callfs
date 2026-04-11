@@ -89,16 +89,19 @@ func (a *LocalFSAdapter) Create(ctx context.Context, path string, reader io.Read
 		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
 
-	// Check if destination already exists (O_EXCL equivalent)
-	if _, statErr := os.Lstat(fullPath); statErr == nil {
+	// Atomic exclusive create: use os.Link to hard-link the temp file to the
+	// destination. Link fails with EEXIST if the destination already exists,
+	// providing an atomic O_EXCL equivalent without a TOCTOU window.
+	if err := os.Link(tmpPath, fullPath); err != nil {
 		os.Remove(tmpPath)
-		return metadata.ErrAlreadyExists
+		if os.IsExist(err) {
+			return metadata.ErrAlreadyExists
+		}
+		return fmt.Errorf("failed to link temp file to destination: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, fullPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
+	// Remove the temp file (the data now lives at fullPath via the hard link)
+	os.Remove(tmpPath)
 
 	return nil
 }
@@ -199,8 +202,9 @@ func (a *LocalFSAdapter) Stat(ctx context.Context, path string) (*metadata.Metad
 		md.Type = "file"
 	}
 
-	// Extract platform-specific metadata (permissions, ownership, timestamps)
-	md.Mode, md.UID, md.GID, md.ATime, md.CTime = extractUnixMetadata(info)
+	// Extract platform-specific timestamps and mode from the filesystem.
+	// Ownership is tracked via Metadata.Owner — no OS-level UIDs involved.
+	md.Mode, md.ATime, md.CTime = extractPlatformMetadata(info)
 
 	return md, nil
 }

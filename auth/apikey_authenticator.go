@@ -19,7 +19,7 @@ type APIKeyAuthenticator struct {
 // so cross-server operations (UpdateFileOnInstance, etc.) can authenticate on peers.
 func NewAPIKeyAuthenticator(keys []string, internalProxySecret string) *APIKeyAuthenticator {
 	validKeys := make(map[string]string)
-	userIndex := 1
+	userIndex := 0
 	for _, key := range keys {
 		if key != "" {
 			validKeys[key] = fmt.Sprintf("api-user-%d", userIndex)
@@ -47,16 +47,16 @@ func (a *APIKeyAuthenticator) Authenticate(ctx context.Context, token string) (s
 	// Iterate ALL keys with constant-time comparison to prevent timing attacks.
 	// No early return: the number of iterations must be constant regardless of
 	// which key (if any) matches, to avoid leaking key-position information.
-	var foundUID string
+	var foundUser string
 	found := 0
-	for key, uid := range a.validKeys {
+	for key, user := range a.validKeys {
 		if subtle.ConstantTimeCompare([]byte(token), []byte(key)) == 1 {
-			foundUID = uid
+			foundUser = user
 			found = 1
 		}
 	}
 	if found == 0 {
 		return "", ErrAuthenticationFailed
 	}
-	return foundUID, nil
+	return foundUser, nil
 }

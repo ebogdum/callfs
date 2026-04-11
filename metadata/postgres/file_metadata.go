@@ -11,8 +11,9 @@ import (
 	"github.com/ebogdum/callfs/metadata"
 )
 
-// escapeLikePattern escapes SQL LIKE metacharacters (% and _)
+// escapeLikePattern escapes SQL LIKE metacharacters (\, %, _)
 func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "%", "\\%")
 	s = strings.ReplaceAll(s, "_", "\\_")
 	return s
@@ -26,8 +27,8 @@ func (s *PostgresStore) Get(ctx context.Context, path string) (*metadata.Metadat
 	var symlinkTarget sql.NullString
 
 	query := `
-		SELECT id, parent_id, name, path, type, size, mode, uid, gid, 
-		       atime, mtime, ctime, backend_type, callfs_instance_id,
+		SELECT id, parent_id, name, path, type, size, mode, owner,
+		       atime, mtime, ctime, backend_type, erasure_coded, callfs_instance_id,
 		       symlink_target, created_at, updated_at
 		FROM inodes
 		WHERE path = $1`
@@ -40,12 +41,12 @@ func (s *PostgresStore) Get(ctx context.Context, path string) (*metadata.Metadat
 		&md.Type,
 		&md.Size,
 		&md.Mode,
-		&md.UID,
-		&md.GID,
+		&md.Owner,
 		&md.ATime,
 		&md.MTime,
 		&md.CTime,
 		&md.BackendType,
+		&md.ErasureCoded,
 		&callfsInstanceID,
 		&symlinkTarget,
 		&md.CreatedAt,
@@ -96,12 +97,12 @@ func (s *PostgresStore) Create(ctx context.Context, md *metadata.Metadata) error
 		md.Type,
 		md.Size,
 		md.Mode,
-		md.UID,
-		md.GID,
+		md.Owner,
 		md.ATime,
 		md.MTime,
 		md.CTime,
 		md.BackendType,
+		md.ErasureCoded,
 		callfsInstanceID,
 		symlinkTarget,
 	).Scan(&md.ID, &md.CreatedAt, &md.UpdatedAt)
@@ -131,12 +132,12 @@ func (s *PostgresStore) Update(ctx context.Context, md *metadata.Metadata) error
 	result, err := s.db.ExecContext(ctx, _SQL_UPDATE_INODE,
 		md.Size,
 		md.Mode,
-		md.UID,
-		md.GID,
+		md.Owner,
 		md.ATime,
 		md.MTime,
 		md.CTime,
 		md.BackendType,
+		md.ErasureCoded,
 		callfsInstanceID,
 		symlinkTarget,
 		md.Path,
@@ -181,8 +182,8 @@ func (s *PostgresStore) Delete(ctx context.Context, path string) error {
 // ListChildren lists all direct children of a directory
 func (s *PostgresStore) ListChildren(ctx context.Context, parentPath string) ([]*metadata.Metadata, error) {
 	query := `
-		SELECT id, parent_id, name, path, type, size, mode, uid, gid,
-		       atime, mtime, ctime, backend_type, callfs_instance_id,
+		SELECT id, parent_id, name, path, type, size, mode, owner,
+		       atime, mtime, ctime, backend_type, erasure_coded, callfs_instance_id,
 		       symlink_target, created_at, updated_at
 		FROM inodes
 		WHERE path LIKE $1 || '/%' ESCAPE '\' AND path NOT LIKE $1 || '/%/%' ESCAPE '\'
@@ -195,8 +196,8 @@ func (s *PostgresStore) ListChildren(ctx context.Context, parentPath string) ([]
 
 	if parentPath == "/" {
 		rootQuery := `
-			SELECT id, parent_id, name, path, type, size, mode, uid, gid,
-			       atime, mtime, ctime, backend_type, callfs_instance_id,
+			SELECT id, parent_id, name, path, type, size, mode, owner,
+			       atime, mtime, ctime, backend_type, erasure_coded, callfs_instance_id,
 			       symlink_target, created_at, updated_at
 			FROM inodes
 			WHERE path LIKE '/%' AND path NOT LIKE '/%/%' AND path != '/'
@@ -227,12 +228,12 @@ func (s *PostgresStore) ListChildren(ctx context.Context, parentPath string) ([]
 			&md.Type,
 			&md.Size,
 			&md.Mode,
-			&md.UID,
-			&md.GID,
+			&md.Owner,
 			&md.ATime,
 			&md.MTime,
 			&md.CTime,
 			&md.BackendType,
+			&md.ErasureCoded,
 			&callfsInstanceID,
 			&symlinkTarget,
 			&md.CreatedAt,

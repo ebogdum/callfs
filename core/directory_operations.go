@@ -57,17 +57,17 @@ func (e *Engine) listDirectoryRecursiveHelper(ctx context.Context, path string, 
 	// Add all children to results
 	allItems = append(allItems, children...)
 
-	// Recursively process subdirectories
+	// Recursively process subdirectories, threading the accumulator through
 	for _, child := range children {
 		if child.Type == "directory" {
-			subItems, err := e.listDirectoryRecursiveHelper(ctx, child.Path, currentDepth+1, maxDepth, nil)
+			var err error
+			allItems, err = e.listDirectoryRecursiveHelper(ctx, child.Path, currentDepth+1, maxDepth, allItems)
 			if err != nil {
 				e.logger.Warn("Failed to list subdirectory",
 					zap.String("path", child.Path),
 					zap.Error(err))
 				continue // Continue with other directories instead of failing completely
 			}
-			allItems = append(allItems, subItems...)
 		}
 	}
 
@@ -97,8 +97,8 @@ func (e *Engine) CreateDirectory(ctx context.Context, path string, md *metadata.
 		return metadata.ErrAlreadyExists
 	}
 
-	// Ensure parent directories exist
-	if err := e.ensureParentDirectories(ctx, path, md.BackendType); err != nil {
+	// Ensure parent directories exist (owned by the creating user)
+	if err := e.ensureParentDirectories(ctx, path, md.BackendType, md.Owner); err != nil {
 		return fmt.Errorf("failed to ensure parent directories: %w", err)
 	}
 

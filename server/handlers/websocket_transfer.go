@@ -82,6 +82,11 @@ func V1WebSocketTransfer(engine *core.Engine, authorizer auth.Authorizer, backen
 		}
 		defer conn.Close()
 
+		// Limit individual message size to prevent a single oversized message from
+		// exhausting server memory before the cumulative upload limit is checked.
+		const maxWSMessageBytes = 1 << 20 // 1 MiB per message
+		conn.SetReadLimit(maxWSMessageBytes)
+
 		enginePath := pathInfo.FullPath
 
 		switch mode {
@@ -178,8 +183,7 @@ func V1WebSocketTransfer(engine *core.Engine, authorizer auth.Authorizer, backen
 					Name:        pathInfo.Name,
 					Type:        "file",
 					Mode:        "0644",
-					UID:         1000,
-					GID:         1000,
+					Owner:       userID,
 					BackendType: backendConfig.DefaultBackend,
 					ATime:       time.Now(),
 					MTime:       time.Now(),

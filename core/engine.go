@@ -1,6 +1,7 @@
 package core
 
 import (
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -21,10 +22,12 @@ type Engine struct {
 	internalProxyAdapter *internalproxy.InternalProxyAdapter // Direct access for instance-specific methods
 	lockManager          locks.Manager
 	currentInstanceID    string
+	peerMu               sync.RWMutex
 	peerEndpoints        map[string]string // Instance ID -> endpoint URL
 	replicationEnabled   bool
 	replicaBackend       string
 	requireReplicaAck    bool
+	erasureMu            sync.RWMutex
 	erasureManager       *erasure.Manager
 	metadataCache        *MetadataCache
 	logger               *zap.Logger
@@ -69,11 +72,15 @@ func (e *Engine) GetCurrentInstanceID() string {
 
 // SetErasureManager sets the erasure manager on the engine
 func (e *Engine) SetErasureManager(em *erasure.Manager) {
+	e.erasureMu.Lock()
+	defer e.erasureMu.Unlock()
 	e.erasureManager = em
 }
 
 // GetErasureManager returns the erasure manager (may be nil)
 func (e *Engine) GetErasureManager() *erasure.Manager {
+	e.erasureMu.RLock()
+	defer e.erasureMu.RUnlock()
 	return e.erasureManager
 }
 
@@ -84,8 +91,21 @@ func (e *Engine) Close() {
 
 // GetPeerEndpoint returns the endpoint URL for a given instance ID
 func (e *Engine) GetPeerEndpoint(instanceID string) string {
+	e.peerMu.RLock()
+	defer e.peerMu.RUnlock()
 	if endpoint, exists := e.peerEndpoints[instanceID]; exists {
 		return endpoint
 	}
 	return ""
+}
+
+// SetPeerEndpoint adds or updates a peer endpoint at runtime (e.g., after Raft join).
+// This updates both the Engine's peer map and the InternalProxyAdapter's instance map.
+func (e *Engine) SetPeerEndpoint(instanceID, endpoint string) {
+	e.peerMu.Lock()
+	e.peerEndpoints[instanceID] = endpoint
+	e.peerMu.Unlock()
+	if e.internalProxyAdapter != nil {
+		e.internalProxyAdapter.SetPeerEndpoint(instanceID, endpoint)
+	}
 }

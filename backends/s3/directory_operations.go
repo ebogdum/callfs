@@ -54,8 +54,6 @@ func (a *S3Adapter) ListDirectory(ctx context.Context, path string) ([]*metadata
 				Type:        "directory",
 				Size:        0,
 				Mode:        "0755",
-				UID:         1000,
-				GID:         1000,
 				BackendType: "s3",
 				ATime:       time.Now(),
 				MTime:       time.Now(),
@@ -88,8 +86,6 @@ func (a *S3Adapter) ListDirectory(ctx context.Context, path string) ([]*metadata
 				Type:        "file",
 				Size:        *object.Size,
 				Mode:        "0644",
-				UID:         1000,
-				GID:         1000,
 				BackendType: "s3",
 			}
 

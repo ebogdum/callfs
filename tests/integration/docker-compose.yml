@@ -24,6 +24,32 @@ services:
     tmpfs:
       - /data
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    tmpfs:
+      - /data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin123;
+      mc mb --ignore-existing local/callfs-test;
+      exit 0;
+      "
+
   node1:
     image: callfs:test
     volumes:
@@ -78,6 +104,22 @@ services:
     tmpfs:
       - /data
       - /raft-data
+
+  node-s3:
+    image: callfs:test
+    volumes:
+      - ./configs/node-s3.yaml:/config.yaml:ro
+    command: ["server", "--config", "/config.yaml"]
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/callfs-healthcheck"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /data
 
 networks:
   default:

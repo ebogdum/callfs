@@ -10,6 +10,7 @@ server:
 auth:
   api_keys:
     - "test-api-key-integration-0123456"
+    - "test-api-key-secondary-9876543"
   internal_proxy_secret: "test-internal-secret-0123456789"
   single_use_link_secret: "test-link-secret-01234567890123"
 

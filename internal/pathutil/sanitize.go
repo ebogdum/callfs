@@ -20,8 +20,9 @@ func Clean(path string) (string, error) {
 		return "/", nil
 	}
 
-	// Reject absolute paths that might escape root
-	if filepath.IsAbs(path) && path != "/" {
+	// Allow absolute paths that start with "/" (standard for CallFS internal paths)
+	// but reject Windows absolute paths like "C:\..."
+	if filepath.IsAbs(path) && !strings.HasPrefix(path, "/") {
 		return "", metadata.ErrForbidden
 	}
 

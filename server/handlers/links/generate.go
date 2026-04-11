@@ -101,13 +101,19 @@ func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorize
 			return
 		}
 
-		// Build full download URL — apiHost is validated at startup to be hostname:port only
+		// Build full download URL from the configured external URL
 		sanitizedHost := strings.TrimSpace(apiHost)
-		if strings.Contains(sanitizedHost, "/") || strings.Contains(sanitizedHost, "://") {
-			handlers.SendErrorResponse(w, logger, errors.New("server misconfiguration: invalid external URL"), http.StatusInternalServerError)
-			return
+		// Strip protocol prefix if present to build the URL correctly
+		scheme := "https"
+		if strings.HasPrefix(sanitizedHost, "http://") {
+			scheme = "http"
+			sanitizedHost = strings.TrimPrefix(sanitizedHost, "http://")
+		} else if strings.HasPrefix(sanitizedHost, "https://") {
+			sanitizedHost = strings.TrimPrefix(sanitizedHost, "https://")
 		}
-		downloadURL := fmt.Sprintf("https://%s/download/%s", sanitizedHost, token)
+		// Remove any trailing path
+		sanitizedHost = strings.TrimRight(sanitizedHost, "/")
+		downloadURL := fmt.Sprintf("%s://%s/download/%s", scheme, sanitizedHost, token)
 
 		// Prepare response
 		response := GenerateLinkResponse{

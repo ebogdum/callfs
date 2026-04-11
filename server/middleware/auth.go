@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -92,10 +93,10 @@ func sendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, sta
 	w.WriteHeader(statusCode)
 
 	var errorCode string
-	switch err {
-	case auth.ErrAuthenticationFailed:
+	switch {
+	case errors.Is(err, auth.ErrAuthenticationFailed):
 		errorCode = "AUTHENTICATION_FAILED"
-	case auth.ErrPermissionDenied:
+	case errors.Is(err, auth.ErrPermissionDenied):
 		errorCode = "PERMISSION_DENIED"
 	default:
 		errorCode = "INTERNAL_ERROR"

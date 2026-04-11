@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -141,7 +143,8 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusConflict)
-				SendJSONResponse(w, conflictResponse)
+				buf, _ := json.Marshal(conflictResponse)
+				_, _ = w.Write(buf)
 				return
 			}
 
@@ -171,8 +174,7 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 				Name:        pathInfo.Name,
 				Type:        "directory",
 				Mode:        "0755",
-				UID:         1000,
-				GID:         1000,
+				Owner:       userID,
 				BackendType: backendConfig.DefaultBackend,
 				ATime:       time.Now(),
 				MTime:       time.Now(),
@@ -225,8 +227,7 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 					Type:         "file",
 					Size:         actualSize,
 					Mode:         "0644",
-					UID:          1000,
-					GID:          1000,
+					Owner:        userID,
 					BackendType:  "erasure",
 					ErasureCoded: true,
 					ATime:        time.Now(),
@@ -262,8 +263,7 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 				Name:        pathInfo.Name,
 				Type:        "file",
 				Mode:        "0644",
-				UID:         1000,
-				GID:         1000,
+				Owner:       userID,
 				BackendType: backendConfig.DefaultBackend,
 				ATime:       time.Now(),
 				MTime:       time.Now(),
@@ -272,6 +272,10 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 
 			// Create new file
 			if err := engine.CreateFile(r.Context(), enginePath, r.Body, size, md); err != nil {
+				if errors.Is(err, metadata.ErrAlreadyExists) {
+					SendErrorResponse(w, logger, &customError{message: "file already exists, use PUT to update"}, http.StatusConflict)
+					return
+				}
 				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 				return
 			}

@@ -12,6 +12,10 @@ import (
 
 // UpdateFileOnInstance updates a file on a specific instance using the internal proxy
 func (e *Engine) UpdateFileOnInstance(ctx context.Context, instanceID, path string, reader io.Reader, size int64) error {
+	if e.internalProxyBackend == nil {
+		return fmt.Errorf("internal proxy not configured: no peer endpoints available")
+	}
+
 	// Use internal proxy with instance ID context
 	ctx = internalproxy.WithInstanceID(ctx, instanceID)
 

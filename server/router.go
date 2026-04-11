@@ -22,7 +22,21 @@ import (
 	authMiddleware "github.com/ebogdum/callfs/server/middleware"
 )
 
-// NewRouter creates and configures the HTTP router
+// RouterResources holds background resources created by NewRouter that must be
+// stopped on server shutdown to avoid goroutine leaks.
+type RouterResources struct {
+	rateLimiters []*authMiddleware.RateLimiterHandle
+}
+
+// Stop releases all background resources owned by the router.
+func (rr *RouterResources) Stop() {
+	for _, h := range rr.rateLimiters {
+		h.Stop()
+	}
+}
+
+// NewRouter creates and configures the HTTP router.
+// The caller must call RouterResources.Stop() during graceful shutdown.
 func NewRouter(
 	engine *core.Engine,
 	authenticator auth.Authenticator,
@@ -32,10 +46,11 @@ func NewRouter(
 	backendConfig *config.BackendConfig,
 	apiHost string,
 	logger *zap.Logger,
-) chi.Router {
+) (chi.Router, *RouterResources) {
 	// Initialize metrics
 	metrics.RegisterMetrics()
 
+	resources := &RouterResources{}
 	r := chi.NewRouter()
 
 	// Basic middleware
@@ -133,17 +148,21 @@ func NewRouter(
 		r.Route("/links", func(r chi.Router) {
 			// Apply rate limiting specifically to link generation (100 requests per second, burst of 1)
 			linkRateLimiter := rate.NewLimiter(100, 1)
-			r.With(authMiddleware.V1RateLimitMiddleware(linkRateLimiter, logger)).
+			linkHandle, linkMW := authMiddleware.V1RateLimitMiddleware(linkRateLimiter, logger)
+			resources.rateLimiters = append(resources.rateLimiters, linkHandle)
+			r.With(linkMW).
 				Post("/generate", linksHandlers.V1GenerateLinkHandler(linkManager, authorizer, apiHost, logger))
 		})
 	})
 
 	// Single-use download endpoint (no auth required, rate-limited)
 	downloadRateLimiter := rate.NewLimiter(10, 5)
-	r.With(authMiddleware.V1RateLimitMiddleware(downloadRateLimiter, logger)).
+	downloadHandle, downloadMW := authMiddleware.V1RateLimitMiddleware(downloadRateLimiter, logger)
+	resources.rateLimiters = append(resources.rateLimiters, downloadHandle)
+	r.With(downloadMW).
 		Get("/download/{token}", linksHandlers.V1DownloadLinkHandler(engine, linkManager, logger))
 
 	logger.Info("HTTP router configured successfully")
 
-	return r
+	return r, resources
 }

@@ -71,6 +71,11 @@ func NewManager(
 	}
 }
 
+// Close releases resources held by the erasure Manager (e.g. HTTP connection pools).
+func (m *Manager) Close() {
+	m.httpClient.CloseIdleConnections()
+}
+
 // StoreFile erasure-encodes data and distributes shards across instances.
 func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, originalSize int64, opts *StoreOptions) (*ErasureFileInfo, error) {
 	// Validate originalSize matches actual data length
@@ -175,8 +180,10 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 	wg.Wait()
 
 	if storeErr != nil {
-		// Cleanup orphaned shards — use a background context since the request ctx may already be cancelled
+		// Cleanup orphaned shards — use a background context since the request ctx may already be cancelled.
+		// Block until cleanup completes (bounded by 30s timeout) to avoid goroutine leaks.
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
 		var cleanupWg sync.WaitGroup
 		for i := 0; i < totalShards; i++ {
 			if shardInfos[i].Path == "" {
@@ -193,10 +200,7 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 				}
 			}(shardInfos[i])
 		}
-		go func() {
-			cleanupWg.Wait()
-			cleanupCancel()
-		}()
+		cleanupWg.Wait()
 		return nil, storeErr
 	}
 
@@ -229,8 +233,10 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 	mdInfo.Shards = mdShards
 
 	if err := m.erasureStore.CreateErasureInfo(ctx, path, mdInfo); err != nil {
-		// Clean up all successfully-written shards since metadata write failed
+		// Clean up all successfully-written shards since metadata write failed.
+		// Block until cleanup completes (bounded by 30s timeout) to avoid goroutine leaks.
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
 		var cleanupWg sync.WaitGroup
 		for i := 0; i < totalShards; i++ {
 			if shardInfos[i].Path == "" {
@@ -247,10 +253,7 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 				}
 			}(shardInfos[i])
 		}
-		go func() {
-			cleanupWg.Wait()
-			cleanupCancel()
-		}()
+		cleanupWg.Wait()
 		return nil, fmt.Errorf("failed to store erasure metadata: %w", err)
 	}
 

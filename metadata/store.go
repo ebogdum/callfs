@@ -21,9 +21,8 @@ type Metadata struct {
 	Path             string    `json:"path"`
 	Type             string    `json:"type"` // "file" or "directory"
 	Size             int64     `json:"size"`
-	Mode             string    `json:"mode"` // Unix permissions like "0644"
-	UID              int       `json:"uid"`
-	GID              int       `json:"gid"`
+	Mode             string    `json:"mode"` // Permission mode string like "0644"
+	Owner            string    `json:"owner"` // App-level owner (user ID string, e.g. "api-user-0"). NOT an OS user.
 	ATime            time.Time `json:"atime"`
 	MTime            time.Time `json:"mtime"`
 	CTime            time.Time `json:"ctime"`

@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/config"
@@ -16,6 +17,7 @@ import (
 // S3Adapter implements the backends.Storage interface for AWS S3
 type S3Adapter struct {
 	client               *s3.S3
+	uploader             *s3manager.Uploader
 	bucketName           string
 	serverSideEncryption string
 	acl                  string
@@ -65,6 +67,7 @@ func NewS3Adapter(cfg config.BackendConfig, logger *zap.Logger) (*S3Adapter, err
 
 	return &S3Adapter{
 		client:               client,
+		uploader:             s3manager.NewUploaderWithClient(client),
 		bucketName:           cfg.S3BucketName,
 		serverSideEncryption: cfg.S3ServerSideEncryption,
 		acl:                  cfg.S3ACL,

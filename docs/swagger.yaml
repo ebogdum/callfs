@@ -1,6 +1,13 @@
 basePath: /v1
 definitions:
-  handlers.CrossServerConflictResponse:
+  github_com_ebogdum_callfs_server_handlers.ErrorResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  server_handlers.CrossServerConflictResponse:
     properties:
       backend_type:
         type: string
@@ -15,13 +22,13 @@ definitions:
       update_url:
         type: string
     type: object
-  handlers.DirectoryListingResponse:
+  server_handlers.DirectoryListingResponse:
     properties:
       count:
         type: integer
       items:
         items:
-          $ref: '#/definitions/handlers.FileInfo'
+          $ref: '#/definitions/server_handlers.FileInfo'
         type: array
       max_depth:
         type: integer
@@ -33,22 +40,22 @@ definitions:
         description: '"directory"'
         type: string
     type: object
-  handlers.ErrorResponse:
+  server_handlers.ErrorResponse:
     properties:
       code:
         type: string
       message:
         type: string
     type: object
-  handlers.FileInfo:
+  server_handlers.FileInfo:
     properties:
-      gid:
-        type: integer
       mode:
         type: string
       mtime:
         type: string
       name:
+        type: string
+      owner:
         type: string
       path:
         type: string
@@ -56,10 +63,8 @@ definitions:
         type: integer
       type:
         type: string
-      uid:
-        type: integer
     type: object
-  links.GenerateLinkRequest:
+  server_handlers_links.GenerateLinkRequest:
     properties:
       expiry_seconds:
         example: 3600
@@ -68,7 +73,7 @@ definitions:
         example: /path/to/file
         type: string
     type: object
-  links.GenerateLinkResponse:
+  server_handlers_links.GenerateLinkResponse:
     properties:
       expires:
         example: "2025-07-13T13:34:56Z"
@@ -83,13 +88,15 @@ definitions:
 host: localhost:8443
 info:
   contact:
-    name: CallFS Project
-    url: https://github.com/ebogdum/callfs
+    email: support@callfs.io
+    name: CallFS Support
+    url: http://callfs.io/support
   description: CallFS is an ultra-lightweight, high-performance REST API filesystem
     that provides precise Linux filesystem semantics over various backends.
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
   title: CallFS API
   version: "1.0"
 paths:
@@ -113,19 +120,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
         "404":
           description: Token not found
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
         "410":
           description: Token expired or already used
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
       summary: Download file via single-use link
       tags:
       - links
@@ -150,23 +157,23 @@ paths:
         "200":
           description: Directory listing
           schema:
-            $ref: '#/definitions/handlers.DirectoryListingResponse'
+            $ref: '#/definitions/server_handlers.DirectoryListingResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: List directory contents
@@ -188,23 +195,23 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "502":
           description: Bad Gateway (cross-server proxy error)
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Delete file or directory with cross-server support
@@ -223,39 +230,36 @@ paths:
         "200":
           description: File content (if path is file)
           headers:
-            X-CallFS-GID:
-              description: Group ID
-              type: string
             X-CallFS-MTime:
               description: Last modified time
               type: string
             X-CallFS-Mode:
               description: File mode (permissions)
               type: string
+            X-CallFS-Owner:
+              description: Resource owner (app user ID)
+              type: string
             X-CallFS-Size:
               description: File size in bytes
-              type: string
-            X-CallFS-UID:
-              description: User ID
               type: string
           schema:
             type: string
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get file or directory
@@ -274,9 +278,6 @@ paths:
         "200":
           description: OK
           headers:
-            X-CallFS-GID:
-              description: Group ID
-              type: string
             X-CallFS-Instance-ID:
               description: Instance ID where file is located
               type: string
@@ -286,35 +287,35 @@ paths:
             X-CallFS-Mode:
               description: File mode (permissions)
               type: string
+            X-CallFS-Owner:
+              description: Resource owner (app user ID)
+              type: string
             X-CallFS-Size:
               description: File size in bytes
               type: string
             X-CallFS-Type:
               description: File type (file or directory)
               type: string
-            X-CallFS-UID:
-              description: User ID
-              type: string
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "502":
           description: Bad Gateway (cross-server proxy error)
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get file metadata with cross-server support
@@ -342,23 +343,23 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "409":
           description: Conflict - resource exists on another server
           schema:
-            $ref: '#/definitions/handlers.CrossServerConflictResponse'
+            $ref: '#/definitions/server_handlers.CrossServerConflictResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Create or update file or directory with cross-server conflict detection
@@ -387,112 +388,30 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
         "502":
           description: Bad Gateway (cross-server proxy error)
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/server_handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Update file with cross-server support
-      tags:
-      - files
-  /v1/shards/{path}/{index}:
-    get:
-      description: Retrieves an individual erasure-coded shard for parallel downloads
-        of erasure-coded files.
-      parameters:
-      - description: File path
-        in: path
-        name: path
-        required: true
-        type: string
-      - description: Shard index
-        in: path
-        name: index
-        required: true
-        type: integer
-      responses:
-        "200":
-          description: Shard content
-          schema:
-            type: string
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "404":
-          description: Shard not found
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Download erasure-coded shard
-      tags:
-      - shards
-  /v1/files/ws/{path}:
-    get:
-      description: |
-        Upgrades to a WebSocket connection for streaming file transfers.
-        Use query parameter mode=download to stream file content in 64KB binary
-        messages, or mode=upload to send file content (max 100MB, memory-buffered).
-        Origin validation is enforced to prevent CSRF.
-      parameters:
-      - description: File path
-        in: path
-        name: path
-        required: true
-        type: string
-      - description: Transfer mode (download or upload)
-        in: query
-        name: mode
-        required: true
-        type: string
-        enum:
-        - download
-        - upload
-      responses:
-        "101":
-          description: Switching Protocols (WebSocket upgrade)
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: WebSocket file transfer
       tags:
       - files
   /v1/links/generate:
@@ -507,26 +426,26 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/links.GenerateLinkRequest'
+          $ref: '#/definitions/server_handlers_links.GenerateLinkRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Link generated successfully
           schema:
-            $ref: '#/definitions/links.GenerateLinkResponse'
+            $ref: '#/definitions/server_handlers_links.GenerateLinkResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Generate single-use download link
@@ -534,7 +453,7 @@ paths:
       - links
 securityDefinitions:
   BearerAuth:
-    description: Type "Bearer" followed by a space and your API key.
+    description: Type "Bearer" followed by a space and JWT token.
     in: header
     name: Authorization
     type: apiKey

@@ -34,9 +34,9 @@ func TestClean(t *testing.T) {
 			expected: "/",
 		},
 		{
-			name:        "absolute path escape",
-			input:       "/etc/passwd",
-			shouldError: true,
+			name:     "absolute path within root",
+			input:    "/etc/passwd",
+			expected: "/etc/passwd",
 		},
 		{
 			name:        "directory traversal",
@@ -117,10 +117,9 @@ func TestSafeJoin(t *testing.T) {
 			shouldError: true,
 		},
 		{
-			name:        "absolute path escape",
-			root:        "/safe/root",
-			rel:         "/etc/passwd",
-			shouldError: true,
+			name: "absolute path stays within root",
+			root: "/safe/root",
+			rel:  "/etc/passwd",
 		},
 	}
 

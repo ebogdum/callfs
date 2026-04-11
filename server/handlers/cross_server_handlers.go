@@ -77,7 +77,14 @@ func V1DeleteFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logge
 				return
 			}
 
-			// Proxy successful
+			// Proxy successful — now remove local metadata so it doesn't
+			// point at a deleted remote file (orphan metadata).
+			if delErr := engine.DeleteMetadataOnly(r.Context(), enginePath); delErr != nil {
+				logger.Warn("Failed to delete local metadata after cross-server proxy DELETE",
+					zap.String("path", enginePath),
+					zap.Error(delErr))
+			}
+
 			w.WriteHeader(http.StatusNoContent)
 			logger.Info("File/directory deleted via cross-server proxy",
 				zap.String("path", pathInfo.FullPath),
@@ -111,8 +118,7 @@ func V1DeleteFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logge
 // @Header 200 {string} X-CallFS-Type "File type (file or directory)"
 // @Header 200 {string} X-CallFS-Size "File size in bytes"
 // @Header 200 {string} X-CallFS-Mode "File mode (permissions)"
-// @Header 200 {string} X-CallFS-UID "User ID"
-// @Header 200 {string} X-CallFS-GID "Group ID"
+// @Header 200 {string} X-CallFS-Owner "Resource owner (app user ID)"
 // @Header 200 {string} X-CallFS-MTime "Last modified time"
 // @Header 200 {string} X-CallFS-Instance-ID "Instance ID where file is located"
 // @Failure 401 {object} ErrorResponse "Unauthorized"
@@ -197,11 +203,15 @@ func V1HeadFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logger 
 
 // setMetadataHeaders sets standard metadata headers for responses
 func setMetadataHeaders(w http.ResponseWriter, md *metadata.Metadata) {
+	if md.Type == "file" {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+	}
 	w.Header().Set("X-CallFS-Type", md.Type)
 	w.Header().Set("X-CallFS-Size", fmt.Sprintf("%d", md.Size))
 	w.Header().Set("X-CallFS-Mode", md.Mode)
-	w.Header().Set("X-CallFS-UID", fmt.Sprintf("%d", md.UID))
-	w.Header().Set("X-CallFS-GID", fmt.Sprintf("%d", md.GID))
+	w.Header().Set("X-CallFS-Owner", md.Owner)
 	w.Header().Set("X-CallFS-MTime", md.MTime.Format("2006-01-02T15:04:05Z07:00"))
 
 	if md.CallFSInstanceID != nil {

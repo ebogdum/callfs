@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// Unix-specific helper to extract metadata using syscall.Stat_t
-func extractUnixMetadata(info os.FileInfo) (mode string, uid, gid int, atime, ctime time.Time) {
+// extractPlatformMetadata extracts filesystem-level mode and timestamps.
+// OS-level UIDs/GIDs are NOT extracted — they have no relationship to
+// CallFS application users. Ownership is tracked via Metadata.Owner.
+func extractPlatformMetadata(info os.FileInfo) (mode string, atime, ctime time.Time) {
 	// Default values
 	mode = "0644"
-	uid = 1000
-	gid = 1000
 	atime = info.ModTime()
 	ctime = info.ModTime()
 
@@ -22,12 +22,9 @@ func extractUnixMetadata(info os.FileInfo) (mode string, uid, gid int, atime, ct
 		mode = "0755"
 	}
 
-	// Extract Unix permissions and ownership
+	// Extract Unix permissions and timestamps (NOT ownership)
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 		mode = fmt.Sprintf("0%o", stat.Mode&0777)
-		uid = int(stat.Uid)
-		gid = int(stat.Gid)
-		// Extract timestamps using platform-specific approach
 		atime, ctime = extractTimestamps(stat)
 	}
 

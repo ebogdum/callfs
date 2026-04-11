@@ -21,11 +21,12 @@ func (e *CacheEntry) IsExpired() bool {
 
 // MetadataCache provides a simple in-memory cache for metadata with TTL support
 type MetadataCache struct {
-	cache    map[string]*CacheEntry
-	mu       sync.RWMutex
-	ttl      time.Duration
-	maxSize  int
-	stopChan chan struct{}
+	cache     map[string]*CacheEntry
+	mu        sync.RWMutex
+	ttl       time.Duration
+	maxSize   int
+	stopChan  chan struct{}
+	closeOnce sync.Once
 }
 
 // NewMetadataCache creates a new metadata cache with the specified TTL and max size
@@ -75,7 +76,7 @@ func (c *MetadataCache) Get(path string) (*metadata.Metadata, bool) {
 	return &cp, true
 }
 
-// Set stores metadata in the cache
+// Set stores metadata in the cache (deep-copies to prevent caller mutation)
 func (c *MetadataCache) Set(path string, md *metadata.Metadata) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -86,8 +87,23 @@ func (c *MetadataCache) Set(path string, md *metadata.Metadata) {
 		c.evictOneEntry()
 	}
 
+	// Deep copy: clone pointer fields to prevent callers from mutating cached state
+	cp := *md
+	if cp.ParentID != nil {
+		v := *cp.ParentID
+		cp.ParentID = &v
+	}
+	if cp.CallFSInstanceID != nil {
+		v := *cp.CallFSInstanceID
+		cp.CallFSInstanceID = &v
+	}
+	if cp.SymlinkTarget != nil {
+		v := *cp.SymlinkTarget
+		cp.SymlinkTarget = &v
+	}
+
 	c.cache[path] = &CacheEntry{
-		Metadata:  md,
+		Metadata:  &cp,
 		ExpiresAt: time.Now().Add(c.ttl),
 	}
 }
@@ -112,9 +128,9 @@ func (c *MetadataCache) InvalidatePrefix(prefix string) {
 	}
 }
 
-// Close stops the background cleanup goroutine
+// Close stops the background cleanup goroutine (safe to call multiple times)
 func (c *MetadataCache) Close() {
-	close(c.stopChan)
+	c.closeOnce.Do(func() { close(c.stopChan) })
 }
 
 // evictOneEntry removes one entry to make space (caller must hold lock)

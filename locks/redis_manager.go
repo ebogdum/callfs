@@ -93,7 +93,11 @@ func (m *RedisManager) Release(ctx context.Context, key string) error {
 		return fmt.Errorf("failed to release lock for key %s: %w", key, err)
 	}
 
-	deleted := result.Val().(int64)
+	deleted, ok := result.Val().(int64)
+	if !ok {
+		m.logger.Warn("Unexpected Redis result type during lock release", zap.String("key", key))
+		return nil
+	}
 	if deleted == 1 {
 		m.logger.Debug("Lock released",
 			zap.String("key", key),

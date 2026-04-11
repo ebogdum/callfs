@@ -32,6 +32,13 @@ func NewSQLiteStore(dbPath string, logger *zap.Logger) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to ping sqlite database: %w", err)
 	}
 
+	// SQLite serializes writes internally; limit open connections to avoid
+	// "database is locked" errors under concurrent load while still allowing
+	// concurrent readers via WAL mode.
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	db.SetConnMaxLifetime(0) // Reuse connections indefinitely
+
 	store := &SQLiteStore{db: db, logger: logger}
 	if err := store.initSchema(); err != nil {
 		_ = db.Close()
@@ -55,12 +62,12 @@ CREATE TABLE IF NOT EXISTS inodes (
     type TEXT NOT NULL CHECK (type IN ('file', 'directory')),
     size INTEGER NOT NULL DEFAULT 0,
     mode TEXT NOT NULL,
-    uid INTEGER NOT NULL,
-    gid INTEGER NOT NULL,
+    owner TEXT NOT NULL DEFAULT '',
     atime TEXT NOT NULL,
     mtime TEXT NOT NULL,
     ctime TEXT NOT NULL,
     backend_type TEXT NOT NULL,
+    erasure_coded INTEGER NOT NULL DEFAULT 0,
     callfs_instance_id TEXT,
     symlink_target TEXT,
     created_at TEXT NOT NULL,
@@ -96,8 +103,8 @@ CREATE INDEX IF NOT EXISTS idx_single_use_links_expires_at ON single_use_links(e
 
 func (s *SQLiteStore) Get(ctx context.Context, path string) (*metadata.Metadata, error) {
 	query := `
-		SELECT id, parent_id, name, path, type, size, mode, uid, gid,
-		       atime, mtime, ctime, backend_type, callfs_instance_id,
+		SELECT id, parent_id, name, path, type, size, mode, owner,
+		       atime, mtime, ctime, backend_type, erasure_coded, callfs_instance_id,
 		       symlink_target, created_at, updated_at
 		FROM inodes
 		WHERE path = ?`
@@ -116,12 +123,12 @@ func (s *SQLiteStore) Get(ctx context.Context, path string) (*metadata.Metadata,
 		&md.Type,
 		&md.Size,
 		&md.Mode,
-		&md.UID,
-		&md.GID,
+		&md.Owner,
 		&aTime,
 		&mTime,
 		&cTime,
 		&md.BackendType,
+		&md.ErasureCoded,
 		&callfsInstanceID,
 		&symlinkTarget,
 		&createdAt,
@@ -169,8 +176,8 @@ func (s *SQLiteStore) Create(ctx context.Context, md *metadata.Metadata) error {
 
 	query := `
 		INSERT INTO inodes (
-			parent_id, name, path, type, size, mode, uid, gid,
-			atime, mtime, ctime, backend_type, callfs_instance_id,
+			parent_id, name, path, type, size, mode, owner,
+			atime, mtime, ctime, backend_type, erasure_coded, callfs_instance_id,
 			symlink_target, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
@@ -183,12 +190,12 @@ func (s *SQLiteStore) Create(ctx context.Context, md *metadata.Metadata) error {
 		md.Type,
 		md.Size,
 		md.Mode,
-		md.UID,
-		md.GID,
+		md.Owner,
 		md.ATime.UTC().Format(time.RFC3339Nano),
 		md.MTime.UTC().Format(time.RFC3339Nano),
 		md.CTime.UTC().Format(time.RFC3339Nano),
 		md.BackendType,
+		md.ErasureCoded,
 		nullString(md.CallFSInstanceID),
 		nullString(md.SymlinkTarget),
 		md.CreatedAt.UTC().Format(time.RFC3339Nano),
@@ -213,8 +220,9 @@ func (s *SQLiteStore) Update(ctx context.Context, md *metadata.Metadata) error {
 	md.UpdatedAt = time.Now().UTC()
 	query := `
 		UPDATE inodes
-		SET size = ?, mode = ?, uid = ?, gid = ?, atime = ?, mtime = ?, ctime = ?,
-		    backend_type = ?, callfs_instance_id = ?, symlink_target = ?, updated_at = ?
+		SET size = ?, mode = ?, owner = ?, atime = ?, mtime = ?, ctime = ?,
+		    backend_type = ?, erasure_coded = ?, callfs_instance_id = ?, symlink_target = ?,
+		    updated_at = ?
 		WHERE path = ?`
 
 	result, err := s.db.ExecContext(
@@ -222,12 +230,12 @@ func (s *SQLiteStore) Update(ctx context.Context, md *metadata.Metadata) error {
 		query,
 		md.Size,
 		md.Mode,
-		md.UID,
-		md.GID,
+		md.Owner,
 		md.ATime.UTC().Format(time.RFC3339Nano),
 		md.MTime.UTC().Format(time.RFC3339Nano),
 		md.CTime.UTC().Format(time.RFC3339Nano),
 		md.BackendType,
+		md.ErasureCoded,
 		nullString(md.CallFSInstanceID),
 		nullString(md.SymlinkTarget),
 		md.UpdatedAt.UTC().Format(time.RFC3339Nano),
@@ -270,8 +278,8 @@ func (s *SQLiteStore) ListChildren(ctx context.Context, parentPath string) ([]*m
 
 	if parentPath == "/" {
 		query := `
-			SELECT id, parent_id, name, path, type, size, mode, uid, gid,
-			       atime, mtime, ctime, backend_type, callfs_instance_id,
+			SELECT id, parent_id, name, path, type, size, mode, owner,
+			       atime, mtime, ctime, backend_type, erasure_coded, callfs_instance_id,
 			       symlink_target, created_at, updated_at
 			FROM inodes
 			WHERE path LIKE '/%' AND instr(substr(path, 2), '/') = 0 AND path != '/'
@@ -279,11 +287,11 @@ func (s *SQLiteStore) ListChildren(ctx context.Context, parentPath string) ([]*m
 		rows, err = s.db.QueryContext(ctx, query)
 	} else {
 		query := `
-			SELECT id, parent_id, name, path, type, size, mode, uid, gid,
-			       atime, mtime, ctime, backend_type, callfs_instance_id,
+			SELECT id, parent_id, name, path, type, size, mode, owner,
+			       atime, mtime, ctime, backend_type, erasure_coded, callfs_instance_id,
 			       symlink_target, created_at, updated_at
 			FROM inodes
-			WHERE path LIKE ? AND path NOT LIKE ?
+			WHERE path LIKE ? ESCAPE '\' AND path NOT LIKE ? ESCAPE '\'
 			ORDER BY type DESC, name ASC`
 		escapedPath := escapeLikePattern(parentPath)
 		rows, err = s.db.QueryContext(ctx, query, escapedPath+"/%", escapedPath+"/%/%")
@@ -468,12 +476,12 @@ func scanMetadataRow(rows *sql.Rows) (*metadata.Metadata, error) {
 		&md.Type,
 		&md.Size,
 		&md.Mode,
-		&md.UID,
-		&md.GID,
+		&md.Owner,
 		&aTime,
 		&mTime,
 		&cTime,
 		&md.BackendType,
+		&md.ErasureCoded,
 		&callfsInstanceID,
 		&symlinkTarget,
 		&createdAt,
@@ -528,8 +536,9 @@ func nullString(value *string) sql.NullString {
 	return sql.NullString{String: *value, Valid: true}
 }
 
-// escapeLikePattern escapes SQL LIKE metacharacters (% and _) in a string
+// escapeLikePattern escapes SQL LIKE metacharacters (\, %, _) in a string
 func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "%", "\\%")
 	s = strings.ReplaceAll(s, "_", "\\_")
 	return s

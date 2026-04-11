@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -63,7 +64,7 @@ func V1GetShard(em *erasure.Manager, authorizer auth.Authorizer, logger *zap.Log
 		data, err := em.GetShard(r.Context(), filePath, index)
 		if err != nil {
 			statusCode := http.StatusInternalServerError
-			if err == erasure.ErrShardNotFound {
+			if errors.Is(err, erasure.ErrShardNotFound) {
 				statusCode = http.StatusNotFound
 			}
 			SendErrorResponse(w, logger, err, statusCode)

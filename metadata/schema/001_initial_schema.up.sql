@@ -10,12 +10,11 @@ CREATE TABLE IF NOT EXISTS inodes (
     type VARCHAR(20) NOT NULL CHECK (type IN ('file', 'directory')),
     size BIGINT NOT NULL DEFAULT 0,
     mode VARCHAR(10) NOT NULL DEFAULT '0644',
-    uid INTEGER NOT NULL DEFAULT 1000,
-    gid INTEGER NOT NULL DEFAULT 1000,
+    owner TEXT NOT NULL DEFAULT '',
     atime TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     mtime TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     ctime TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    backend_type VARCHAR(50) NOT NULL CHECK (backend_type IN ('localfs', 's3')),
+    backend_type VARCHAR(50) NOT NULL CHECK (backend_type IN ('localfs', 's3', 'erasure')),
     callfs_instance_id VARCHAR(100), -- Required for localfs, NULL for s3
     symlink_target TEXT, -- For future symlink support
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -68,6 +67,10 @@ CREATE TRIGGER update_single_use_links_updated_at
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Insert root directory entry
-INSERT INTO inodes (id, parent_id, name, path, type, size, mode, uid, gid, backend_type, callfs_instance_id)
-VALUES (1, NULL, '', '/', 'directory', 0, '0755', 0, 0, 'localfs', 'root')
+INSERT INTO inodes (id, parent_id, name, path, type, size, mode, owner, backend_type, callfs_instance_id)
+VALUES (1, NULL, '', '/', 'directory', 0, '0755', 'root', 'localfs', 'root')
 ON CONFLICT (path) DO NOTHING;
+
+-- Advance the sequence past the explicitly inserted root id to prevent
+-- unique constraint violations on the next auto-generated id.
+SELECT setval('inodes_id_seq', GREATEST(nextval('inodes_id_seq'), 2));
