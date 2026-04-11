@@ -46,16 +46,14 @@ backend:
   default_backend: "localfs" # "localfs" or "s3"
   localfs_root_path: "/var/lib/callfs"
   
-  s3:
-    access_key: "YOUR_S3_ACCESS_KEY"
-    secret_key: "YOUR_S3_SECRET_KEY"
-    region: "us-east-1"
-    bucket_name: "your-callfs-bucket"
-    endpoint: "" # Optional: for S3-compatible services like MinIO
-    server_side_encryption: "AES256"
-    acl: "private"
-    kms_key_id: "" # Optional: for SSE-KMS
-  
+  s3_access_key: "YOUR_S3_ACCESS_KEY"
+  s3_secret_key: "YOUR_S3_SECRET_KEY"
+  s3_region: "us-east-1"
+  s3_bucket_name: "your-callfs-bucket"
+  s3_endpoint: "" # Optional: for S3-compatible services like MinIO
+  s3_server_side_encryption: "AES256" # "AES256", "aws:kms", or "" to disable
+  s3_acl: "private"
+  s3_kms_key_id: "" # Optional: for SSE-KMS
   internal_proxy_skip_tls_verify: false
 
 # Metadata store (postgres, sqlite, redis, or raft)
@@ -110,55 +108,46 @@ instance_discovery:
 
 ## Environment Variables
 
-All YAML configuration keys can be set using environment variables. The format is `CALLFS_SECTION_KEY`. For nested keys, use an underscore (`_`).
+All YAML configuration keys can be set using environment variables. The format is `CALLFS_` prefix, with **double underscores** (`__`) as the section separator (mapping to `.` in the YAML hierarchy).
 
-| Environment Variable                          | YAML Path                                | Default Value         |
-| --------------------------------------------- | ---------------------------------------- | --------------------- |
-| `CALLFS_SERVER_LISTEN_ADDR`                   | `server.listen_addr`                     | `:8443`               |
-| `CALLFS_SERVER_PROTOCOL`                      | `server.protocol`                        | `https`               |
-| `CALLFS_SERVER_EXTERNAL_URL`                  | `server.external_url`                    | `localhost:8443`      |
-| `CALLFS_SERVER_ENABLE_QUIC`                   | `server.enable_quic`                     | `false`               |
-| `CALLFS_SERVER_QUIC_LISTEN_ADDR`              | `server.quic_listen_addr`                | `:8443`               |
-| `CALLFS_AUTH_API_KEYS`                        | `auth.api_keys`                          | (none)                |
-| `CALLFS_AUTH_INTERNAL_PROXY_SECRET`           | `auth.internal_proxy_secret`             | (none)                |
-| `CALLFS_AUTH_SINGLE_USE_LINK_SECRET`          | `auth.single_use_link_secret`            | (none)                |
-| `CALLFS_LOG_LEVEL`                            | `log.level`                              | `info`                |
-| `CALLFS_LOG_FORMAT`                           | `log.format`                             | `json`                |
-| `CALLFS_BACKEND_DEFAULT_BACKEND`              | `backend.default_backend`                | `localfs`             |
-| `CALLFS_BACKEND_LOCALFS_ROOT_PATH`            | `backend.localfs_root_path`              | `/var/lib/callfs`     |
-| `CALLFS_BACKEND_S3_ACCESS_KEY`                | `backend.s3.access_key`                  | (none)                |
-| `CALLFS_BACKEND_S3_SECRET_KEY`                | `backend.s3.secret_key`                  | (none)                |
-| `CALLFS_BACKEND_S3_REGION`                    | `backend.s3.region`                      | `us-east-1`           |
-| `CALLFS_BACKEND_S3_BUCKET_NAME`               | `backend.s3.bucket_name`                 | (none)                |
-| `CALLFS_METADATA_STORE_DSN`                   | `metadata_store.dsn`                     | (none)                |
-| `CALLFS_METADATA_STORE_TYPE`                  | `metadata_store.type`                    | `postgres`            |
-| `CALLFS_METADATA_STORE_SQLITE_PATH`           | `metadata_store.sqlite_path`             | `./callfs.sqlite3`    |
-| `CALLFS_METADATA_STORE_REDIS_ADDR`            | `metadata_store.redis_addr`              | `localhost:6379`      |
-| `CALLFS_METADATA_STORE_REDIS_PASSWORD`        | `metadata_store.redis_password`          | (none)                |
-| `CALLFS_METADATA_STORE_REDIS_DB`              | `metadata_store.redis_db`                | `0`                   |
-| `CALLFS_METADATA_STORE_REDIS_KEY_PREFIX`      | `metadata_store.redis_key_prefix`        | `callfs:`             |
-| `CALLFS_RAFT_ENABLED`                         | `raft.enabled`                           | `false`               |
-| `CALLFS_RAFT_NODE_ID`                         | `raft.node_id`                           | `callfs-node-1`       |
-| `CALLFS_RAFT_BIND_ADDR`                       | `raft.bind_addr`                         | `127.0.0.1:7000`      |
-| `CALLFS_RAFT_DATA_DIR`                        | `raft.data_dir`                          | `./raft`              |
-| `CALLFS_RAFT_BOOTSTRAP`                       | `raft.bootstrap`                         | `false`               |
-| `CALLFS_RAFT_PEERS`                           | `raft.peers`                             | (none)                |
-| `CALLFS_RAFT_API_PEER_ENDPOINTS`              | `raft.api_peer_endpoints`                | (none)                |
-| `CALLFS_RAFT_APPLY_TIMEOUT`                   | `raft.apply_timeout`                     | `10s`                 |
-| `CALLFS_RAFT_FORWARD_TIMEOUT`                 | `raft.forward_timeout`                   | `10s`                 |
-| `CALLFS_RAFT_SNAPSHOT_INTERVAL`               | `raft.snapshot_interval`                 | `60s`                 |
-| `CALLFS_RAFT_SNAPSHOT_THRESHOLD`              | `raft.snapshot_threshold`                | `256`                 |
-| `CALLFS_RAFT_RETAIN_SNAPSHOT_COUNT`           | `raft.retain_snapshot_count`             | `2`                   |
-| `CALLFS_DLM_TYPE`                             | `dlm.type`                               | `redis`               |
-| `CALLFS_DLM_REDIS_ADDR`                       | `dlm.redis_addr`                         | `localhost:6379`      |
-| `CALLFS_DLM_REDIS_PASSWORD`                   | `dlm.redis_password`                     | (none)                |
-| `CALLFS_HA_REPLICATION_ENABLED`               | `ha.replication_enabled`                 | `false`               |
-| `CALLFS_HA_REPLICA_BACKEND`                   | `ha.replica_backend`                     | (none)                |
-| `CALLFS_HA_REQUIRE_REPLICA_SUCCESS`           | `ha.require_replica_success`             | `false`               |
-| `CALLFS_INSTANCE_DISCOVERY_INSTANCE_ID`       | `instance_discovery.instance_id`         | `callfs-instance-1`   |
-| `CALLFS_INSTANCE_DISCOVERY_PEER_ENDPOINTS`    | `instance_discovery.peer_endpoints`      | (none)                |
-
-**Note:** For `auth.api_keys`, provide a comma-separated string: `export CALLFS_AUTH_API_KEYS="key1,key2"`. For `instance_discovery.peer_endpoints`, provide a JSON string: `export CALLFS_INSTANCE_DISCOVERY_PEER_ENDPOINTS='{"node2":"https://node2.local:8443"}'`.
+| Environment Variable                            | YAML Path                                | Default Value         |
+| ----------------------------------------------- | ---------------------------------------- | --------------------- |
+| `CALLFS_SERVER__LISTEN_ADDR`                    | `server.listen_addr`                     | `:8443`               |
+| `CALLFS_SERVER__PROTOCOL`                       | `server.protocol`                        | `https`               |
+| `CALLFS_SERVER__EXTERNAL_URL`                   | `server.external_url`                    | `localhost:8443`      |
+| `CALLFS_SERVER__ENABLE_QUIC`                    | `server.enable_quic`                     | `false`               |
+| `CALLFS_SERVER__QUIC_LISTEN_ADDR`               | `server.quic_listen_addr`                | `:8443`               |
+| `CALLFS_AUTH__API_KEYS`                         | `auth.api_keys`                          | (none)                |
+| `CALLFS_AUTH__INTERNAL_PROXY_SECRET`            | `auth.internal_proxy_secret`             | (none)                |
+| `CALLFS_AUTH__SINGLE_USE_LINK_SECRET`           | `auth.single_use_link_secret`            | (none)                |
+| `CALLFS_LOG__LEVEL`                             | `log.level`                              | `info`                |
+| `CALLFS_LOG__FORMAT`                            | `log.format`                             | `json`                |
+| `CALLFS_BACKEND__DEFAULT_BACKEND`               | `backend.default_backend`                | `localfs`             |
+| `CALLFS_BACKEND__LOCALFS_ROOT_PATH`             | `backend.localfs_root_path`              | `/var/lib/callfs`     |
+| `CALLFS_BACKEND__S3_ACCESS_KEY`                 | `backend.s3_access_key`                  | (none)                |
+| `CALLFS_BACKEND__S3_SECRET_KEY`                 | `backend.s3_secret_key`                  | (none)                |
+| `CALLFS_BACKEND__S3_REGION`                     | `backend.s3_region`                      | `us-east-1`           |
+| `CALLFS_BACKEND__S3_BUCKET_NAME`                | `backend.s3_bucket_name`                 | (none)                |
+| `CALLFS_METADATA_STORE__DSN`                    | `metadata_store.dsn`                     | (none)                |
+| `CALLFS_METADATA_STORE__TYPE`                   | `metadata_store.type`                    | `postgres`            |
+| `CALLFS_METADATA_STORE__SQLITE_PATH`            | `metadata_store.sqlite_path`             | `./callfs.sqlite3`    |
+| `CALLFS_METADATA_STORE__REDIS_ADDR`             | `metadata_store.redis_addr`              | `localhost:6379`      |
+| `CALLFS_METADATA_STORE__REDIS_PASSWORD`         | `metadata_store.redis_password`          | (none)                |
+| `CALLFS_METADATA_STORE__REDIS_DB`               | `metadata_store.redis_db`                | `0`                   |
+| `CALLFS_METADATA_STORE__REDIS_KEY_PREFIX`       | `metadata_store.redis_key_prefix`        | `callfs:`             |
+| `CALLFS_RAFT__ENABLED`                          | `raft.enabled`                           | `false`               |
+| `CALLFS_RAFT__NODE_ID`                          | `raft.node_id`                           | `callfs-node-1`       |
+| `CALLFS_RAFT__BIND_ADDR`                        | `raft.bind_addr`                         | `127.0.0.1:7000`      |
+| `CALLFS_RAFT__DATA_DIR`                         | `raft.data_dir`                          | `./raft`              |
+| `CALLFS_RAFT__BOOTSTRAP`                        | `raft.bootstrap`                         | `false`               |
+| `CALLFS_DLM__TYPE`                              | `dlm.type`                               | `redis`               |
+| `CALLFS_DLM__REDIS_ADDR`                        | `dlm.redis_addr`                         | `localhost:6379`      |
+| `CALLFS_DLM__REDIS_PASSWORD`                    | `dlm.redis_password`                     | (none)                |
+| `CALLFS_HA__REPLICATION_ENABLED`                | `ha.replication_enabled`                 | `false`               |
+| `CALLFS_HA__REPLICA_BACKEND`                    | `ha.replica_backend`                     | (none)                |
+| `CALLFS_HA__REQUIRE_REPLICA_SUCCESS`            | `ha.require_replica_success`             | `false`               |
+| `CALLFS_INSTANCE_DISCOVERY__INSTANCE_ID`        | `instance_discovery.instance_id`         | `callfs-instance-1`   |
+| `CALLFS_INSTANCE_DISCOVERY__PEER_ENDPOINTS`     | `instance_discovery.peer_endpoints`      | (none)                |
 
 ## Configuration Validation
 

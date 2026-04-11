@@ -4,10 +4,11 @@ This guide provides instructions for installing and setting up CallFS. Whether y
 
 ## Prerequisites
 
-- **Go**: Version 1.21 or later (for building from source).
+- **Go**: Version 1.24 or later (for building from source).
 - **Docker & Docker Compose**: For the quickest and easiest setup of CallFS and its dependencies.
-- **PostgreSQL**: Version 12 or later for the metadata store.
-- **Redis**: Version 6 or later for the distributed lock manager.
+- **PostgreSQL**: Version 12 or later (if using PostgreSQL as metadata store).
+- **Redis**: Version 6 or later (if using Redis for distributed locking or as metadata store).
+- Neither is required when using SQLite metadata + local lock manager.
 - **TLS Certificates**: A valid TLS certificate and private key are required for HTTPS.
 
 ## 1. Quick Start with Docker Compose (Recommended)

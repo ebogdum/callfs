@@ -31,16 +31,17 @@ The S3 backend allows CallFS to use scalable and durable object storage.
 **Configuration:**
 ```yaml
 backend:
-  s3:
-    access_key: "YOUR_S3_ACCESS_KEY"
-    secret_key: "YOUR_S3_SECRET_KEY"
-    region: "us-east-1"
-    bucket_name: "your-callfs-bucket"
-    endpoint: "" # Optional: for S3-compatible services like MinIO
-    server_side_encryption: "AES256" # or "aws:kms"
-    acl: "private"
-    kms_key_id: "" # Required if using aws:kms
+  s3_access_key: "YOUR_S3_ACCESS_KEY"
+  s3_secret_key: "YOUR_S3_SECRET_KEY"
+  s3_region: "us-east-1"
+  s3_bucket_name: "your-callfs-bucket"
+  s3_endpoint: "" # Optional: for S3-compatible services like MinIO
+  s3_server_side_encryption: "AES256" # "AES256", "aws:kms", or "" to disable
+  s3_acl: "private"
+  s3_kms_key_id: "" # Required if using aws:kms
 ```
+
+> **Note:** For MinIO or S3-compatible services without KMS support, set `s3_server_side_encryption: ""` to disable server-side encryption.
 
 **Security:**
 - **IAM Best Practices**: Create a dedicated IAM user for CallFS with a least-privilege policy. The policy should only grant access to the specific S3 bucket and the necessary actions (`s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`).
@@ -67,9 +68,8 @@ This example shows a node configured to use both local storage and S3, with S3 a
 backend:
   default_backend: "s3"
   localfs_root_path: "/data/hot-storage"
-  s3:
-    bucket_name: "my-callfs-archive"
-    # ... other s3 config
+  s3_bucket_name: "my-callfs-archive"
+  # ... other s3_ config keys
 ```
 
 In this setup:

@@ -7,29 +7,39 @@ server:
   key_file: "server.key"
   enable_quic: false
   quic_listen_addr: ":8443"    # UDP address for HTTP/3 (QUIC)
+  read_timeout: 30s
+  write_timeout: 30s
+  file_op_timeout: 10s
+  metadata_op_timeout: 5s
 
 auth:
   api_keys:
-    - "your-api-key-here"
-  internal_proxy_secret: "your-internal-secret-here"
-  single_use_link_secret: "your-link-secret-here"
+    - "your-api-key-here-at-least-16-chars"
+  internal_proxy_secret: "your-internal-secret-here-16ch"
+  single_use_link_secret: "your-link-secret-here-16chars"
 
 log:
-  level: "info"
-  format: "json"
+  level: "info"                # debug | info | warn | error
+  format: "json"               # json | console
 
 metrics:
-  listen_addr: ":9090"
+  listen_addr: ":9090"         # Separate unauthenticated metrics port
 
 backend:
+  default_backend: "localfs"   # localfs | s3
   localfs_root_path: "/var/lib/callfs"
   s3_access_key: ""
   s3_secret_key: ""
   s3_region: "us-east-1"
   s3_bucket_name: ""
+  s3_endpoint: ""              # Custom S3 endpoint (e.g., http://minio:9000)
+  s3_server_side_encryption: "AES256"  # AES256 | aws:kms | "" (disable for MinIO)
+  s3_acl: "private"
+  s3_kms_key_id: ""            # KMS key ID for SSE-KMS
+  internal_proxy_skip_tls_verify: false
 
 metadata_store:
-  type: "postgres"            # postgres | sqlite | redis | raft
+  type: "postgres"             # postgres | sqlite | redis | raft
   dsn: "postgres://callfs:callfs@localhost/callfs?sslmode=disable"
   sqlite_path: "./callfs.sqlite3"
   redis_addr: "localhost:6379"
@@ -43,8 +53,8 @@ raft:
   bind_addr: "127.0.0.1:7000"
   data_dir: "./raft"
   bootstrap: false
-  peers: {}                     # node_id -> raft TCP address (e.g., 10.0.0.2:7000)
-  api_peer_endpoints: {}        # node_id -> API endpoint (e.g., http://10.0.0.2:8443)
+  peers: {}                    # node_id -> raft TCP address (e.g., 10.0.0.2:7000)
+  api_peer_endpoints: {}       # node_id -> API endpoint (e.g., http://10.0.0.2:8443)
   apply_timeout: "10s"
   forward_timeout: "10s"
   snapshot_interval: "60s"
@@ -52,15 +62,23 @@ raft:
   retain_snapshot_count: 2
 
 dlm:
-  type: "redis"               # redis | local
+  type: "redis"                # redis | local
   redis_addr: "localhost:6379"
   redis_password: ""
 
 ha:
   replication_enabled: false
-  replica_backend: ""         # localfs | s3
+  replica_backend: ""          # localfs | s3
   require_replica_success: false
+
+erasure:
+  enabled: false
+  data_shards: 4
+  parity_shards: 2
+  min_file_size: 1048576       # 1MB minimum
+  shard_backend: "localfs"     # localfs | s3
+  shard_path: ""               # Base path for shard storage
 
 instance_discovery:
   instance_id: "callfs-instance-1"
-  peer_endpoints: {}
+  peer_endpoints: {}           # instance_id -> http(s) endpoint

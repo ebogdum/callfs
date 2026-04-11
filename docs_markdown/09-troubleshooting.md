@@ -47,10 +47,11 @@ If the CallFS service fails to start, check the following:
     - Verify that the key you are using is listed in the `auth.api_keys` section of your configuration.
 
 #### HTTP 403 Forbidden
-- **Cause**: The authenticated user does not have the required Unix permissions to perform the operation on the file or directory.
+- **Cause**: The authenticated user does not have the required permissions. Only the resource owner can write or delete files. Only the directory owner can delete a directory.
 - **Solution**:
-    - Check the permissions of the target file/directory in the metadata store.
-    - This is an intentional security feature. Adjust permissions if the access should be allowed.
+    - Check who owns the target file/directory (the `owner` field in metadata).
+    - Only the owner or admin users (`root`, `internal-proxy`) can modify or delete resources.
+    - All authenticated users can read files and create new files in directories.
 
 #### HTTP 404 Not Found
 - **Cause**: The requested file or directory path does not exist.

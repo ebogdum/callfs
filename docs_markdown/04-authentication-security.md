@@ -34,14 +34,17 @@ auth:
 ```
 This secret must be identical across all nodes in the cluster.
 
-## Authorization: Unix Permission Model
+## Authorization: Owner-Based Access Control
 
-CallFS enforces a standard Unix-style permission model for all file and directory operations. Each file and directory has an owner, a group, and a set of permissions (read, write, execute) for the owner, group, and others.
+CallFS enforces an owner-based permission model for all file and directory operations. Each file and directory has an `owner` field that stores the app user ID of the user who created it. App users are application-level identities (e.g., `api-user-0`) with no relationship to OS-level users or UIDs.
 
-- **Ownership**: When a file is created, its ownership is assigned based on the authenticated user.
-- **Permission Checks**: Every API operation that accesses a file or directory is checked against these permissions. For example, a `PUT` request to update a file requires write permission.
+**Permission rules:**
+- **Admin users** (`root`, `internal-proxy`) bypass all permission checks.
+- **Owner** has full read, write, and delete access to their resources.
+- **Directories**: all authenticated users can read and create children (write). Only the owner can delete the directory.
+- **Files**: all authenticated users can read. Only the owner can write (update) or delete.
 
-This model provides a familiar and powerful way to control access to your data.
+Ownership is assigned automatically when a resource is created, based on the authenticated API key's user identity.
 
 ## TLS/SSL Encryption
 
@@ -81,7 +84,7 @@ To prevent abuse and ensure service stability, CallFS implements rate limiting o
 - **Link Generation**: Has a stricter rate limit to prevent token generation abuse.
 - **File Operations**: Have more lenient limits suitable for normal application usage.
 
-Rate limit status is communicated via standard HTTP headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`).
+When a request exceeds the rate limit, CallFS returns HTTP 429 Too Many Requests with a JSON error body.
 
 ## Backend Storage Security
 

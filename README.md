@@ -2,7 +2,7 @@
 
 **Open-source, high-performance file storage server with S3, local disk, and multi-node clustering over a simple REST API.**
 
-CallFS turns any combination of local disks and S3-compatible object stores into a single, horizontally-scalable filesystem accessible via HTTP. Upload, download, list, delete, and share files across a cluster of nodes with automatic routing, erasure coding, and Unix-style permissions -- all through a clean REST API.
+CallFS turns any combination of local disks and S3-compatible object stores into a single, horizontally-scalable filesystem accessible via HTTP. Upload, download, list, delete, and share files across a cluster of nodes with automatic routing, erasure coding, and owner-based access control -- all through a clean REST API.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/ebogdum/callfs)](https://goreportcard.com/report/github.com/ebogdum/callfs)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -351,7 +351,7 @@ All configuration options can also be set via environment variables with the `CA
 | Single binary | Yes | Yes | No (master+volume+filer) | No |
 | Local + S3 hybrid | Yes | No | Partial | No |
 | Erasure coding | Yes | Yes | Yes | Yes |
-| Unix permissions | Yes | No | No | POSIX via CephFS |
+| Owner-based access | Yes | No | No | POSIX via CephFS |
 | Single-use links | Built-in | Presigned URLs | No | Presigned URLs |
 | Raft metadata | Built-in | Built-in | Built-in | No (uses MON/Paxos) |
 | Operational complexity | Low | Low | Medium | High |

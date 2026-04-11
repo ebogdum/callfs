@@ -26,7 +26,7 @@ We will acknowledge your email within 48 hours and will send a more detailed res
 CallFS implements several security measures:
 
 - API key authentication for all endpoints
-- Unix socket-based authorization for local access
+- Owner-based access control for files and directories
 - Rate limiting to prevent abuse
 - Input validation and sanitization
 - Secure file path handling to prevent directory traversal
