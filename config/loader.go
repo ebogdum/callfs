@@ -25,6 +25,16 @@ func LoadConfig() (AppConfig, error) {
 // 1. Environment variables (highest priority)
 // 2. Specified config file or default config files
 // 3. Defaults (lowest priority)
+func parserForFile(path string) koanf.Parser {
+	if strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml") {
+		return yaml.Parser()
+	}
+	if strings.HasSuffix(path, ".json") {
+		return json.Parser()
+	}
+	return nil
+}
+
 func LoadConfigFromFile(configFilePath string) (AppConfig, error) {
 	k := koanf.New(".")
 
@@ -36,34 +46,17 @@ func LoadConfigFromFile(configFilePath string) (AppConfig, error) {
 
 	// Load from config file
 	if configFilePath != "" {
-		// Use specified config file
 		if _, err := os.Stat(configFilePath); err != nil {
 			return AppConfig{}, fmt.Errorf("specified config file %s not found: %w", configFilePath, err)
 		}
-
-		var parser koanf.Parser
-		if strings.HasSuffix(configFilePath, ".yaml") || strings.HasSuffix(configFilePath, ".yml") {
-			parser = yaml.Parser()
-		} else if strings.HasSuffix(configFilePath, ".json") {
-			parser = json.Parser()
-		}
-
-		if err := k.Load(file.Provider(configFilePath), parser); err != nil {
+		if err := k.Load(file.Provider(configFilePath), parserForFile(configFilePath)); err != nil {
 			return AppConfig{}, fmt.Errorf("failed to load config file %s: %w", configFilePath, err)
 		}
 	} else {
-		// Load from default config files if they exist
 		configFiles := []string{"config.yaml", "config.yml", "config.json"}
 		for _, configFile := range configFiles {
 			if _, err := os.Stat(configFile); err == nil {
-				var parser koanf.Parser
-				if strings.HasSuffix(configFile, ".yaml") || strings.HasSuffix(configFile, ".yml") {
-					parser = yaml.Parser()
-				} else if strings.HasSuffix(configFile, ".json") {
-					parser = json.Parser()
-				}
-
-				if err := k.Load(file.Provider(configFile), parser); err != nil {
+				if err := k.Load(file.Provider(configFile), parserForFile(configFile)); err != nil {
 					return AppConfig{}, fmt.Errorf("failed to load config file %s: %w", configFile, err)
 				}
 				break
@@ -95,8 +88,7 @@ func LoadConfigFromFile(configFilePath string) (AppConfig, error) {
 	return cfg, nil
 }
 
-// validateConfig validates that required configuration fields are set
-func validateConfig(cfg *AppConfig) error {
+func validateServerConfig(cfg *AppConfig) error {
 	if cfg.Server.ListenAddr == "" {
 		return fmt.Errorf("server.listen_addr is required")
 	}
@@ -126,6 +118,10 @@ func validateConfig(cfg *AppConfig) error {
 		}
 	}
 
+	return nil
+}
+
+func validateMetadataStoreConfig(cfg *AppConfig) error {
 	if cfg.MetadataStore.Type == "" {
 		cfg.MetadataStore.Type = "postgres"
 	}
@@ -144,37 +140,48 @@ func validateConfig(cfg *AppConfig) error {
 			return fmt.Errorf("metadata_store.redis_addr is required when metadata_store.type=redis")
 		}
 	case "raft":
-		if !cfg.Raft.Enabled {
-			cfg.Raft.Enabled = true
-		}
-		if cfg.Raft.NodeID == "" {
-			return fmt.Errorf("raft.node_id is required when metadata_store.type=raft")
-		}
-		if cfg.Raft.BindAddr == "" {
-			return fmt.Errorf("raft.bind_addr is required when metadata_store.type=raft")
-		}
-		if cfg.Raft.DataDir == "" {
-			return fmt.Errorf("raft.data_dir is required when metadata_store.type=raft")
-		}
-		if cfg.Raft.ApplyTimeout <= 0 {
-			return fmt.Errorf("raft.apply_timeout must be > 0 when metadata_store.type=raft")
-		}
-		if cfg.Raft.ForwardTimeout <= 0 {
-			return fmt.Errorf("raft.forward_timeout must be > 0 when metadata_store.type=raft")
-		}
-		if cfg.Raft.SnapshotInterval <= 0 {
-			return fmt.Errorf("raft.snapshot_interval must be > 0 when metadata_store.type=raft")
-		}
-		if cfg.Raft.SnapshotThreshold == 0 {
-			return fmt.Errorf("raft.snapshot_threshold must be > 0 when metadata_store.type=raft")
-		}
-		if cfg.Raft.RetainSnapshotCount <= 0 {
-			return fmt.Errorf("raft.retain_snapshot_count must be > 0 when metadata_store.type=raft")
+		if err := validateRaftConfig(cfg); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("metadata_store.type must be one of: postgres, sqlite, redis, raft")
 	}
 
+	return nil
+}
+
+func validateRaftConfig(cfg *AppConfig) error {
+	if !cfg.Raft.Enabled {
+		cfg.Raft.Enabled = true
+	}
+	if cfg.Raft.NodeID == "" {
+		return fmt.Errorf("raft.node_id is required when metadata_store.type=raft")
+	}
+	if cfg.Raft.BindAddr == "" {
+		return fmt.Errorf("raft.bind_addr is required when metadata_store.type=raft")
+	}
+	if cfg.Raft.DataDir == "" {
+		return fmt.Errorf("raft.data_dir is required when metadata_store.type=raft")
+	}
+	if cfg.Raft.ApplyTimeout <= 0 {
+		return fmt.Errorf("raft.apply_timeout must be > 0 when metadata_store.type=raft")
+	}
+	if cfg.Raft.ForwardTimeout <= 0 {
+		return fmt.Errorf("raft.forward_timeout must be > 0 when metadata_store.type=raft")
+	}
+	if cfg.Raft.SnapshotInterval <= 0 {
+		return fmt.Errorf("raft.snapshot_interval must be > 0 when metadata_store.type=raft")
+	}
+	if cfg.Raft.SnapshotThreshold == 0 {
+		return fmt.Errorf("raft.snapshot_threshold must be > 0 when metadata_store.type=raft")
+	}
+	if cfg.Raft.RetainSnapshotCount <= 0 {
+		return fmt.Errorf("raft.retain_snapshot_count must be > 0 when metadata_store.type=raft")
+	}
+	return nil
+}
+
+func validateDLMConfig(cfg *AppConfig) error {
 	if cfg.DLM.Type == "" {
 		cfg.DLM.Type = "redis"
 	}
@@ -189,17 +196,10 @@ func validateConfig(cfg *AppConfig) error {
 		return fmt.Errorf("dlm.type must be one of: redis, local")
 	}
 
-	if cfg.HA.ReplicationEnabled {
-		replicaBackend := strings.ToLower(strings.TrimSpace(cfg.HA.ReplicaBackend))
-		if replicaBackend != "localfs" && replicaBackend != "s3" {
-			return fmt.Errorf("ha.replica_backend must be one of: localfs, s3 when ha.replication_enabled=true")
-		}
-	}
+	return nil
+}
 
-	if cfg.InstanceDiscovery.InstanceID == "" {
-		return fmt.Errorf("instance_discovery.instance_id is required")
-	}
-
+func validateAuthConfig(cfg *AppConfig) error {
 	if len(cfg.Auth.APIKeys) == 0 {
 		return fmt.Errorf("auth.api_keys must contain at least one key")
 	}
@@ -211,6 +211,46 @@ func validateConfig(cfg *AppConfig) error {
 		if len(key) < 16 {
 			return fmt.Errorf("auth.api_keys: each key must be at least 16 characters")
 		}
+	}
+
+	if cfg.Auth.InternalProxySecret == "" || cfg.Auth.InternalProxySecret == "change-me-internal-secret" {
+		return fmt.Errorf("auth.internal_proxy_secret must be set and not use default value")
+	}
+
+	if cfg.Auth.SingleUseLinkSecret == "" || cfg.Auth.SingleUseLinkSecret == "change-me-link-secret" {
+		return fmt.Errorf("auth.single_use_link_secret must be set and not use default value")
+	}
+
+	return nil
+}
+
+// validateConfig validates that required configuration fields are set
+func validateConfig(cfg *AppConfig) error {
+	if err := validateServerConfig(cfg); err != nil {
+		return err
+	}
+
+	if err := validateMetadataStoreConfig(cfg); err != nil {
+		return err
+	}
+
+	if err := validateDLMConfig(cfg); err != nil {
+		return err
+	}
+
+	if cfg.HA.ReplicationEnabled {
+		replicaBackend := strings.ToLower(strings.TrimSpace(cfg.HA.ReplicaBackend))
+		if replicaBackend != "localfs" && replicaBackend != "s3" {
+			return fmt.Errorf("ha.replica_backend must be one of: localfs, s3 when ha.replication_enabled=true")
+		}
+	}
+
+	if cfg.InstanceDiscovery.InstanceID == "" {
+		return fmt.Errorf("instance_discovery.instance_id is required")
+	}
+
+	if err := validateAuthConfig(cfg); err != nil {
+		return err
 	}
 
 	if cfg.Erasure.Enabled {
@@ -230,14 +270,6 @@ func validateConfig(cfg *AppConfig) error {
 		// valid
 	default:
 		return fmt.Errorf("backend.default_backend must be one of: localfs, s3 (got %q)", cfg.Backend.DefaultBackend)
-	}
-
-	if cfg.Auth.InternalProxySecret == "" || cfg.Auth.InternalProxySecret == "change-me-internal-secret" {
-		return fmt.Errorf("auth.internal_proxy_secret must be set and not use default value")
-	}
-
-	if cfg.Auth.SingleUseLinkSecret == "" || cfg.Auth.SingleUseLinkSecret == "change-me-link-secret" {
-		return fmt.Errorf("auth.single_use_link_secret must be set and not use default value")
 	}
 
 	return nil

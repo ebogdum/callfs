@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
@@ -132,39 +133,48 @@ func main() {
 	}
 }
 
-func runClusterJoin(cmd *cobra.Command, args []string) error {
+func populateJoinFlagsFromConfig() {
 	cfg, err := config.LoadConfigFromFile(configFilePath)
-	if err == nil {
-		if strings.TrimSpace(joinNodeID) == "" {
-			joinNodeID = strings.TrimSpace(cfg.Raft.NodeID)
-		}
-		if strings.TrimSpace(joinRaftAddr) == "" {
-			joinRaftAddr = strings.TrimSpace(cfg.Raft.BindAddr)
-		}
-		if strings.TrimSpace(joinAPIEndpoint) == "" {
-			joinAPIEndpoint = strings.TrimSpace(cfg.Server.ExternalURL)
-		}
-		if strings.TrimSpace(joinInternalSecret) == "" {
-			joinInternalSecret = strings.TrimSpace(cfg.Auth.InternalProxySecret)
+	if err != nil {
+		return
+	}
+	defaults := []struct {
+		flag     *string
+		cfgValue string
+	}{
+		{&joinNodeID, cfg.Raft.NodeID},
+		{&joinRaftAddr, cfg.Raft.BindAddr},
+		{&joinAPIEndpoint, cfg.Server.ExternalURL},
+		{&joinInternalSecret, cfg.Auth.InternalProxySecret},
+	}
+	for _, d := range defaults {
+		if strings.TrimSpace(*d.flag) == "" {
+			*d.flag = strings.TrimSpace(d.cfgValue)
 		}
 	}
+}
+
+func runClusterJoin(cmd *cobra.Command, args []string) error {
+	populateJoinFlagsFromConfig()
 
 	joinNodeID = strings.TrimSpace(joinNodeID)
 	joinRaftAddr = strings.TrimSpace(joinRaftAddr)
 	joinAPIEndpoint = strings.TrimSpace(joinAPIEndpoint)
 	joinInternalSecret = strings.TrimSpace(joinInternalSecret)
 
-	if joinNodeID == "" {
-		return fmt.Errorf("node id is required (use --node-id or set raft.node_id in config)")
+	requiredFlags := []struct {
+		value string
+		name  string
+	}{
+		{joinNodeID, "node id (use --node-id or set raft.node_id in config)"},
+		{joinRaftAddr, "raft address (use --raft-addr or set raft.bind_addr in config)"},
+		{joinAPIEndpoint, "api endpoint (use --api-endpoint or set server.external_url in config)"},
+		{joinInternalSecret, "internal secret (use --internal-secret or set auth.internal_proxy_secret in config)"},
 	}
-	if joinRaftAddr == "" {
-		return fmt.Errorf("raft address is required (use --raft-addr or set raft.bind_addr in config)")
-	}
-	if joinAPIEndpoint == "" {
-		return fmt.Errorf("api endpoint is required (use --api-endpoint or set server.external_url in config)")
-	}
-	if joinInternalSecret == "" {
-		return fmt.Errorf("internal secret is required (use --internal-secret or set auth.internal_proxy_secret in config)")
+	for _, f := range requiredFlags {
+		if f.value == "" {
+			return fmt.Errorf("%s is required", f.name)
+		}
 	}
 
 	payload := metadataraft.JoinRequest{
@@ -208,50 +218,17 @@ func runClusterJoin(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runServer starts the CallFS server
-func runServer(cmd *cobra.Command, args []string) error {
-	// Create context for the entire server lifecycle
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Load configuration
-	cfg, err := config.LoadConfigFromFile(configFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	// Initialize logger
-	logger, err := initializeLogger(cfg.Log)
-	if err != nil {
-		return fmt.Errorf("failed to initialize logger: %w", err)
-	}
-	defer func() {
-		if err := logger.Sync(); err != nil {
-			// Log to stderr since logger may not be working
-			fmt.Fprintf(os.Stderr, "Failed to sync logger: %v\n", err)
-		}
-	}()
-
-	logger.Info("Starting CallFS server",
-		zap.String("instance_id", cfg.InstanceDiscovery.InstanceID),
-		zap.String("listen_addr", cfg.Server.ListenAddr))
-
-	// Initialize metadata store
-	logger.Info("Initializing metadata store")
-	var metadataStore metadata.Store
-	var raftMetadataStore *metadataraft.Store
+func initMetadataStore(cfg *config.AppConfig, logger *zap.Logger) (metadata.Store, *metadataraft.Store, error) {
 	metadataStoreType := strings.ToLower(strings.TrimSpace(cfg.MetadataStore.Type))
 	switch metadataStoreType {
 	case "raft":
 		apiPeers := make(map[string]string, len(cfg.Raft.APIPeerEndpoints)+1)
-		for nodeID, endpoint := range cfg.Raft.APIPeerEndpoints {
-			apiPeers[nodeID] = endpoint
-		}
+		maps.Copy(apiPeers, cfg.Raft.APIPeerEndpoints)
 		if _, exists := apiPeers[cfg.Raft.NodeID]; !exists {
 			apiPeers[cfg.Raft.NodeID] = cfg.Server.ExternalURL
 		}
 
-		store, storeErr := metadataraft.NewRaftStore(metadataraft.Config{
+		store, err := metadataraft.NewRaftStore(metadataraft.Config{
 			NodeID:              cfg.Raft.NodeID,
 			BindAddr:            cfg.Raft.BindAddr,
 			DataDir:             cfg.Raft.DataDir,
@@ -265,117 +242,481 @@ func runServer(cmd *cobra.Command, args []string) error {
 			RetainSnapshotCount: cfg.Raft.RetainSnapshotCount,
 			InternalAuthToken:   cfg.Auth.InternalProxySecret,
 		}, logger)
-		if storeErr != nil {
-			return fmt.Errorf("failed to initialize raft metadata store: %w", storeErr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to initialize raft metadata store: %w", err)
 		}
-		raftMetadataStore = store
-		metadataStore = store
+		return store, store, nil
 	case "sqlite":
-		store, storeErr := metadatasqlite.NewSQLiteStore(cfg.MetadataStore.SQLitePath, logger)
-		if storeErr != nil {
-			return fmt.Errorf("failed to initialize sqlite metadata store: %w", storeErr)
+		store, err := metadatasqlite.NewSQLiteStore(cfg.MetadataStore.SQLitePath, logger)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to initialize sqlite metadata store: %w", err)
 		}
-		metadataStore = store
+		return store, nil, nil
 	case "redis":
-		store, storeErr := metadataredis.NewRedisStore(
+		store, err := metadataredis.NewRedisStore(
 			cfg.MetadataStore.RedisAddr,
 			cfg.MetadataStore.RedisPassword,
 			cfg.MetadataStore.RedisDB,
 			cfg.MetadataStore.RedisKeyPrefix,
 			logger,
 		)
-		if storeErr != nil {
-			return fmt.Errorf("failed to initialize redis metadata store: %w", storeErr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to initialize redis metadata store: %w", err)
 		}
-		metadataStore = store
+		return store, nil, nil
 	case "postgres":
 		logger.Info("Running database migrations")
 		if err := schema.RunMigrations(cfg.MetadataStore.DSN); err != nil {
-			return fmt.Errorf("failed to run database migrations: %w", err)
+			return nil, nil, fmt.Errorf("failed to run database migrations: %w", err)
+		}
+		store, err := postgres.NewPostgresStore(cfg.MetadataStore.DSN, logger)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to initialize postgres metadata store: %w", err)
+		}
+		return store, nil, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported metadata store type: %s", cfg.MetadataStore.Type)
+	}
+}
+
+func initLockManager(cfg *config.AppConfig, logger *zap.Logger) (locks.Manager, error) {
+	dlmType := strings.ToLower(strings.TrimSpace(cfg.DLM.Type))
+	switch dlmType {
+	case "local":
+		return locks.NewLocalManager(), nil
+	case "redis":
+		manager, err := locks.NewRedisManager(cfg.DLM.RedisAddr, cfg.DLM.RedisPassword, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize redis lock manager: %w", err)
+		}
+		return manager, nil
+	default:
+		return nil, fmt.Errorf("unsupported dlm type: %s", cfg.DLM.Type)
+	}
+}
+
+func initBackends(cfg *config.AppConfig, logger *zap.Logger) (localFS, s3Back, proxyBack backends.Storage, proxyAdapter *internalproxy.InternalProxyAdapter, err error) {
+	if cfg.Backend.LocalFSRootPath != "" {
+		logger.Info("Initializing LocalFS backend", zap.String("root_path", cfg.Backend.LocalFSRootPath))
+		localFS, err = localfs.NewLocalFSAdapter(cfg.Backend.LocalFSRootPath)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("failed to initialize LocalFS backend: %w", err)
+		}
+	} else {
+		logger.Info("LocalFS backend disabled (no root path configured)")
+		localFS = noop.NewNoopAdapter()
+	}
+
+	if cfg.Backend.S3BucketName != "" {
+		logger.Info("Initializing S3 backend", zap.String("bucket", cfg.Backend.S3BucketName))
+		s3Back, err = s3.NewS3Adapter(cfg.Backend, logger)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("failed to initialize S3 backend: %w", err)
+		}
+	} else {
+		logger.Info("S3 backend disabled (no bucket configured)")
+		s3Back = noop.NewNoopAdapter()
+	}
+
+	if len(cfg.InstanceDiscovery.PeerEndpoints) > 0 {
+		logger.Info("Initializing internal proxy backend", zap.Int("peer_count", len(cfg.InstanceDiscovery.PeerEndpoints)))
+		adapter, adapterErr := internalproxy.NewInternalProxyAdapter(
+			cfg.InstanceDiscovery.PeerEndpoints,
+			cfg.Auth.InternalProxySecret,
+			cfg.Backend.InternalProxySkipTLSVerify,
+			logger)
+		if adapterErr != nil {
+			return nil, nil, nil, nil, fmt.Errorf("failed to initialize internal proxy backend: %w", adapterErr)
+		}
+		proxyAdapter = adapter
+		proxyBack = adapter
+	} else {
+		logger.Info("Internal proxy backend disabled (no peers configured)")
+		proxyBack = noop.NewNoopAdapter()
+	}
+
+	return localFS, s3Back, proxyBack, proxyAdapter, nil
+}
+
+func initErasureManager(cfg *config.AppConfig, metadataStore metadata.Store, localFSBackend, s3Backend backends.Storage, logger *zap.Logger) (*erasure.Manager, error) {
+	erasureMetaStore, ok := metadataStore.(metadata.ErasureMetadataStore)
+	if !ok {
+		return nil, fmt.Errorf("metadata store type %s does not support erasure coding", cfg.MetadataStore.Type)
+	}
+
+	var shardBackend backends.Storage
+	shardBackendType := strings.ToLower(strings.TrimSpace(cfg.Erasure.ShardBackend))
+	if shardBackendType == "s3" {
+		shardBackend = s3Backend
+	} else {
+		shardBackend = localFSBackend
+	}
+
+	erasurePeers := make(map[string]string)
+	maps.Copy(erasurePeers, cfg.InstanceDiscovery.PeerEndpoints)
+	if cfg.Server.ExternalURL != "" {
+		erasurePeers[cfg.InstanceDiscovery.InstanceID] = cfg.Server.ExternalURL
+	}
+
+	return erasure.NewManager(
+		erasureMetaStore,
+		shardBackend,
+		&cfg.Erasure,
+		cfg.InstanceDiscovery.InstanceID,
+		erasurePeers,
+		cfg.Auth.InternalProxySecret,
+		logger,
+	), nil
+}
+
+func ensureRaftRootDirectory(cfg *config.AppConfig, raftStore *metadataraft.Store, coreEngine *core.Engine, logger *zap.Logger) {
+	if cfg.Raft.Bootstrap {
+		waitDeadline := time.Now().Add(8 * time.Second)
+		for !raftStore.IsLeader() && time.Now().Before(waitDeadline) {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+
+	if raftStore.IsLeader() {
+		if err := coreEngine.EnsureRootDirectory(context.Background()); err != nil {
+			logger.Fatal("Failed to ensure root directory exists", zap.Error(err))
+		}
+		if snapErr := raftStore.TakeSnapshot(); snapErr != nil {
+			logger.Warn("Initial snapshot after root directory creation failed", zap.Error(snapErr))
+		} else {
+			logger.Info("Initial snapshot taken for follower catch-up")
+		}
+	} else {
+		logger.Info("Skipping root directory bootstrap on follower node",
+			zap.String("node_id", cfg.Raft.NodeID),
+			zap.String("leader_id", raftStore.LeaderID()))
+	}
+}
+
+func buildHTTPHandler(ctx context.Context, cfg *config.AppConfig, coreEngine *core.Engine, metadataStore metadata.Store, localFSBackend backends.Storage, raftMetadataStore *metadataraft.Store, logger *zap.Logger) (http.Handler, *server.RouterResources, error) {
+	logger.Info("Initializing authentication and authorization")
+	authenticator := auth.NewAPIKeyAuthenticator(cfg.Auth.APIKeys, cfg.Auth.InternalProxySecret)
+	authorizer := auth.NewUnixAuthorizer(metadataStore)
+
+	logger.Info("Initializing link manager")
+	linkManager, err := links.NewLinkManager(metadataStore, cfg.Auth.SingleUseLinkSecret, logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize link manager: %w", err)
+	}
+
+	links.StartCleanupWorker(ctx, metadataStore, 5*time.Minute, logger)
+
+	logger.Info("Initializing HTTP router")
+	router, routerResources := server.NewRouter(coreEngine, authenticator, authorizer, linkManager, &cfg.Server, &cfg.Backend, cfg.Server.ExternalURL, logger)
+	rootHandler := http.Handler(router)
+
+	if cfg.Erasure.Enabled {
+		rootHandler = registerErasureRoutes(rootHandler, localFSBackend, cfg.Auth.InternalProxySecret, logger)
+	}
+
+	if raftMetadataStore != nil {
+		rootHandler = registerRaftRoutes(rootHandler, cfg, raftMetadataStore, coreEngine, logger)
+	}
+
+	return rootHandler, routerResources, nil
+}
+
+func registerErasureRoutes(handler http.Handler, localFSBackend backends.Storage, internalSecret string, logger *zap.Logger) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/", handler)
+	mux.HandleFunc("/v1/internal/shards/", recoverMiddleware(logger, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			handlers.InternalStoreShardHandler(localFSBackend, internalSecret, logger)(w, r)
+		case http.MethodGet:
+			handlers.InternalGetShardHandler(localFSBackend, internalSecret, logger)(w, r)
+		case http.MethodDelete:
+			handlers.InternalDeleteShardHandler(localFSBackend, internalSecret, logger)(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	return mux
+}
+
+func registerRaftRoutes(handler http.Handler, cfg *config.AppConfig, raftStore *metadataraft.Store, coreEngine *core.Engine, logger *zap.Logger) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/", handler)
+	mux.HandleFunc("/v1/internal/raft/join", recoverMiddleware(logger, handleRaftJoin(cfg, raftStore, coreEngine, logger)))
+	mux.HandleFunc("/v1/internal/raft/metadata/apply", recoverMiddleware(logger, handleRaftApply(cfg, raftStore, logger)))
+	return mux
+}
+
+func handleRaftJoin(cfg *config.AppConfig, raftStore *metadataraft.Store, coreEngine *core.Engine, _ *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
 		}
 
-		store, storeErr := postgres.NewPostgresStore(cfg.MetadataStore.DSN, logger)
-		if storeErr != nil {
-			return fmt.Errorf("failed to initialize postgres metadata store: %w", storeErr)
+		authHeader := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if subtle.ConstantTimeCompare([]byte(authHeader), []byte(cfg.Auth.InternalProxySecret)) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: "unauthorized"})
+			return
 		}
-		metadataStore = store
-	default:
-		return fmt.Errorf("unsupported metadata store type: %s", cfg.MetadataStore.Type)
+
+		if !raftStore.IsLeader() {
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: "not leader", LeaderID: raftStore.LeaderID()})
+			return
+		}
+
+		var req metadataraft.JoinRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: fmt.Sprintf("invalid request: %v", err)})
+			return
+		}
+
+		if err := raftStore.AddVoter(r.Context(), req.NodeID, req.RaftAddr, req.APIEndpoint); err != nil {
+			status := http.StatusBadGateway
+			if strings.Contains(strings.ToLower(err.Error()), "required") {
+				status = http.StatusBadRequest
+			}
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: err.Error(), LeaderID: raftStore.LeaderID()})
+			return
+		}
+
+		coreEngine.SetPeerEndpoint(req.NodeID, req.APIEndpoint)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "joined", LeaderID: raftStore.LeaderID()})
+	}
+}
+
+func handleRaftApply(cfg *config.AppConfig, raftStore *metadataraft.Store, logger *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		authHeader := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if subtle.ConstantTimeCompare([]byte(authHeader), []byte(cfg.Auth.InternalProxySecret)) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: "unauthorized"})
+			return
+		}
+
+		var req metadataraft.ForwardApplyRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: fmt.Sprintf("invalid request: %v", err)})
+			return
+		}
+
+		res, err := raftStore.ApplyForwardedCommand(r.Context(), req.Command)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			errCode := err.Error()
+			if errors.Is(err, metadata.ErrNotFound) {
+				errCode = "not_found"
+			}
+			if errors.Is(err, metadata.ErrAlreadyExists) {
+				errCode = "already_exists"
+			}
+			_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: errCode})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := metadataraft.ForwardApplyResponse{CleanupCount: res.CleanupCount}
+		if res.Metadata != nil {
+			resp.Metadata = res.Metadata
+		}
+		if res.Link != nil {
+			resp.Link = res.Link
+		}
+		if res.Children != nil {
+			resp.Children = res.Children
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			logger.Error("Failed to encode raft apply response", zap.Error(err))
+		}
+	}
+}
+
+func startServer(srv *http.Server, cfg *config.AppConfig, logger *zap.Logger) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		protocol := strings.ToLower(cfg.Server.Protocol)
+		if protocol == "" {
+			protocol = "https"
+		}
+
+		switch protocol {
+		case "http":
+			logger.Info("Starting HTTP server", zap.String("addr", cfg.Server.ListenAddr))
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				errCh <- fmt.Errorf("HTTP server failed: %w", err)
+			}
+		case "auto":
+			if cfg.Server.CertFile != "" && cfg.Server.KeyFile != "" {
+				logger.Info("Starting HTTPS server (auto mode)", zap.String("addr", cfg.Server.ListenAddr))
+				if err := srv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil && err != http.ErrServerClosed {
+					errCh <- fmt.Errorf("HTTPS server (auto) failed: %w", err)
+				}
+				return
+			}
+			logger.Info("Starting HTTP server (auto mode fallback)", zap.String("addr", cfg.Server.ListenAddr))
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				errCh <- fmt.Errorf("HTTP server (auto) failed: %w", err)
+			}
+		default:
+			logger.Info("Starting HTTPS server", zap.String("addr", cfg.Server.ListenAddr))
+			if err := srv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil && err != http.ErrServerClosed {
+				errCh <- fmt.Errorf("HTTPS server failed: %w", err)
+			}
+		}
+	}()
+	return errCh
+}
+
+func startAncillaryServers(cfg *config.AppConfig, rootHandler http.Handler, logger *zap.Logger) (*http.Server, *http3.Server, chan error) {
+	var metricsSrv *http.Server
+	var quicSrv *http3.Server
+	errCh := make(chan error, 2)
+
+	if cfg.Metrics.ListenAddr != "" {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", promhttp.Handler())
+		metricsSrv = &http.Server{
+			Addr:         cfg.Metrics.ListenAddr,
+			Handler:      metricsMux,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+			IdleTimeout:  120 * time.Second,
+		}
+		go func() {
+			logger.Info("Starting metrics server", zap.String("addr", cfg.Metrics.ListenAddr))
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				errCh <- fmt.Errorf("metrics server failed: %w", err)
+			}
+		}()
+	}
+
+	if cfg.Server.EnableQUIC {
+		quicSrv = &http3.Server{
+			Addr:    cfg.Server.QUICListenAddr,
+			Handler: rootHandler,
+			TLSConfig: &tls.Config{
+				NextProtos: []string{"h3"},
+			},
+		}
+		go func() {
+			logger.Info("Starting QUIC server",
+				zap.String("addr", cfg.Server.QUICListenAddr),
+				zap.String("protocol", "quic/http3"))
+			if err := quicSrv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil {
+				errCh <- fmt.Errorf("QUIC server failed: %w", err)
+			}
+		}()
+	}
+
+	return metricsSrv, quicSrv, errCh
+}
+
+func awaitShutdownSignal(cancel context.CancelFunc, ancillaryErrCh, mainErrCh <-chan error, logger *zap.Logger) error {
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case <-quit:
+		return nil
+	case err := <-ancillaryErrCh:
+		logger.Error("Server startup failed", zap.Error(err))
+		cancel()
+		return err
+	case err := <-mainErrCh:
+		logger.Error("Server startup failed", zap.Error(err))
+		cancel()
+		return err
+	}
+}
+
+func shutdownServers(ctx context.Context, srv *http.Server, metricsSrv *http.Server, quicSrv *http3.Server, logger *zap.Logger) error {
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("Server forced to shutdown", zap.Error(err))
+		return err
+	}
+
+	var shutdownErr error
+	if metricsSrv != nil {
+		if err := metricsSrv.Shutdown(ctx); err != nil {
+			logger.Error("Metrics server forced to shutdown", zap.Error(err))
+			shutdownErr = err
+		}
+	}
+
+	if quicSrv != nil {
+		if err := quicSrv.Close(); err != nil {
+			logger.Error("QUIC server forced to shutdown", zap.Error(err))
+			if shutdownErr == nil {
+				shutdownErr = err
+			}
+		}
+	}
+
+	return shutdownErr
+}
+
+// runServer starts the CallFS server
+func runServer(cmd *cobra.Command, args []string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cfg, err := config.LoadConfigFromFile(configFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	logger, err := initializeLogger(cfg.Log)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	defer func() {
+		if err := logger.Sync(); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to sync logger: %v\n", err)
+		}
+	}()
+
+	logger.Info("Starting CallFS server",
+		zap.String("instance_id", cfg.InstanceDiscovery.InstanceID),
+		zap.String("listen_addr", cfg.Server.ListenAddr))
+
+	// Initialize metadata store
+	logger.Info("Initializing metadata store")
+	metadataStore, raftMetadataStore, err := initMetadataStore(&cfg, logger)
+	if err != nil {
+		return err
 	}
 	defer metadataStore.Close()
 
 	// Initialize distributed lock manager
 	logger.Info("Initializing distributed lock manager")
-	var lockManager locks.Manager
-	dlmType := strings.ToLower(strings.TrimSpace(cfg.DLM.Type))
-	switch dlmType {
-	case "local":
-		lockManager = locks.NewLocalManager()
-	case "redis":
-		manager, managerErr := locks.NewRedisManager(cfg.DLM.RedisAddr, cfg.DLM.RedisPassword, logger)
-		if managerErr != nil {
-			return fmt.Errorf("failed to initialize redis lock manager: %w", managerErr)
-		}
-		lockManager = manager
-	default:
-		return fmt.Errorf("unsupported dlm type: %s", cfg.DLM.Type)
+	lockManager, err := initLockManager(&cfg, logger)
+	if err != nil {
+		return err
 	}
 	defer lockManager.Close()
 
-	// Initialize backend adapters conditionally
+	// Initialize backend adapters
 	logger.Info("Initializing backend adapters")
-
-	// Initialize LocalFS backend if root path is configured
-	var localFSBackend backends.Storage
-	if cfg.Backend.LocalFSRootPath != "" {
-		logger.Info("Initializing LocalFS backend", zap.String("root_path", cfg.Backend.LocalFSRootPath))
-		backend, err := localfs.NewLocalFSAdapter(cfg.Backend.LocalFSRootPath)
-		if err != nil {
-			return fmt.Errorf("failed to initialize LocalFS backend: %w", err)
-		}
-		localFSBackend = backend
-		defer localFSBackend.Close()
-	} else {
-		logger.Info("LocalFS backend disabled (no root path configured)")
-		localFSBackend = noop.NewNoopAdapter()
+	localFSBackend, s3Backend, internalProxyBackend, internalProxyAdapter, err := initBackends(&cfg, logger)
+	if err != nil {
+		return err
 	}
-
-	// Initialize S3 backend if bucket name is configured
-	var s3Backend backends.Storage
-	if cfg.Backend.S3BucketName != "" {
-		logger.Info("Initializing S3 backend", zap.String("bucket", cfg.Backend.S3BucketName))
-		backend, err := s3.NewS3Adapter(cfg.Backend, logger)
-		if err != nil {
-			return fmt.Errorf("failed to initialize S3 backend: %w", err)
-		}
-		s3Backend = backend
-		defer s3Backend.Close()
-	} else {
-		logger.Info("S3 backend disabled (no bucket configured)")
-		s3Backend = noop.NewNoopAdapter()
-	}
-
-	// Initialize internal proxy backend if peer endpoints are configured
-	var internalProxyBackend backends.Storage
-	var internalProxyAdapter *internalproxy.InternalProxyAdapter
-	if len(cfg.InstanceDiscovery.PeerEndpoints) > 0 {
-		logger.Info("Initializing internal proxy backend", zap.Int("peer_count", len(cfg.InstanceDiscovery.PeerEndpoints)))
-		adapter, err := internalproxy.NewInternalProxyAdapter(
-			cfg.InstanceDiscovery.PeerEndpoints,
-			cfg.Auth.InternalProxySecret,
-			cfg.Backend.InternalProxySkipTLSVerify,
-			logger)
-		if err != nil {
-			return fmt.Errorf("failed to initialize internal proxy backend: %w", err)
-		}
-		internalProxyAdapter = adapter
-		internalProxyBackend = adapter
-		defer internalProxyBackend.Close()
-	} else {
-		logger.Info("Internal proxy backend disabled (no peers configured)")
-		internalProxyBackend = noop.NewNoopAdapter()
-		internalProxyAdapter = nil
-	}
+	defer localFSBackend.Close()
+	defer s3Backend.Close()
+	defer internalProxyBackend.Close()
 
 	// Initialize core engine
 	logger.Info("Initializing core engine")
@@ -397,41 +738,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Initialize erasure manager if enabled
 	if cfg.Erasure.Enabled {
 		logger.Info("Initializing erasure coding manager")
-
-		// Determine which metadata store implements ErasureMetadataStore
-		erasureMetaStore, ok := metadataStore.(metadata.ErasureMetadataStore)
-		if !ok {
-			return fmt.Errorf("metadata store type %s does not support erasure coding", cfg.MetadataStore.Type)
+		em, emErr := initErasureManager(&cfg, metadataStore, localFSBackend, s3Backend, logger)
+		if emErr != nil {
+			return emErr
 		}
-
-		// Resolve shard backend
-		var shardBackend backends.Storage
-		shardBackendType := strings.ToLower(strings.TrimSpace(cfg.Erasure.ShardBackend))
-		switch shardBackendType {
-		case "s3":
-			shardBackend = s3Backend
-		default:
-			shardBackend = localFSBackend
-		}
-
-		// Build peer endpoints map including self
-		erasurePeers := make(map[string]string)
-		for id, ep := range cfg.InstanceDiscovery.PeerEndpoints {
-			erasurePeers[id] = ep
-		}
-		if cfg.Server.ExternalURL != "" {
-			erasurePeers[cfg.InstanceDiscovery.InstanceID] = cfg.Server.ExternalURL
-		}
-
-		em := erasure.NewManager(
-			erasureMetaStore,
-			shardBackend,
-			&cfg.Erasure,
-			cfg.InstanceDiscovery.InstanceID,
-			erasurePeers,
-			cfg.Auth.InternalProxySecret,
-			logger,
-		)
 		defer em.Close()
 		coreEngine.SetErasureManager(em)
 		logger.Info("Erasure coding manager initialized",
@@ -442,177 +752,19 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Ensure root directory exists in metadata store
 	logger.Info("Ensuring root directory exists")
 	if raftMetadataStore != nil {
-		if cfg.Raft.Bootstrap {
-			waitDeadline := time.Now().Add(8 * time.Second)
-			for !raftMetadataStore.IsLeader() && time.Now().Before(waitDeadline) {
-				time.Sleep(200 * time.Millisecond)
-			}
-		}
-
-		if raftMetadataStore.IsLeader() {
-			if err := coreEngine.EnsureRootDirectory(context.Background()); err != nil {
-				logger.Fatal("Failed to ensure root directory exists", zap.Error(err))
-			}
-			// Take a snapshot immediately so that followers joining later can install
-			// it and catch up with the leader's state (including root directory).
-			if snapErr := raftMetadataStore.TakeSnapshot(); snapErr != nil {
-				logger.Warn("Initial snapshot after root directory creation failed", zap.Error(snapErr))
-			} else {
-				logger.Info("Initial snapshot taken for follower catch-up")
-			}
-		} else {
-			logger.Info("Skipping root directory bootstrap on follower node",
-				zap.String("node_id", cfg.Raft.NodeID),
-				zap.String("leader_id", raftMetadataStore.LeaderID()))
-		}
+		ensureRaftRootDirectory(&cfg, raftMetadataStore, coreEngine, logger)
 	} else {
 		if err := coreEngine.EnsureRootDirectory(context.Background()); err != nil {
 			logger.Fatal("Failed to ensure root directory exists", zap.Error(err))
 		}
 	}
 
-	// Initialize authentication and authorization
-	logger.Info("Initializing authentication and authorization")
-	authenticator := auth.NewAPIKeyAuthenticator(cfg.Auth.APIKeys, cfg.Auth.InternalProxySecret)
-	authorizer := auth.NewUnixAuthorizer(metadataStore)
-
-	// Initialize link manager
-	logger.Info("Initializing link manager")
-	linkManager, err := links.NewLinkManager(metadataStore, cfg.Auth.SingleUseLinkSecret, logger)
+	rootHandler, routerResources, err := buildHTTPHandler(ctx, &cfg, coreEngine, metadataStore, localFSBackend, raftMetadataStore, logger)
 	if err != nil {
-		return fmt.Errorf("failed to initialize link manager: %w", err)
+		return err
 	}
-
-	// Start background cleanup worker
-	links.StartCleanupWorker(ctx, metadataStore, 5*time.Minute, logger)
-
-	// Initialize HTTP router
-	logger.Info("Initializing HTTP router")
-	router, routerResources := server.NewRouter(coreEngine, authenticator, authorizer, linkManager, &cfg.Server, &cfg.Backend, cfg.Server.ExternalURL, logger)
 	defer routerResources.Stop()
-	rootHandler := http.Handler(router)
 
-	// Register internal shard endpoints if erasure is enabled.
-	// These endpoints are protected by the InternalProxySecret bearer token.
-	if cfg.Erasure.Enabled {
-		mux := http.NewServeMux()
-		mux.Handle("/", rootHandler)
-		mux.HandleFunc("/v1/internal/shards/", recoverMiddleware(logger, func(w http.ResponseWriter, r *http.Request) {
-			switch r.Method {
-			case http.MethodPut:
-				handlers.InternalStoreShardHandler(localFSBackend, cfg.Auth.InternalProxySecret, logger)(w, r)
-			case http.MethodGet:
-				handlers.InternalGetShardHandler(localFSBackend, cfg.Auth.InternalProxySecret, logger)(w, r)
-			case http.MethodDelete:
-				handlers.InternalDeleteShardHandler(localFSBackend, cfg.Auth.InternalProxySecret, logger)(w, r)
-			default:
-				w.WriteHeader(http.StatusMethodNotAllowed)
-			}
-		}))
-		rootHandler = mux
-	}
-
-	if raftMetadataStore != nil {
-		mux := http.NewServeMux()
-		mux.Handle("/", rootHandler)
-		mux.HandleFunc("/v1/internal/raft/join", recoverMiddleware(logger, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-
-			authHeader := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-			if subtle.ConstantTimeCompare([]byte(authHeader), []byte(cfg.Auth.InternalProxySecret)) != 1 {
-				w.WriteHeader(http.StatusUnauthorized)
-				_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: "unauthorized"})
-				return
-			}
-
-			if !raftMetadataStore.IsLeader() {
-				w.WriteHeader(http.StatusBadGateway)
-				_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: "not leader", LeaderID: raftMetadataStore.LeaderID()})
-				return
-			}
-
-			var req metadataraft.JoinRequest
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: fmt.Sprintf("invalid request: %v", err)})
-				return
-			}
-
-			if err := raftMetadataStore.AddVoter(r.Context(), req.NodeID, req.RaftAddr, req.APIEndpoint); err != nil {
-				status := http.StatusBadGateway
-				if strings.Contains(strings.ToLower(err.Error()), "required") {
-					status = http.StatusBadRequest
-				}
-				w.WriteHeader(status)
-				_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: err.Error(), LeaderID: raftMetadataStore.LeaderID()})
-				return
-			}
-
-			// Propagate peer endpoint to Engine and InternalProxyAdapter
-			// so cross-server routing works for the newly joined node
-			coreEngine.SetPeerEndpoint(req.NodeID, req.APIEndpoint)
-
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "joined", LeaderID: raftMetadataStore.LeaderID()})
-		}))
-		mux.HandleFunc("/v1/internal/raft/metadata/apply", recoverMiddleware(logger, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-
-			authHeader2 := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-			if subtle.ConstantTimeCompare([]byte(authHeader2), []byte(cfg.Auth.InternalProxySecret)) != 1 {
-				w.WriteHeader(http.StatusUnauthorized)
-				_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: "unauthorized"})
-				return
-			}
-
-			var req metadataraft.ForwardApplyRequest
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: fmt.Sprintf("invalid request: %v", err)})
-				return
-			}
-
-			res, err := raftMetadataStore.ApplyForwardedCommand(r.Context(), req.Command)
-			if err != nil {
-				w.WriteHeader(http.StatusBadGateway)
-				errCode := err.Error()
-				if errors.Is(err, metadata.ErrNotFound) {
-					errCode = "not_found"
-				}
-				if errors.Is(err, metadata.ErrAlreadyExists) {
-					errCode = "already_exists"
-				}
-				_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: errCode})
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			resp := metadataraft.ForwardApplyResponse{CleanupCount: res.CleanupCount}
-			if res.Metadata != nil {
-				resp.Metadata = res.Metadata
-			}
-			if res.Link != nil {
-				resp.Link = res.Link
-			}
-			if res.Children != nil {
-				resp.Children = res.Children
-			}
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				logger.Error("Failed to encode raft apply response", zap.Error(err))
-			}
-		}))
-		rootHandler = mux
-	}
-
-	// Create HTTP server
 	srv := &http.Server{
 		Addr:         cfg.Server.ListenAddr,
 		Handler:      rootHandler,
@@ -621,128 +773,20 @@ func runServer(cmd *cobra.Command, args []string) error {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	var metricsSrv *http.Server
-	var quicSrv *http3.Server
-	serverErrCh := make(chan error, 3)
+	metricsSrv, quicSrv, serverErrCh := startAncillaryServers(&cfg, rootHandler, logger)
 
-	if cfg.Metrics.ListenAddr != "" {
-		metricsMux := http.NewServeMux()
-		metricsMux.Handle("/metrics", promhttp.Handler())
-		metricsSrv = &http.Server{
-			Addr:         cfg.Metrics.ListenAddr,
-			Handler:      metricsMux,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 30 * time.Second,
-			IdleTimeout:  120 * time.Second,
-		}
+	mainErrCh := startServer(srv, &cfg, logger)
 
-		go func() {
-			logger.Info("Starting metrics server", zap.String("addr", cfg.Metrics.ListenAddr))
-			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				serverErrCh <- fmt.Errorf("metrics server failed: %w", err)
-			}
-		}()
-	}
-
-	if cfg.Server.EnableQUIC {
-		quicSrv = &http3.Server{
-			Addr:    cfg.Server.QUICListenAddr,
-			Handler: rootHandler,
-			TLSConfig: &tls.Config{
-				NextProtos: []string{"h3"},
-			},
-		}
-
-		go func() {
-			logger.Info("Starting QUIC server",
-				zap.String("addr", cfg.Server.QUICListenAddr),
-				zap.String("protocol", "quic/http3"))
-			if err := quicSrv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil {
-				serverErrCh <- fmt.Errorf("QUIC server failed: %w", err)
-			}
-		}()
-	}
-
-	// Start server in a goroutine
-	go func() {
-		protocol := strings.ToLower(cfg.Server.Protocol)
-		if protocol == "" {
-			protocol = "https"
-		}
-
-		switch protocol {
-		case "http":
-			logger.Info("Starting HTTP server", zap.String("addr", cfg.Server.ListenAddr))
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				serverErrCh <- fmt.Errorf("HTTP server failed: %w", err)
-			}
-		case "auto":
-			if cfg.Server.CertFile != "" && cfg.Server.KeyFile != "" {
-				logger.Info("Starting HTTPS server (auto mode)", zap.String("addr", cfg.Server.ListenAddr))
-				if err := srv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil && err != http.ErrServerClosed {
-					serverErrCh <- fmt.Errorf("HTTPS server (auto) failed: %w", err)
-				}
-				return
-			}
-
-			logger.Info("Starting HTTP server (auto mode fallback)", zap.String("addr", cfg.Server.ListenAddr))
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				serverErrCh <- fmt.Errorf("HTTP server (auto) failed: %w", err)
-			}
-		default:
-			logger.Info("Starting HTTPS server", zap.String("addr", cfg.Server.ListenAddr))
-			if err := srv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil && err != http.ErrServerClosed {
-				serverErrCh <- fmt.Errorf("HTTPS server failed: %w", err)
-			}
-		}
-	}()
-
-	// Wait for interrupt signal or server error
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	select {
-	case <-quit:
-		// Normal shutdown
-	case err := <-serverErrCh:
-		logger.Error("Server startup failed", zap.Error(err))
-		cancel()
+	if err := awaitShutdownSignal(cancel, serverErrCh, mainErrCh, logger); err != nil {
 		return err
 	}
 
 	logger.Info("Shutting down server...")
-
-	// Create a deadline for shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
-	// Attempt graceful shutdown
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("Server forced to shutdown", zap.Error(err))
+	if err := shutdownServers(shutdownCtx, srv, metricsSrv, quicSrv, logger); err != nil {
 		return err
-	}
-
-	// Shut down all ancillary servers; collect errors but don't short-circuit
-	// so every server gets a shutdown attempt (prevents leaking QUIC server
-	// when metrics shutdown fails, etc.)
-	var shutdownErr error
-	if metricsSrv != nil {
-		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
-			logger.Error("Metrics server forced to shutdown", zap.Error(err))
-			shutdownErr = err
-		}
-	}
-
-	if quicSrv != nil {
-		if err := quicSrv.Close(); err != nil {
-			logger.Error("QUIC server forced to shutdown", zap.Error(err))
-			if shutdownErr == nil {
-				shutdownErr = err
-			}
-		}
-	}
-
-	if shutdownErr != nil {
-		return shutdownErr
 	}
 
 	logger.Info("Server exited gracefully")

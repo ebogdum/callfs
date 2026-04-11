@@ -44,19 +44,47 @@ type DirectoryListingResponse struct {
 // @Failure 404 {object} ErrorResponse "Not Found"
 // @Failure 400 {object} ErrorResponse "Bad Request"
 // @Router /v1/directories/{path} [get]
+func parseMaxDepth(r *http.Request) int {
+	maxDepthStr := r.URL.Query().Get("max_depth")
+	if maxDepthStr == "" {
+		return 100
+	}
+	parsed, err := strconv.Atoi(maxDepthStr)
+	if err != nil || parsed < 0 {
+		return 100
+	}
+	if parsed > 1000 {
+		return 1000
+	}
+	return parsed
+}
+
+func metadataToFileInfos(children []*metadata.Metadata) []FileInfo {
+	fileInfos := make([]FileInfo, 0, len(children))
+	for _, child := range children {
+		fileInfos = append(fileInfos, FileInfo{
+			Name:  child.Name,
+			Path:  child.Path,
+			Type:  child.Type,
+			Size:  child.Size,
+			Mode:  child.Mode,
+			Owner: child.Owner,
+			MTime: child.MTime.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+	return fileInfos
+}
+
 func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Start timing
 		start := time.Now()
 		defer func() {
 			metrics.HTTPRequestDuration.WithLabelValues(r.Method, "/v1/directories/*").Observe(time.Since(start).Seconds())
 		}()
 
-		// Create contexts with timeouts
 		metadataCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 
-		// Parse path from URL
 		pathParam := chi.URLParam(r, "*")
 		if pathParam == "" {
 			pathParam = "/"
@@ -64,33 +92,28 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 			pathParam = "/" + pathParam
 		}
 
-		// Clean and validate path
 		pathInfo := ParseFilePath(pathParam)
 		if pathInfo.IsInvalid {
 			SendErrorResponse(w, logger, fmt.Errorf("invalid path"), http.StatusBadRequest)
 			return
 		}
 
-		// Get user ID from context
 		userID, ok := middleware.GetUserID(r.Context())
 		if !ok {
 			SendErrorResponse(w, logger, auth.ErrAuthenticationFailed, http.StatusUnauthorized)
 			return
 		}
 
-		// Normalize path for engine calls (remove trailing slash for directories)
 		enginePath := pathInfo.FullPath
 		if pathInfo.IsDirectory && enginePath != "/" {
 			enginePath = strings.TrimSuffix(enginePath, "/")
 		}
 
-		// Authorize access
 		if err := authorizer.Authorize(metadataCtx, userID, enginePath, auth.ReadPerm); err != nil {
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
 			return
 		}
 
-		// Check if path exists and is a directory
 		md, err := engine.GetMetadata(metadataCtx, enginePath)
 		if err != nil {
 			SendErrorResponse(w, logger, err, http.StatusNotFound)
@@ -102,20 +125,8 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 			return
 		}
 
-		// Parse query parameters
 		recursive := r.URL.Query().Get("recursive") == "true"
-		maxDepthStr := r.URL.Query().Get("max_depth")
-		maxDepth := 100 // Default
-
-		if maxDepthStr != "" {
-			if parsed, err := strconv.Atoi(maxDepthStr); err == nil {
-				if parsed > 1000 {
-					maxDepth = 1000 // Limit maximum depth
-				} else if parsed >= 0 {
-					maxDepth = parsed
-				}
-			}
-		}
+		maxDepth := parseMaxDepth(r)
 
 		var children []*metadata.Metadata
 		if recursive {
@@ -123,28 +134,12 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 		} else {
 			children, err = engine.ListDirectory(metadataCtx, enginePath)
 		}
-
 		if err != nil {
 			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 			return
 		}
 
-		// Convert to response format
-		var fileInfos []FileInfo
-		for _, child := range children {
-			fileInfo := FileInfo{
-				Name:  child.Name,
-				Path:  child.Path,
-				Type:  child.Type,
-				Size:  child.Size,
-				Mode:  child.Mode,
-				Owner: child.Owner,
-				MTime: child.MTime.Format("2006-01-02T15:04:05Z07:00"),
-			}
-			fileInfos = append(fileInfos, fileInfo)
-		}
-
-		// Create response
+		fileInfos := metadataToFileInfos(children)
 		response := DirectoryListingResponse{
 			Path:      enginePath,
 			Type:      "directory",
@@ -152,19 +147,16 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 			Count:     len(fileInfos),
 			Items:     fileInfos,
 		}
-
 		if recursive {
 			response.MaxDepth = maxDepth
 		}
 
-		// Buffer JSON before writing to avoid malformed response on encoding error
 		jsonBytes, marshalErr := json.Marshal(response)
 		if marshalErr != nil {
 			SendErrorResponse(w, logger, marshalErr, http.StatusInternalServerError)
 			return
 		}
 
-		// Set headers
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-CallFS-Type", "directory")
 		w.Header().Set("X-CallFS-Count", fmt.Sprintf("%d", len(fileInfos)))
@@ -174,7 +166,6 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 			logger.Error("Failed to write directory listing response", zap.Error(err))
 		}
 
-		// Use secure logging with sanitized data
 		logFields := log.LogFields{
 			Path:      pathInfo.FullPath,
 			UserID:    userID,

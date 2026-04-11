@@ -38,16 +38,16 @@ type Config struct {
 }
 
 type Command struct {
-	Op          string                   `json:"op"`
-	Path        string                   `json:"path,omitempty"`
-	Metadata    *metadata.Metadata       `json:"metadata,omitempty"`
-	Token       string                   `json:"token,omitempty"`
-	Link        *metadata.SingleUseLink  `json:"link,omitempty"`
-	Status      string                   `json:"status,omitempty"`
-	UsedAt      *time.Time               `json:"used_at,omitempty"`
-	UsedByIP    *string                  `json:"used_by_ip,omitempty"`
-	Before      *time.Time               `json:"before,omitempty"`
-	OlderThan   *time.Time               `json:"older_than,omitempty"`
+	Op          string                    `json:"op"`
+	Path        string                    `json:"path,omitempty"`
+	Metadata    *metadata.Metadata        `json:"metadata,omitempty"`
+	Token       string                    `json:"token,omitempty"`
+	Link        *metadata.SingleUseLink   `json:"link,omitempty"`
+	Status      string                    `json:"status,omitempty"`
+	UsedAt      *time.Time                `json:"used_at,omitempty"`
+	UsedByIP    *string                   `json:"used_by_ip,omitempty"`
+	Before      *time.Time                `json:"before,omitempty"`
+	OlderThan   *time.Time                `json:"older_than,omitempty"`
 	ErasureInfo *metadata.ErasureFileInfo `json:"erasure_info,omitempty"`
 }
 
@@ -98,8 +98,8 @@ type Store struct {
 }
 
 type state struct {
-	MetadataByPath map[string]*metadata.Metadata       `json:"metadata_by_path"`
-	LinksByToken   map[string]*metadata.SingleUseLink  `json:"links_by_token"`
+	MetadataByPath map[string]*metadata.Metadata        `json:"metadata_by_path"`
+	LinksByToken   map[string]*metadata.SingleUseLink   `json:"links_by_token"`
 	ErasureByPath  map[string]*metadata.ErasureFileInfo `json:"erasure_by_path"`
 }
 
@@ -112,30 +112,43 @@ type stateSnapshot struct {
 	state state
 }
 
-func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
+func (cfg *Config) applyDefaults() error {
 	if cfg.NodeID == "" {
-		return nil, fmt.Errorf("raft node id is required")
+		return fmt.Errorf("raft node id is required")
 	}
 	if cfg.BindAddr == "" {
-		return nil, fmt.Errorf("raft bind address is required")
+		return fmt.Errorf("raft bind address is required")
 	}
 	if cfg.DataDir == "" {
-		return nil, fmt.Errorf("raft data_dir is required")
+		return fmt.Errorf("raft data_dir is required")
 	}
-	if cfg.ApplyTimeout <= 0 {
-		cfg.ApplyTimeout = 10 * time.Second
+
+	defaults := []struct {
+		ptr          *time.Duration
+		defaultValue time.Duration
+	}{
+		{&cfg.ApplyTimeout, 10 * time.Second},
+		{&cfg.ForwardTimeout, 10 * time.Second},
+		{&cfg.SnapshotInterval, 60 * time.Second},
 	}
-	if cfg.ForwardTimeout <= 0 {
-		cfg.ForwardTimeout = 10 * time.Second
-	}
-	if cfg.SnapshotInterval <= 0 {
-		cfg.SnapshotInterval = 60 * time.Second
+	for _, d := range defaults {
+		if *d.ptr <= 0 {
+			*d.ptr = d.defaultValue
+		}
 	}
 	if cfg.SnapshotThreshold == 0 {
 		cfg.SnapshotThreshold = 256
 	}
 	if cfg.RetainSnapshotCount <= 0 {
 		cfg.RetainSnapshotCount = 2
+	}
+
+	return nil
+}
+
+func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
+	if err := cfg.applyDefaults(); err != nil {
+		return nil, err
 	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
@@ -153,6 +166,7 @@ func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
 	raftCfg.SnapshotInterval = cfg.SnapshotInterval
 	raftCfg.SnapshotThreshold = cfg.SnapshotThreshold
 
+	raftLogWriter := zap.NewStdLog(logger).Writer()
 	logStore, err := raftboltdb.NewBoltStore(filepath.Join(cfg.DataDir, "raft-log.db"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create raft log store: %w", err)
@@ -161,7 +175,6 @@ func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create raft stable store: %w", err)
 	}
-	raftLogWriter := zap.NewStdLog(logger).Writer()
 	snapshotStore, err := hashiraft.NewFileSnapshotStore(cfg.DataDir, cfg.RetainSnapshotCount, raftLogWriter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create raft snapshot store: %w", err)
@@ -198,26 +211,30 @@ func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
 	}
 
 	if cfg.Bootstrap {
-		// Build the initial cluster configuration including all known peers.
-		// This allows all nodes to start simultaneously and form a cluster
-		// without needing explicit join commands.
-		servers := []hashiraft.Server{
-			{ID: hashiraft.ServerID(cfg.NodeID), Address: hashiraft.ServerAddress(cfg.BindAddr), Suffrage: hashiraft.Voter},
-		}
-		for peerID, peerAddr := range cfg.Peers {
-			servers = append(servers, hashiraft.Server{
-				ID:       hashiraft.ServerID(peerID),
-				Address:  hashiraft.ServerAddress(peerAddr),
-				Suffrage: hashiraft.Voter,
-			})
-		}
-		future := raftNode.BootstrapCluster(hashiraft.Configuration{Servers: servers})
-		if err := future.Error(); err != nil && !errors.Is(err, hashiraft.ErrCantBootstrap) {
-			return nil, fmt.Errorf("failed to bootstrap raft cluster: %w", err)
+		if err := store.bootstrapCluster(cfg); err != nil {
+			return nil, err
 		}
 	}
 
 	return store, nil
+}
+
+func (s *Store) bootstrapCluster(cfg Config) error {
+	servers := []hashiraft.Server{
+		{ID: hashiraft.ServerID(cfg.NodeID), Address: hashiraft.ServerAddress(cfg.BindAddr), Suffrage: hashiraft.Voter},
+	}
+	for peerID, peerAddr := range cfg.Peers {
+		servers = append(servers, hashiraft.Server{
+			ID:       hashiraft.ServerID(peerID),
+			Address:  hashiraft.ServerAddress(peerAddr),
+			Suffrage: hashiraft.Voter,
+		})
+	}
+	future := s.raft.BootstrapCluster(hashiraft.Configuration{Servers: servers})
+	if err := future.Error(); err != nil && !errors.Is(err, hashiraft.ErrCantBootstrap) {
+		return fmt.Errorf("failed to bootstrap raft cluster: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) IsLeader() bool {
@@ -247,6 +264,34 @@ func (s *Store) APIPeerEndpoint(nodeID string) (string, bool) {
 	return endpoint, ok
 }
 
+// removeConflictingServers removes any existing servers that conflict with the
+// incoming nodeID/raftAddr pair. Returns true if the node already exists as a
+// matching voter (no-op join).
+func (s *Store) removeConflictingServers(nodeID, raftAddr string, servers []hashiraft.Server) (bool, error) {
+	for _, server := range servers {
+		serverID := string(server.ID)
+		serverAddr := string(server.Address)
+
+		if serverID == nodeID {
+			if serverAddr == raftAddr && server.Suffrage == hashiraft.Voter {
+				return true, nil
+			}
+			removeFuture := s.raft.RemoveServer(server.ID, 0, s.applyTimeout)
+			if err := removeFuture.Error(); err != nil {
+				return false, fmt.Errorf("failed to remove existing node %s before rejoin: %w", nodeID, err)
+			}
+		}
+
+		if serverAddr == raftAddr && serverID != nodeID {
+			removeFuture := s.raft.RemoveServer(server.ID, 0, s.applyTimeout)
+			if err := removeFuture.Error(); err != nil {
+				return false, fmt.Errorf("failed to remove stale node %s on address %s: %w", serverID, raftAddr, err)
+			}
+		}
+	}
+	return false, nil
+}
+
 func (s *Store) AddVoter(ctx context.Context, nodeID, raftAddr, apiEndpoint string) error {
 	nodeID = strings.TrimSpace(nodeID)
 	raftAddr = strings.TrimSpace(raftAddr)
@@ -267,28 +312,13 @@ func (s *Store) AddVoter(ctx context.Context, nodeID, raftAddr, apiEndpoint stri
 		return fmt.Errorf("failed to get raft configuration: %w", err)
 	}
 
-	for _, server := range configFuture.Configuration().Servers {
-		serverID := string(server.ID)
-		serverAddr := string(server.Address)
-
-		if serverID == nodeID {
-			if serverAddr == raftAddr && server.Suffrage == hashiraft.Voter {
-				s.SetAPIPeerEndpoint(nodeID, apiEndpoint)
-				return nil
-			}
-
-			removeFuture := s.raft.RemoveServer(server.ID, 0, s.applyTimeout)
-			if err := removeFuture.Error(); err != nil {
-				return fmt.Errorf("failed to remove existing node %s before rejoin: %w", nodeID, err)
-			}
-		}
-
-		if serverAddr == raftAddr && serverID != nodeID {
-			removeFuture := s.raft.RemoveServer(server.ID, 0, s.applyTimeout)
-			if err := removeFuture.Error(); err != nil {
-				return fmt.Errorf("failed to remove stale node %s on address %s: %w", serverID, raftAddr, err)
-			}
-		}
+	alreadyVoter, err := s.removeConflictingServers(nodeID, raftAddr, configFuture.Configuration().Servers)
+	if err != nil {
+		return err
+	}
+	if alreadyVoter {
+		s.SetAPIPeerEndpoint(nodeID, apiEndpoint)
+		return nil
 	}
 
 	addFuture := s.raft.AddVoter(hashiraft.ServerID(nodeID), hashiraft.ServerAddress(raftAddr), 0, s.applyTimeout)
@@ -347,7 +377,6 @@ func (s *Store) Get(ctx context.Context, path string) (*metadata.Metadata, error
 
 	return nil, metadata.ErrNotFound
 }
-
 
 func (s *Store) Create(ctx context.Context, md *metadata.Metadata) error {
 	if md == nil {
@@ -616,43 +645,14 @@ func (s *Store) forwardToLeader(ctx context.Context, cmd Command) (CommandResult
 	return CommandResult{CleanupCount: applyResp.CleanupCount, Metadata: applyResp.Metadata, Link: applyResp.Link, Children: applyResp.Children}, nil
 }
 
-func (f *fsm) Apply(log *hashiraft.Log) interface{} {
-	var cmd Command
-	if err := json.Unmarshal(log.Data, &cmd); err != nil {
-		return CommandResult{Err: fmt.Sprintf("invalid_command:%v", err)}
-	}
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
+func (f *fsm) applyMetadataOp(cmd *Command) CommandResult {
 	switch cmd.Op {
 	case "get_metadata":
-		// Read-only query: returns metadata without modifying state.
-		// Used by followers to forward reads to the leader for consistency.
 		md, ok := f.state.MetadataByPath[cmd.Path]
 		if !ok {
 			return CommandResult{Err: "not_found"}
 		}
 		return CommandResult{Metadata: cloneMetadata(md)}
-	case "get_link":
-		// Read-only query: returns link without modifying state.
-		link, ok := f.state.LinksByToken[cmd.Token]
-		if !ok {
-			return CommandResult{Err: "not_found"}
-		}
-		return CommandResult{Link: cloneLink(link)}
-	case "list_children":
-		// Read-only query: returns children of a directory.
-		children := make([]*metadata.Metadata, 0)
-		for _, md := range f.state.MetadataByPath {
-			if md.Path == "/" {
-				continue
-			}
-			if pathDir(md.Path) == cmd.Path {
-				children = append(children, cloneMetadata(md))
-			}
-		}
-		return CommandResult{Children: children}
 	case "create_metadata":
 		if cmd.Metadata == nil {
 			return CommandResult{Err: "metadata_required"}
@@ -677,6 +677,36 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 		}
 		delete(f.state.MetadataByPath, cmd.Path)
 		return CommandResult{}
+	default:
+		children := make([]*metadata.Metadata, 0)
+		for _, md := range f.state.MetadataByPath {
+			if md.Path != "/" && pathDir(md.Path) == cmd.Path {
+				children = append(children, cloneMetadata(md))
+			}
+		}
+		return CommandResult{Children: children}
+	}
+}
+
+func (f *fsm) cleanupLinks(status string, predicate func(link *metadata.SingleUseLink) bool) CommandResult {
+	count := 0
+	for token, link := range f.state.LinksByToken {
+		if link.Status == status && predicate(link) {
+			delete(f.state.LinksByToken, token)
+			count++
+		}
+	}
+	return CommandResult{CleanupCount: count}
+}
+
+func (f *fsm) applyLinkOp(cmd *Command) CommandResult {
+	switch cmd.Op {
+	case "get_link":
+		link, ok := f.state.LinksByToken[cmd.Token]
+		if !ok {
+			return CommandResult{Err: "not_found"}
+		}
+		return CommandResult{Link: cloneLink(link)}
 	case "create_link":
 		if cmd.Link == nil {
 			return CommandResult{Err: "link_required"}
@@ -688,11 +718,7 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 		return CommandResult{}
 	case "update_link":
 		link, exists := f.state.LinksByToken[cmd.Token]
-		if !exists {
-			return CommandResult{Err: "not_found"}
-		}
-		// Only allow transitions from "active" status to prevent replay/reactivation
-		if link.Status != "active" {
+		if !exists || link.Status != "active" {
 			return CommandResult{Err: "not_found"}
 		}
 		link.Status = cmd.Status
@@ -705,27 +731,21 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 		if cmd.Before == nil {
 			return CommandResult{Err: "before_required"}
 		}
-		count := 0
-		for token, link := range f.state.LinksByToken {
-			if link.Status == "active" && link.ExpiresAt.Before(*cmd.Before) {
-				delete(f.state.LinksByToken, token)
-				count++
-			}
-		}
-		return CommandResult{CleanupCount: count}
-	case "cleanup_used_links":
+		return f.cleanupLinks("active", func(link *metadata.SingleUseLink) bool {
+			return link.ExpiresAt.Before(*cmd.Before)
+		})
+	default:
 		if cmd.OlderThan == nil {
 			return CommandResult{Err: "older_than_required"}
 		}
-		count := 0
-		for token, link := range f.state.LinksByToken {
-			if link.Status == "used" && link.UsedAt != nil && link.UsedAt.Before(*cmd.OlderThan) {
-				delete(f.state.LinksByToken, token)
-				count++
-			}
-		}
-		return CommandResult{CleanupCount: count}
-	case "create_erasure_info":
+		return f.cleanupLinks("used", func(link *metadata.SingleUseLink) bool {
+			return link.UsedAt != nil && link.UsedAt.Before(*cmd.OlderThan)
+		})
+	}
+}
+
+func (f *fsm) applyErasureOp(cmd *Command) CommandResult {
+	if cmd.Op == "create_erasure_info" {
 		if cmd.ErasureInfo == nil {
 			return CommandResult{Err: "erasure_info_required"}
 		}
@@ -734,9 +754,44 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 		}
 		f.state.ErasureByPath[cmd.Path] = cloneErasureFileInfo(cmd.ErasureInfo)
 		return CommandResult{}
-	case "delete_erasure_info":
-		delete(f.state.ErasureByPath, cmd.Path)
-		return CommandResult{}
+	}
+	// delete_erasure_info
+	delete(f.state.ErasureByPath, cmd.Path)
+	return CommandResult{}
+}
+
+// opCategory maps operation names to handler categories.
+var opCategory = map[string]string{
+	"get_metadata":          "metadata",
+	"list_children":         "metadata",
+	"create_metadata":       "metadata",
+	"update_metadata":       "metadata",
+	"delete_metadata":       "metadata",
+	"get_link":              "link",
+	"create_link":           "link",
+	"update_link":           "link",
+	"cleanup_expired_links": "link",
+	"cleanup_used_links":    "link",
+	"create_erasure_info":   "erasure",
+	"delete_erasure_info":   "erasure",
+}
+
+func (f *fsm) Apply(log *hashiraft.Log) interface{} {
+	var cmd Command
+	if err := json.Unmarshal(log.Data, &cmd); err != nil {
+		return CommandResult{Err: fmt.Sprintf("invalid_command:%v", err)}
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	switch opCategory[cmd.Op] {
+	case "metadata":
+		return f.applyMetadataOp(&cmd)
+	case "link":
+		return f.applyLinkOp(&cmd)
+	case "erasure":
+		return f.applyErasureOp(&cmd)
 	default:
 		return CommandResult{Err: "unknown_operation"}
 	}

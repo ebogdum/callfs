@@ -28,8 +28,8 @@ func (s *stubStore) Create(_ context.Context, md *metadata.Metadata) error {
 	s.entries[md.Path] = md
 	return nil
 }
-func (s *stubStore) Update(_ context.Context, _ *metadata.Metadata) error       { return nil }
-func (s *stubStore) Delete(_ context.Context, _ string) error                   { return nil }
+func (s *stubStore) Update(_ context.Context, _ *metadata.Metadata) error { return nil }
+func (s *stubStore) Delete(_ context.Context, _ string) error             { return nil }
 func (s *stubStore) ListChildren(_ context.Context, _ string) ([]*metadata.Metadata, error) {
 	return nil, nil
 }
@@ -43,8 +43,8 @@ func (s *stubStore) UpdateSingleUseLink(_ context.Context, _ string, _ string, _
 	return nil
 }
 func (s *stubStore) CleanupExpiredLinks(_ context.Context, _ time.Time) (int, error) { return 0, nil }
-func (s *stubStore) CleanupUsedLinks(_ context.Context, _ time.Time) (int, error)   { return 0, nil }
-func (s *stubStore) Close() error                                                   { return nil }
+func (s *stubStore) CleanupUsedLinks(_ context.Context, _ time.Time) (int, error)    { return 0, nil }
+func (s *stubStore) Close() error                                                    { return nil }
 
 func TestOwnerHasFullAccess(t *testing.T) {
 	store := newStubStore()

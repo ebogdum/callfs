@@ -16,6 +16,7 @@ import (
 	"github.com/ebogdum/callfs/config"
 	"github.com/ebogdum/callfs/core"
 	"github.com/ebogdum/callfs/core/log"
+	"github.com/ebogdum/callfs/metadata"
 	"github.com/ebogdum/callfs/metrics"
 	"github.com/ebogdum/callfs/server/middleware"
 )
@@ -48,25 +49,124 @@ type FileInfo struct {
 // @Failure 404 {object} ErrorResponse "Not Found"
 // @Failure 500 {object} ErrorResponse "Internal Server Error"
 // @Router /v1/files/{path} [get]
-func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc { //nolint:gocognit
+func serveFileContent(w http.ResponseWriter, r *http.Request, engine *core.Engine, md *metadata.Metadata, metadataCtx, fileCtx context.Context, enginePath string, pathInfo PathInfo, userID string, logger *zap.Logger) {
+	if md.ErasureCoded {
+		em := engine.GetErasureManager()
+		if em != nil {
+			if r.URL.Query().Get("manifest") == "true" {
+				HandleErasureManifest(w, r, em, enginePath, logger)
+				return
+			}
+			HandleErasureDownload(w, r, em, enginePath, md.Size, logger)
+			metrics.FileOperationsTotal.WithLabelValues("read", "erasure").Inc()
+			return
+		}
+	}
+
+	currentInstanceID := engine.GetCurrentInstanceID()
+	if md.CallFSInstanceID != nil && *md.CallFSInstanceID != currentInstanceID {
+		if freshMd, freshErr := engine.GetMetadataUncached(metadataCtx, enginePath); freshErr == nil {
+			md = freshMd
+		}
+	}
+
+	reader, err := engine.GetFile(fileCtx, enginePath)
+	if err != nil {
+		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+		return
+	}
+	defer reader.Close()
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", md.Size))
+	w.Header().Set("X-CallFS-Type", "file")
+	w.Header().Set("X-CallFS-Size", fmt.Sprintf("%d", md.Size))
+	w.Header().Set("X-CallFS-Mode", md.Mode)
+	w.Header().Set("X-CallFS-Owner", md.Owner)
+	w.Header().Set("X-CallFS-MTime", md.MTime.Format("2006-01-02T15:04:05Z07:00"))
+
+	if _, err := io.Copy(w, reader); err != nil {
+		logger.Error("Failed to stream file content", zap.Error(err))
+	}
+
+	metrics.FileOperationsTotal.WithLabelValues("read", md.BackendType).Inc()
+
+	logFields := log.LogFields{
+		Path:      pathInfo.FullPath,
+		UserID:    userID,
+		Backend:   md.BackendType,
+		Size:      md.Size,
+		Operation: "download",
+	}.Sanitize()
+
+	logger.Info("File downloaded",
+		zap.String("path", logFields.Path),
+		zap.String("user_id", logFields.UserID),
+		zap.String("backend", logFields.Backend),
+		zap.Int64("size", logFields.Size))
+}
+
+func serveDirectoryListing(w http.ResponseWriter, engine *core.Engine, md *metadata.Metadata, metadataCtx context.Context, enginePath string, pathInfo PathInfo, userID string, logger *zap.Logger) {
+	children, err := engine.ListDirectory(metadataCtx, enginePath)
+	if err != nil {
+		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+		return
+	}
+
+	fileInfos := make([]FileInfo, 0, len(children))
+	for _, child := range children {
+		fileInfos = append(fileInfos, FileInfo{
+			Name:  child.Name,
+			Path:  child.Path,
+			Type:  child.Type,
+			Size:  child.Size,
+			Mode:  child.Mode,
+			Owner: child.Owner,
+			MTime: child.MTime.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-CallFS-Type", "directory")
+	w.Header().Set("X-CallFS-Size", "0")
+	w.Header().Set("X-CallFS-Mode", md.Mode)
+	w.Header().Set("X-CallFS-Owner", md.Owner)
+	w.Header().Set("X-CallFS-MTime", md.MTime.Format("2006-01-02T15:04:05Z07:00"))
+
+	jsonBytes, marshalErr := json.Marshal(fileInfos)
+	if marshalErr != nil {
+		SendErrorResponse(w, logger, marshalErr, http.StatusInternalServerError)
+		return
+	}
+	if _, err := w.Write(jsonBytes); err != nil {
+		logger.Error("Failed to write directory listing", zap.Error(err))
+	}
+
+	logFields := log.LogFields{
+		Path:      pathInfo.FullPath,
+		UserID:    userID,
+		Operation: "list",
+	}.Sanitize()
+
+	logger.Info("Directory listed",
+		zap.String("path", logFields.Path),
+		zap.String("user_id", logFields.UserID),
+		zap.Int("children_count", len(children)))
+}
+
+func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-
-		// Track HTTP metrics
 		defer func() {
-			duration := time.Since(start)
-			metrics.HTTPRequestDuration.WithLabelValues(r.Method, "/files/*").Observe(duration.Seconds())
+			metrics.HTTPRequestDuration.WithLabelValues(r.Method, "/files/*").Observe(time.Since(start).Seconds())
 		}()
 
-		// Create context with timeout for metadata operations
 		metadataCtx, metadataCancel := context.WithTimeout(r.Context(), cfg.MetadataOpTimeout)
 		defer metadataCancel()
 
-		// Create context with timeout for file operations (will be used later if needed)
 		fileCtx, fileCancel := context.WithTimeout(r.Context(), cfg.FileOpTimeout)
 		defer fileCancel()
 
-		// Extract and parse path from URL
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
 		if pathInfo.IsInvalid {
@@ -74,26 +174,22 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 			return
 		}
 
-		// Get user ID from context
 		userID, ok := middleware.GetUserID(r.Context())
 		if !ok {
 			SendErrorResponse(w, logger, auth.ErrAuthenticationFailed, http.StatusUnauthorized)
 			return
 		}
 
-		// Normalize path for engine calls (remove trailing slash for directories)
 		enginePath := pathInfo.FullPath
 		if pathInfo.IsDirectory && enginePath != "/" {
 			enginePath = strings.TrimSuffix(enginePath, "/")
 		}
 
-		// SECURITY FIX: Authorize BEFORE checking existence to prevent timing attacks
 		if err := authorizer.Authorize(metadataCtx, userID, enginePath, auth.ReadPerm); err != nil {
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
 			return
 		}
 
-		// Now check if file/directory exists
 		md, err := engine.GetMetadata(metadataCtx, enginePath)
 		if err != nil {
 			SendErrorResponse(w, logger, err, http.StatusNotFound)
@@ -102,122 +198,9 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 
 		switch md.Type {
 		case "file":
-			// Handle erasure-coded files
-			if md.ErasureCoded {
-				em := engine.GetErasureManager()
-				if em != nil {
-					if r.URL.Query().Get("manifest") == "true" {
-						HandleErasureManifest(w, r, em, enginePath, logger)
-						return
-					}
-					HandleErasureDownload(w, r, em, enginePath, md.Size, logger)
-					metrics.FileOperationsTotal.WithLabelValues("read", "erasure").Inc()
-					return
-				}
-			}
-
-			// For cross-server files, re-fetch metadata from the store (bypassing
-			// cache) so Content-Length reflects the actual file size after any
-			// concurrent writes proxied through another node.
-			currentInstanceID := engine.GetCurrentInstanceID()
-			if md.CallFSInstanceID != nil && *md.CallFSInstanceID != currentInstanceID {
-				if freshMd, freshErr := engine.GetMetadataUncached(metadataCtx, enginePath); freshErr == nil {
-					md = freshMd
-				}
-			}
-
-			// Stream file content using file operation timeout
-			reader, err := engine.GetFile(fileCtx, enginePath)
-			if err != nil {
-				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
-				return
-			}
-			defer reader.Close()
-
-			// Set headers
-			w.Header().Set("Content-Type", "application/octet-stream")
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", md.Size))
-			w.Header().Set("X-CallFS-Type", "file")
-			w.Header().Set("X-CallFS-Size", fmt.Sprintf("%d", md.Size))
-			w.Header().Set("X-CallFS-Mode", md.Mode)
-			w.Header().Set("X-CallFS-Owner", md.Owner)
-			w.Header().Set("X-CallFS-MTime", md.MTime.Format("2006-01-02T15:04:05Z07:00"))
-
-			// Stream content
-			if _, err := io.Copy(w, reader); err != nil {
-				logger.Error("Failed to stream file content", zap.Error(err))
-			}
-
-			metrics.FileOperationsTotal.WithLabelValues("read", md.BackendType).Inc()
-
-			// Use secure logging with sanitized data
-			logFields := log.LogFields{
-				Path:      pathInfo.FullPath,
-				UserID:    userID,
-				Backend:   md.BackendType,
-				Size:      md.Size,
-				Operation: "download",
-			}.Sanitize()
-
-			logger.Info("File downloaded",
-				zap.String("path", logFields.Path),
-				zap.String("user_id", logFields.UserID),
-				zap.String("backend", logFields.Backend),
-				zap.Int64("size", logFields.Size))
-
+			serveFileContent(w, r, engine, md, metadataCtx, fileCtx, enginePath, pathInfo, userID, logger)
 		case "directory":
-			// List directory contents using metadata timeout
-			children, err := engine.ListDirectory(metadataCtx, enginePath)
-			if err != nil {
-				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
-				return
-			}
-
-			// Convert to response format
-			var fileInfos []FileInfo
-			for _, child := range children {
-				fileInfo := FileInfo{
-					Name:  child.Name,
-					Path:  child.Path,
-					Type:  child.Type,
-					Size:  child.Size,
-					Mode:  child.Mode,
-					Owner: child.Owner,
-					MTime: child.MTime.Format("2006-01-02T15:04:05Z07:00"),
-				}
-				fileInfos = append(fileInfos, fileInfo)
-			}
-
-			// Set headers
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-CallFS-Type", "directory")
-			w.Header().Set("X-CallFS-Size", "0")
-			w.Header().Set("X-CallFS-Mode", md.Mode)
-			w.Header().Set("X-CallFS-Owner", md.Owner)
-			w.Header().Set("X-CallFS-MTime", md.MTime.Format("2006-01-02T15:04:05Z07:00"))
-
-			// Buffer JSON before writing to avoid malformed response on encoding error
-			jsonBytes, marshalErr := json.Marshal(fileInfos)
-			if marshalErr != nil {
-				SendErrorResponse(w, logger, marshalErr, http.StatusInternalServerError)
-				return
-			}
-			if _, err := w.Write(jsonBytes); err != nil {
-				logger.Error("Failed to write directory listing", zap.Error(err))
-			}
-
-			// Use secure logging with sanitized data
-			logFields := log.LogFields{
-				Path:      pathInfo.FullPath,
-				UserID:    userID,
-				Operation: "list",
-			}.Sanitize()
-
-			logger.Info("Directory listed",
-				zap.String("path", logFields.Path),
-				zap.String("user_id", logFields.UserID),
-				zap.Int("children_count", len(children)))
-
+			serveDirectoryListing(w, engine, md, metadataCtx, enginePath, pathInfo, userID, logger)
 		default:
 			SendErrorResponse(w, logger, fmt.Errorf("unsupported resource type: %s", md.Type), http.StatusInternalServerError)
 		}

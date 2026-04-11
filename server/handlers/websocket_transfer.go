@@ -44,6 +44,122 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
+func wsCloseWithError(conn *websocket.Conn, code int, msg string) {
+	_ = conn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(code, msg),
+		time.Now().Add(5*time.Second))
+}
+
+func wsDownload(conn *websocket.Conn, r *http.Request, engine *core.Engine, authorizer auth.Authorizer, userID, enginePath string, logger *zap.Logger) {
+	if err := authorizer.Authorize(r.Context(), userID, enginePath, auth.ReadPerm); err != nil {
+		wsCloseWithError(conn, websocket.ClosePolicyViolation, "read access denied")
+		return
+	}
+
+	reader, err := engine.GetFile(r.Context(), enginePath)
+	if err != nil {
+		wsCloseWithError(conn, websocket.CloseInternalServerErr, "failed to open file")
+		return
+	}
+	defer reader.Close()
+
+	buf := make([]byte, wsChunkSize)
+	for {
+		n, readErr := reader.Read(buf)
+		if n > 0 {
+			if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
+				logger.Warn("Failed writing websocket download chunk", zap.Error(err))
+				return
+			}
+		}
+
+		if readErr == nil {
+			continue
+		}
+		if errors.Is(readErr, io.EOF) {
+			wsCloseWithError(conn, websocket.CloseNormalClosure, "download complete")
+		} else {
+			wsCloseWithError(conn, websocket.CloseInternalServerErr, "file read failed")
+		}
+		return
+	}
+}
+
+func wsReadUploadPayload(conn *websocket.Conn, logger *zap.Logger) (*bytes.Buffer, bool) {
+	var payload bytes.Buffer
+	const maxWSUpload = 100 << 20 // 100 MB max
+	for {
+		messageType, data, readErr := conn.ReadMessage()
+		if readErr != nil {
+			if websocket.IsCloseError(readErr, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				return &payload, true
+			}
+			logger.Warn("Failed reading websocket upload message", zap.Error(readErr))
+			return nil, false
+		}
+		if messageType != websocket.BinaryMessage {
+			continue
+		}
+		if int64(payload.Len())+int64(len(data)) > maxWSUpload {
+			wsCloseWithError(conn, websocket.CloseMessageTooBig, "upload too large")
+			return nil, false
+		}
+		if _, err := payload.Write(data); err != nil {
+			logger.Warn("Failed buffering websocket upload payload", zap.Error(err))
+			return nil, false
+		}
+	}
+}
+
+func wsUpload(conn *websocket.Conn, r *http.Request, engine *core.Engine, authorizer auth.Authorizer, backendConfig *config.BackendConfig, userID string, pathInfo PathInfo, enginePath string, logger *zap.Logger) {
+	if err := authorizer.Authorize(r.Context(), userID, enginePath, auth.WritePerm); err != nil {
+		wsCloseWithError(conn, websocket.ClosePolicyViolation, "write access denied")
+		return
+	}
+
+	payload, ok := wsReadUploadPayload(conn, logger)
+	if !ok {
+		return
+	}
+
+	size := int64(payload.Len())
+	existingMd, err := engine.GetMetadata(r.Context(), enginePath)
+	if err != nil {
+		if !errors.Is(err, metadata.ErrNotFound) {
+			wsCloseWithError(conn, websocket.CloseInternalServerErr, "metadata lookup failed")
+			return
+		}
+		createMd := &metadata.Metadata{
+			Name:        pathInfo.Name,
+			Type:        "file",
+			Mode:        "0644",
+			Owner:       userID,
+			BackendType: backendConfig.DefaultBackend,
+			ATime:       time.Now(),
+			MTime:       time.Now(),
+			CTime:       time.Now(),
+		}
+		if err := engine.CreateFile(r.Context(), enginePath, bytes.NewReader(payload.Bytes()), size, createMd); err != nil {
+			wsCloseWithError(conn, websocket.CloseInternalServerErr, "file create failed")
+			return
+		}
+	} else {
+		if existingMd.Type != "file" {
+			wsCloseWithError(conn, websocket.CloseUnsupportedData, "target path is not a file")
+			return
+		}
+		if err := engine.UpdateFile(r.Context(), enginePath, bytes.NewReader(payload.Bytes()), size, existingMd); err != nil {
+			wsCloseWithError(conn, websocket.CloseInternalServerErr, "file update failed")
+			return
+		}
+	}
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("ok:%d", size))); err != nil {
+		logger.Warn("Failed writing websocket upload ack", zap.Error(err))
+	}
+	wsCloseWithError(conn, websocket.CloseNormalClosure, "upload complete")
+}
+
 // V1WebSocketTransfer handles websocket file transfers on /v1/files/ws/{path}.
 // Query param mode=download|upload controls transfer direction.
 func V1WebSocketTransfer(engine *core.Engine, authorizer auth.Authorizer, backendConfig *config.BackendConfig, logger *zap.Logger) http.HandlerFunc {
@@ -54,7 +170,6 @@ func V1WebSocketTransfer(engine *core.Engine, authorizer auth.Authorizer, backen
 			SendErrorResponse(w, logger, &customError{message: "invalid path"}, http.StatusBadRequest)
 			return
 		}
-
 		if pathInfo.IsDirectory {
 			SendErrorResponse(w, logger, &customError{message: "websocket transfer requires a file path"}, http.StatusBadRequest)
 			return
@@ -82,8 +197,6 @@ func V1WebSocketTransfer(engine *core.Engine, authorizer auth.Authorizer, backen
 		}
 		defer conn.Close()
 
-		// Limit individual message size to prevent a single oversized message from
-		// exhausting server memory before the cumulative upload limit is checked.
 		const maxWSMessageBytes = 1 << 20 // 1 MiB per message
 		conn.SetReadLimit(maxWSMessageBytes)
 
@@ -91,131 +204,9 @@ func V1WebSocketTransfer(engine *core.Engine, authorizer auth.Authorizer, backen
 
 		switch mode {
 		case "download":
-			if err := authorizer.Authorize(r.Context(), userID, enginePath, auth.ReadPerm); err != nil {
-				_ = conn.WriteControl(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "read access denied"),
-					time.Now().Add(5*time.Second))
-				return
-			}
-
-			reader, err := engine.GetFile(r.Context(), enginePath)
-			if err != nil {
-				_ = conn.WriteControl(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "failed to open file"),
-					time.Now().Add(5*time.Second))
-				return
-			}
-			defer reader.Close()
-
-			buf := make([]byte, wsChunkSize)
-			for {
-				n, readErr := reader.Read(buf)
-				if n > 0 {
-					if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
-						logger.Warn("Failed writing websocket download chunk", zap.Error(err))
-						return
-					}
-				}
-
-				if readErr != nil {
-					if errors.Is(readErr, io.EOF) {
-						_ = conn.WriteControl(websocket.CloseMessage,
-							websocket.FormatCloseMessage(websocket.CloseNormalClosure, "download complete"),
-							time.Now().Add(5*time.Second))
-						return
-					}
-
-					_ = conn.WriteControl(websocket.CloseMessage,
-						websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "file read failed"),
-						time.Now().Add(5*time.Second))
-					return
-				}
-			}
+			wsDownload(conn, r, engine, authorizer, userID, enginePath, logger)
 		case "upload":
-			if err := authorizer.Authorize(r.Context(), userID, enginePath, auth.WritePerm); err != nil {
-				_ = conn.WriteControl(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "write access denied"),
-					time.Now().Add(5*time.Second))
-				return
-			}
-
-			var payload bytes.Buffer
-			const maxWSUpload = 100 << 20 // 100 MB max for WebSocket uploads (memory-buffered)
-			for {
-				messageType, data, readErr := conn.ReadMessage()
-				if readErr != nil {
-					if websocket.IsCloseError(readErr, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-						break
-					}
-
-					logger.Warn("Failed reading websocket upload message", zap.Error(readErr))
-					return
-				}
-
-				if messageType != websocket.BinaryMessage {
-					continue
-				}
-
-				if int64(payload.Len())+int64(len(data)) > maxWSUpload {
-					_ = conn.WriteControl(websocket.CloseMessage,
-						websocket.FormatCloseMessage(websocket.CloseMessageTooBig, "upload too large"),
-						time.Now().Add(5*time.Second))
-					return
-				}
-
-				if _, err := payload.Write(data); err != nil {
-					logger.Warn("Failed buffering websocket upload payload", zap.Error(err))
-					return
-				}
-			}
-
-			size := int64(payload.Len())
-			existingMd, err := engine.GetMetadata(r.Context(), enginePath)
-			if err != nil {
-				if !errors.Is(err, metadata.ErrNotFound) {
-					_ = conn.WriteControl(websocket.CloseMessage,
-						websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "metadata lookup failed"),
-						time.Now().Add(5*time.Second))
-					return
-				}
-
-				createMd := &metadata.Metadata{
-					Name:        pathInfo.Name,
-					Type:        "file",
-					Mode:        "0644",
-					Owner:       userID,
-					BackendType: backendConfig.DefaultBackend,
-					ATime:       time.Now(),
-					MTime:       time.Now(),
-					CTime:       time.Now(),
-				}
-				if err := engine.CreateFile(r.Context(), enginePath, bytes.NewReader(payload.Bytes()), size, createMd); err != nil {
-					_ = conn.WriteControl(websocket.CloseMessage,
-						websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "file create failed"),
-						time.Now().Add(5*time.Second))
-					return
-				}
-			} else {
-				if existingMd.Type != "file" {
-					_ = conn.WriteControl(websocket.CloseMessage,
-						websocket.FormatCloseMessage(websocket.CloseUnsupportedData, "target path is not a file"),
-						time.Now().Add(5*time.Second))
-					return
-				}
-				if err := engine.UpdateFile(r.Context(), enginePath, bytes.NewReader(payload.Bytes()), size, existingMd); err != nil {
-					_ = conn.WriteControl(websocket.CloseMessage,
-						websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "file update failed"),
-						time.Now().Add(5*time.Second))
-					return
-				}
-			}
-
-			if err := conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("ok:%d", size))); err != nil {
-				logger.Warn("Failed writing websocket upload ack", zap.Error(err))
-			}
-			_ = conn.WriteControl(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "upload complete"),
-				time.Now().Add(5*time.Second))
+			wsUpload(conn, r, engine, authorizer, backendConfig, userID, pathInfo, enginePath, logger)
 		}
 	}
 }

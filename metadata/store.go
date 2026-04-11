@@ -21,7 +21,7 @@ type Metadata struct {
 	Path             string    `json:"path"`
 	Type             string    `json:"type"` // "file" or "directory"
 	Size             int64     `json:"size"`
-	Mode             string    `json:"mode"` // Permission mode string like "0644"
+	Mode             string    `json:"mode"`  // Permission mode string like "0644"
 	Owner            string    `json:"owner"` // App-level owner (user ID string, e.g. "api-user-0"). NOT an OS user.
 	ATime            time.Time `json:"atime"`
 	MTime            time.Time `json:"mtime"`
@@ -50,12 +50,12 @@ type SingleUseLink struct {
 
 // ErasureFileInfo holds erasure coding metadata (imported by metadata stores)
 type ErasureFileInfo struct {
-	FilePath     string              `json:"file_path"`
-	OriginalSize int64               `json:"original_size"`
-	DataShards   int                 `json:"data_shards"`
-	ParityShards int                 `json:"parity_shards"`
-	ShardSize    int64               `json:"shard_size"`
-	Shards       []ErasureShardInfo  `json:"shards"`
+	FilePath     string             `json:"file_path"`
+	OriginalSize int64              `json:"original_size"`
+	DataShards   int                `json:"data_shards"`
+	ParityShards int                `json:"parity_shards"`
+	ShardSize    int64              `json:"shard_size"`
+	Shards       []ErasureShardInfo `json:"shards"`
 }
 
 // ErasureShardInfo describes a single shard's storage location.

@@ -204,47 +204,7 @@ func (e *Engine) UpdateFile(ctx context.Context, path string, reader io.Reader, 
 }
 
 // DeleteFile removes a file or empty directory
-func (e *Engine) DeleteFile(ctx context.Context, path string) error {
-	// Peek at metadata to choose the correct lock prefix (file vs dir).
-	// This avoids cross-lock contention with CreateDirectory which uses "dir:".
-	md, peekErr := e.metadataStore.Get(ctx, path)
-	lockPrefix := "file"
-	if peekErr == nil && md.Type == "directory" {
-		lockPrefix = "dir"
-	}
-	lockKey := fmt.Sprintf("%s:%s", lockPrefix, path)
-
-	// Acquire distributed lock
-	acquired, err := e.lockManager.Acquire(ctx, lockKey)
-	if err != nil {
-		return fmt.Errorf("failed to acquire lock: %w", err)
-	}
-	if !acquired {
-		return fmt.Errorf("failed to acquire lock for file deletion")
-	}
-	defer func() {
-		if err := e.lockManager.Release(context.Background(), lockKey); err != nil {
-			e.logger.Error("Failed to release lock", zap.String("lock_key", lockKey), zap.Error(err))
-		}
-	}()
-
-	// Re-fetch metadata under lock for consistency
-	md, err = e.metadataStore.Get(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to get metadata: %w", err)
-	}
-
-	// Check if it's a directory and if it's empty
-	if md.Type == "directory" {
-		children, err := e.metadataStore.ListChildren(ctx, path)
-		if err != nil {
-			return fmt.Errorf("failed to check directory contents: %w", err)
-		}
-		if len(children) > 0 {
-			return fmt.Errorf("directory not empty")
-		}
-	}
-
+func (e *Engine) deleteLockedResource(ctx context.Context, path string, md *metadata.Metadata) error {
 	// Handle erasure-coded files
 	if em := e.GetErasureManager(); md.ErasureCoded && em != nil {
 		if err := em.DeleteFile(ctx, path); err != nil {
@@ -262,13 +222,10 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 	ctx, storage := e.selectBackend(ctx, md)
 	relativePath := strings.TrimPrefix(path, "/")
 
-	// Delete metadata first — a crash here leaves an orphaned backend file (reclaimable)
-	// rather than orphaned metadata pointing to nothing (irrecoverable).
 	if err := e.metadataStore.Delete(ctx, path); err != nil {
 		return fmt.Errorf("failed to delete metadata: %w", err)
 	}
 
-	// Best-effort backend deletion
 	if err := storage.Delete(ctx, relativePath); err != nil {
 		e.logger.Warn("Failed to delete from backend after metadata removal",
 			zap.String("path", path), zap.Error(err))
@@ -278,7 +235,6 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 		return err
 	}
 
-	// Invalidate cache for this file and parent directory
 	e.metadataCache.Invalidate(path)
 	e.metadataCache.InvalidatePrefix(filepath.Dir(path))
 
@@ -287,6 +243,46 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 		zap.String("backend", md.BackendType))
 
 	return nil
+}
+
+// DeleteFile removes a file or empty directory
+func (e *Engine) DeleteFile(ctx context.Context, path string) error {
+	md, peekErr := e.metadataStore.Get(ctx, path)
+	lockPrefix := "file"
+	if peekErr == nil && md.Type == "directory" {
+		lockPrefix = "dir"
+	}
+	lockKey := fmt.Sprintf("%s:%s", lockPrefix, path)
+
+	acquired, err := e.lockManager.Acquire(ctx, lockKey)
+	if err != nil {
+		return fmt.Errorf("failed to acquire lock: %w", err)
+	}
+	if !acquired {
+		return fmt.Errorf("failed to acquire lock for file deletion")
+	}
+	defer func() {
+		if err := e.lockManager.Release(context.Background(), lockKey); err != nil {
+			e.logger.Error("Failed to release lock", zap.String("lock_key", lockKey), zap.Error(err))
+		}
+	}()
+
+	md, err = e.metadataStore.Get(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to get metadata: %w", err)
+	}
+
+	if md.Type == "directory" {
+		children, err := e.metadataStore.ListChildren(ctx, path)
+		if err != nil {
+			return fmt.Errorf("failed to check directory contents: %w", err)
+		}
+		if len(children) > 0 {
+			return fmt.Errorf("directory not empty")
+		}
+	}
+
+	return e.deleteLockedResource(ctx, path, md)
 }
 
 // CreateErasureMetadata stores metadata for an erasure-coded file (no backend write, shards already distributed).
