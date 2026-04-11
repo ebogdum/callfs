@@ -318,7 +318,7 @@ For a custom S3-compatible endpoint (such as a self-hosted object store), add:
 
 ```yaml
   s3_endpoint: "https://s3.internal.example.com"
-  s3_server_side_encryption: ""   # disable SSE for MinIO
+  s3_server_side_encryption: ""   # disable SSE for S3-compatible services
 ```
 
 Restart CallFS after any configuration change:
