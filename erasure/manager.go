@@ -76,13 +76,7 @@ func (m *Manager) Close() {
 	m.httpClient.CloseIdleConnections()
 }
 
-// StoreFile erasure-encodes data and distributes shards across instances.
-func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, originalSize int64, opts *StoreOptions) (*ErasureFileInfo, error) {
-	// Validate originalSize matches actual data length
-	if originalSize != int64(len(data)) {
-		return nil, fmt.Errorf("originalSize %d does not match data length %d", originalSize, len(data))
-	}
-
+func (m *Manager) resolveShardCounts(opts *StoreOptions) (int, int) {
 	dataShards := m.config.DataShards
 	parityShards := m.config.ParityShards
 	if dataShards <= 0 {
@@ -91,7 +85,6 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 	if parityShards <= 0 {
 		parityShards = 2
 	}
-
 	if opts != nil {
 		if opts.DataShards > 0 {
 			dataShards = opts.DataShards
@@ -100,40 +93,81 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 			parityShards = opts.ParityShards
 		}
 	}
+	return dataShards, parityShards
+}
 
-	profile := ErasureProfile{
-		DataShards:   dataShards,
-		ParityShards: parityShards,
+func (m *Manager) resolveInstances(opts *StoreOptions) []string {
+	if opts != nil && len(opts.Instances) > 0 {
+		return opts.Instances
 	}
+	instances := make([]string, 0, len(m.peerEndpoints)+1)
+	instances = append(instances, m.instanceID)
+	for id := range m.peerEndpoints {
+		if id != m.instanceID {
+			instances = append(instances, id)
+		}
+	}
+	return instances
+}
+
+// cleanupShards removes successfully-written shards (best-effort) after a failure.
+func (m *Manager) cleanupShards(shardInfos []ShardInfo) {
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cleanupCancel()
+	var wg sync.WaitGroup
+	for _, si := range shardInfos {
+		if si.Path == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(si ShardInfo) {
+			defer wg.Done()
+			if si.InstanceID == m.instanceID {
+				_ = m.localBackend.Delete(cleanupCtx, si.Path)
+			} else {
+				shardPrefix := extractShardPrefix(si.Path)
+				_ = m.deleteRemoteShard(cleanupCtx, si.InstanceID, shardPrefix, si.Index)
+			}
+		}(si)
+	}
+	wg.Wait()
+}
+
+func shardInfosToMetadata(shardInfos []ShardInfo) []metadata.ErasureShardInfo {
+	mdShards := make([]metadata.ErasureShardInfo, len(shardInfos))
+	for i, si := range shardInfos {
+		mdShards[i] = metadata.ErasureShardInfo{
+			Index:       si.Index,
+			InstanceID:  si.InstanceID,
+			BackendType: si.BackendType,
+			Path:        si.Path,
+			Size:        si.Size,
+			Checksum:    si.Checksum,
+		}
+	}
+	return mdShards
+}
+
+// StoreFile erasure-encodes data and distributes shards across instances.
+func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, originalSize int64, opts *StoreOptions) (*ErasureFileInfo, error) {
+	if originalSize != int64(len(data)) {
+		return nil, fmt.Errorf("originalSize %d does not match data length %d", originalSize, len(data))
+	}
+
+	dataShards, parityShards := m.resolveShardCounts(opts)
+	profile := ErasureProfile{DataShards: dataShards, ParityShards: parityShards}
 
 	shards, err := m.codec.Encode(data, profile)
 	if err != nil {
 		return nil, fmt.Errorf("erasure encode failed: %w", err)
 	}
-
 	if len(shards) > 0 {
 		profile.ShardSize = int64(len(shards[0]))
 	}
 
 	totalShards := dataShards + parityShards
+	assignments := m.placement.AssignShards(totalShards, m.instanceID, m.resolveInstances(opts))
 
-	// Determine available instances for placement
-	var availableInstances []string
-	if opts != nil && len(opts.Instances) > 0 {
-		availableInstances = opts.Instances
-	} else {
-		availableInstances = make([]string, 0, len(m.peerEndpoints)+1)
-		availableInstances = append(availableInstances, m.instanceID)
-		for id := range m.peerEndpoints {
-			if id != m.instanceID {
-				availableInstances = append(availableInstances, id)
-			}
-		}
-	}
-
-	assignments := m.placement.AssignShards(totalShards, m.instanceID, availableInstances)
-
-	// Compute shard hash for storage path
 	fileHash := sha256.Sum256(data)
 	hashPrefix := hex.EncodeToString(fileHash[:8])
 
@@ -180,80 +214,21 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 	wg.Wait()
 
 	if storeErr != nil {
-		// Cleanup orphaned shards — use a background context since the request ctx may already be cancelled.
-		// Block until cleanup completes (bounded by 30s timeout) to avoid goroutine leaks.
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cleanupCancel()
-		var cleanupWg sync.WaitGroup
-		for i := 0; i < totalShards; i++ {
-			if shardInfos[i].Path == "" {
-				continue
-			}
-			cleanupWg.Add(1)
-			go func(si ShardInfo) {
-				defer cleanupWg.Done()
-				if si.InstanceID == m.instanceID {
-					_ = m.localBackend.Delete(cleanupCtx, si.Path)
-				} else {
-					shardPrefix := extractShardPrefix(si.Path)
-					_ = m.deleteRemoteShard(cleanupCtx, si.InstanceID, shardPrefix, si.Index)
-				}
-			}(shardInfos[i])
-		}
-		cleanupWg.Wait()
+		m.cleanupShards(shardInfos)
 		return nil, storeErr
 	}
 
-	info := &ErasureFileInfo{
-		FilePath:     path,
-		OriginalSize: originalSize,
-		Profile:      profile,
-		Shards:       shardInfos,
-	}
-
-	// Convert to metadata type and persist
 	mdInfo := &metadata.ErasureFileInfo{
 		FilePath:     path,
 		OriginalSize: originalSize,
 		DataShards:   profile.DataShards,
 		ParityShards: profile.ParityShards,
 		ShardSize:    profile.ShardSize,
+		Shards:       shardInfosToMetadata(shardInfos),
 	}
-	mdShards := make([]metadata.ErasureShardInfo, len(shardInfos))
-	for i, si := range shardInfos {
-		mdShards[i] = metadata.ErasureShardInfo{
-			Index:       si.Index,
-			InstanceID:  si.InstanceID,
-			BackendType: si.BackendType,
-			Path:        si.Path,
-			Size:        si.Size,
-			Checksum:    si.Checksum,
-		}
-	}
-	mdInfo.Shards = mdShards
 
 	if err := m.erasureStore.CreateErasureInfo(ctx, path, mdInfo); err != nil {
-		// Clean up all successfully-written shards since metadata write failed.
-		// Block until cleanup completes (bounded by 30s timeout) to avoid goroutine leaks.
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cleanupCancel()
-		var cleanupWg sync.WaitGroup
-		for i := 0; i < totalShards; i++ {
-			if shardInfos[i].Path == "" {
-				continue
-			}
-			cleanupWg.Add(1)
-			go func(si ShardInfo) {
-				defer cleanupWg.Done()
-				if si.InstanceID == m.instanceID {
-					_ = m.localBackend.Delete(cleanupCtx, si.Path)
-				} else {
-					shardPrefix := extractShardPrefix(si.Path)
-					_ = m.deleteRemoteShard(cleanupCtx, si.InstanceID, shardPrefix, si.Index)
-				}
-			}(shardInfos[i])
-		}
-		cleanupWg.Wait()
+		m.cleanupShards(shardInfos)
 		return nil, fmt.Errorf("failed to store erasure metadata: %w", err)
 	}
 
@@ -263,7 +238,12 @@ func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, origi
 		zap.Int("parity_shards", parityShards),
 		zap.Int64("original_size", originalSize))
 
-	return info, nil
+	return &ErasureFileInfo{
+		FilePath:     path,
+		OriginalSize: originalSize,
+		Profile:      profile,
+		Shards:       shardInfos,
+	}, nil
 }
 
 // RetrieveFile fetches shards in parallel and reconstructs the original file.

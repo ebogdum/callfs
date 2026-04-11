@@ -4,6 +4,22 @@ import (
 	"testing"
 )
 
+func assertAssignment(t *testing.T, assignments []string, idx int, expected string) {
+	t.Helper()
+	if assignments[idx] != expected {
+		t.Errorf("shard %d: expected %s, got %s", idx, expected, assignments[idx])
+	}
+}
+
+func assertAllOnNode(t *testing.T, assignments []string, node string) {
+	t.Helper()
+	for i, a := range assignments {
+		if a != node {
+			t.Errorf("shard %d should be on %s, got %s", i, node, a)
+		}
+	}
+}
+
 func TestRoundRobinPlacement(t *testing.T) {
 	p := &RoundRobinPlacement{}
 
@@ -13,39 +29,20 @@ func TestRoundRobinPlacement(t *testing.T) {
 			t.Fatalf("expected 6 assignments, got %d", len(assignments))
 		}
 
-		// Shard 0 should be on current instance
-		if assignments[0] != "node1" {
-			t.Errorf("shard 0 should be on node1, got %s", assignments[0])
-		}
-
-		// Should round-robin
-		if assignments[1] != "node2" {
-			t.Errorf("shard 1 should be on node2, got %s", assignments[1])
-		}
-		if assignments[2] != "node3" {
-			t.Errorf("shard 2 should be on node3, got %s", assignments[2])
-		}
-		if assignments[3] != "node1" {
-			t.Errorf("shard 3 should wrap to node1, got %s", assignments[3])
-		}
+		assertAssignment(t, assignments, 0, "node1")
+		assertAssignment(t, assignments, 1, "node2")
+		assertAssignment(t, assignments, 2, "node3")
+		assertAssignment(t, assignments, 3, "node1")
 	})
 
 	t.Run("single node", func(t *testing.T) {
 		assignments := p.AssignShards(4, "node1", []string{"node1"})
-		for i, a := range assignments {
-			if a != "node1" {
-				t.Errorf("shard %d should be on node1, got %s", i, a)
-			}
-		}
+		assertAllOnNode(t, assignments, "node1")
 	})
 
 	t.Run("no available instances", func(t *testing.T) {
 		assignments := p.AssignShards(3, "node1", nil)
-		for i, a := range assignments {
-			if a != "node1" {
-				t.Errorf("shard %d should be on node1 (fallback), got %s", i, a)
-			}
-		}
+		assertAllOnNode(t, assignments, "node1")
 	})
 
 	t.Run("more shards than nodes", func(t *testing.T) {
@@ -58,23 +55,15 @@ func TestRoundRobinPlacement(t *testing.T) {
 			if i%2 == 1 {
 				expected = "b"
 			}
-			if a != expected {
-				t.Errorf("shard %d: expected %s, got %s", i, expected, a)
-			}
+			assertAssignment(t, assignments, i, expected)
+			_ = a
 		}
 	})
 
 	t.Run("current instance not in available list", func(t *testing.T) {
 		assignments := p.AssignShards(4, "nodeX", []string{"node1", "node2"})
-		// nodeX should be first, then round-robin
-		if assignments[0] != "nodeX" {
-			t.Errorf("shard 0 should be on nodeX, got %s", assignments[0])
-		}
-		if assignments[1] != "node1" {
-			t.Errorf("shard 1 should be on node1, got %s", assignments[1])
-		}
-		if assignments[2] != "node2" {
-			t.Errorf("shard 2 should be on node2, got %s", assignments[2])
-		}
+		assertAssignment(t, assignments, 0, "nodeX")
+		assertAssignment(t, assignments, 1, "node1")
+		assertAssignment(t, assignments, 2, "node2")
 	})
 }
