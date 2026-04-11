@@ -101,11 +101,32 @@ func (p *perIPRateLimiter) cleanupLoop() {
 	}
 }
 
+// stopPerIPLimiter stops the background cleanup goroutine. Exposed for graceful shutdown.
+func (p *perIPRateLimiter) stop() {
+	select {
+	case <-p.stopChan:
+		// Already stopped
+	default:
+		close(p.stopChan)
+	}
+}
+
+// RateLimiterHandle wraps a per-IP rate limiter so its background goroutine can be stopped.
+type RateLimiterHandle struct {
+	perIP *perIPRateLimiter
+}
+
+// Stop stops the background cleanup goroutine. Call during graceful shutdown.
+func (h *RateLimiterHandle) Stop() {
+	h.perIP.stop()
+}
+
 // V1RateLimitMiddleware creates a middleware that applies per-IP rate limiting.
-func V1RateLimitMiddleware(limiter *rate.Limiter, logger *zap.Logger) func(http.Handler) http.Handler {
+// The returned RateLimiterHandle must be stopped on shutdown to avoid goroutine leaks.
+func V1RateLimitMiddleware(limiter *rate.Limiter, logger *zap.Logger) (*RateLimiterHandle, func(http.Handler) http.Handler) {
 	perIP := newPerIPRateLimiter(limiter.Limit(), limiter.Burst())
 
-	return func(next http.Handler) http.Handler {
+	mw := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 			if ip == "" {
@@ -129,4 +150,6 @@ func V1RateLimitMiddleware(limiter *rate.Limiter, logger *zap.Logger) func(http.
 			next.ServeHTTP(w, r)
 		})
 	}
+
+	return &RateLimiterHandle{perIP: perIP}, mw
 }

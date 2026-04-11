@@ -60,8 +60,10 @@ func (e *Engine) selectBackendByType(backendType string) backends.Storage {
 	}
 }
 
-// ensureParentDirectories creates parent directories if they don't exist
-func (e *Engine) ensureParentDirectories(ctx context.Context, path string, backendType string) error {
+// ensureParentDirectories creates parent directories if they don't exist.
+// owner is the app-level user ID of the creating user, propagated to
+// auto-created parents so ownership stays consistent with the child resource.
+func (e *Engine) ensureParentDirectories(ctx context.Context, path string, backendType string, owner string) error {
 	parentPath := filepath.Dir(path)
 	if parentPath == "/" || parentPath == "." {
 		return nil // Root directory should always exist
@@ -73,7 +75,7 @@ func (e *Engine) ensureParentDirectories(ctx context.Context, path string, backe
 	}
 
 	// Recursively ensure grandparent exists
-	if err := e.ensureParentDirectories(ctx, parentPath, backendType); err != nil {
+	if err := e.ensureParentDirectories(ctx, parentPath, backendType, owner); err != nil {
 		return err
 	}
 
@@ -81,14 +83,17 @@ func (e *Engine) ensureParentDirectories(ctx context.Context, path string, backe
 		backendType = "localfs"
 	}
 
-	// Create parent directory (world-writable so any authenticated user can create children)
+	// Create parent directory owned by the creating user with standard permissions.
 	parentMd := &metadata.Metadata{
 		Name:        filepath.Base(parentPath),
+		Path:        parentPath,
 		Type:        "directory",
-		Mode:        "0777",
-		UID:         0,
-		GID:         0,
+		Mode:        "0755",
+		Owner:       owner,
 		BackendType: backendType,
+		ATime:       time.Now(),
+		MTime:       time.Now(),
+		CTime:       time.Now(),
 	}
 
 	err := e.CreateDirectory(ctx, parentPath, parentMd)
@@ -111,9 +116,8 @@ func (e *Engine) EnsureRootDirectory(ctx context.Context) error {
 		Name:        "/",
 		Path:        "/",
 		Type:        "directory",
-		Mode:        "0777",
-		UID:         0,         // Root user
-		GID:         0,         // Root group
+		Mode:        "0755",
+		Owner:       "root",    // App-level root user, NOT an OS user
 		BackendType: "localfs", // Default backend for root
 		ATime:       time.Now(),
 		MTime:       time.Now(),

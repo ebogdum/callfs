@@ -90,27 +90,12 @@ func SanitizeUserID(userID string) string {
 	}
 }
 
-// SanitizeBackendInfo sanitizes backend type information
-func SanitizeBackendInfo(backendType string) string {
-	// Backend type is generally safe to log as it's not user data
-	// But we can still sanitize for consistency
-	switch currentMode {
-	case ProductionMode, DevelopmentMode, DebugMode:
-		return backendType
-	default:
-		return backendType
-	}
-}
-
 // SanitizeSize sanitizes file size information (generally safe to log)
 func SanitizeSize(size int64) int64 {
-	// File sizes are generally not sensitive, but could be rounded in production
 	switch currentMode {
 	case ProductionMode:
-		// Round to nearest KB to obscure exact sizes
-		return (size + 512) / 1024 * 1024
-	case DevelopmentMode, DebugMode:
-		return size
+		// Round to nearest KiB to obscure exact sizes
+		return ((size + 512) / 1024) * 1024
 	default:
 		return size
 	}
@@ -130,7 +115,7 @@ func (lf LogFields) Sanitize() LogFields {
 	return LogFields{
 		Path:      SanitizePath(lf.Path),
 		UserID:    SanitizeUserID(lf.UserID),
-		Backend:   SanitizeBackendInfo(lf.Backend),
+		Backend:   lf.Backend, // Backend type is not user data
 		Size:      SanitizeSize(lf.Size),
 		Operation: lf.Operation, // Operations are generally safe
 	}

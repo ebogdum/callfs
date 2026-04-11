@@ -18,11 +18,12 @@ func (s *PostgresStore) GetSingleUseLink(ctx context.Context, token string) (*me
 	var usedByIP sql.NullString
 
 	query := `
-		SELECT token, file_path, created_at, expires_at, status, used_at, used_by_ip, hmac_signature
+		SELECT id, token, file_path, created_at, expires_at, status, used_at, used_by_ip, hmac_signature
 		FROM single_use_links
 		WHERE token = $1`
 
 	err := s.db.QueryRowContext(ctx, query, token).Scan(
+		&link.ID,
 		&link.Token,
 		&link.FilePath,
 		&link.CreatedAt,
@@ -104,7 +105,7 @@ func (s *PostgresStore) UpdateSingleUseLink(ctx context.Context, token string, s
 
 // CleanupExpiredLinks removes expired single-use links
 func (s *PostgresStore) CleanupExpiredLinks(ctx context.Context, before time.Time) (int, error) {
-	query := `DELETE FROM single_use_links WHERE expires_at < $1`
+	query := `DELETE FROM single_use_links WHERE status = 'active' AND expires_at < $1`
 
 	result, err := s.db.ExecContext(ctx, query, before)
 	if err != nil {

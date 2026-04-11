@@ -85,11 +85,7 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 			handlers.SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 			return
 		}
-		defer func() {
-			if closer, ok := reader.(io.Closer); ok {
-				closer.Close()
-			}
-		}()
+		defer reader.Close()
 
 		// Set appropriate headers for file download (RFC 5987 encoding for safety)
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -115,8 +111,7 @@ func V1DownloadLinkHandler(engine *core.Engine, manager *links.LinkManager, logg
 }
 
 // getUserIP extracts the user IP address from the request.
-// Uses RemoteAddr as the authoritative source (which middleware.RealIP already
-// overwrites from trusted proxy headers). Appends X-Forwarded-For for audit context.
+// Uses RemoteAddr as the authoritative source.
 func getUserIP(r *http.Request) string {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

@@ -28,8 +28,8 @@ func (e *Engine) GetFile(ctx context.Context, path string) (io.ReadCloser, error
 	}
 
 	// Handle erasure-coded files via server-side reassembly
-	if md.ErasureCoded && e.erasureManager != nil {
-		data, err := e.erasureManager.RetrieveFile(ctx, path)
+	if em := e.GetErasureManager(); md.ErasureCoded && em != nil {
+		data, err := em.RetrieveFile(ctx, path)
 		if err != nil {
 			return nil, fmt.Errorf("failed to retrieve erasure-coded file: %w", err)
 		}
@@ -58,8 +58,10 @@ func (e *Engine) GetFile(ctx context.Context, path string) (io.ReadCloser, error
 func (e *Engine) CreateFile(ctx context.Context, path string, reader io.Reader, size int64, md *metadata.Metadata) error {
 	start := time.Now()
 	defer func() {
-		metrics.FileOperationsTotal.WithLabelValues("create", md.BackendType).Inc()
-		metrics.BackendOpDuration.WithLabelValues(md.BackendType, "create").Observe(time.Since(start).Seconds())
+		if md != nil {
+			metrics.FileOperationsTotal.WithLabelValues("create", md.BackendType).Inc()
+			metrics.BackendOpDuration.WithLabelValues(md.BackendType, "create").Observe(time.Since(start).Seconds())
+		}
 	}()
 
 	lockKey := fmt.Sprintf("file:%s", path)
@@ -83,8 +85,8 @@ func (e *Engine) CreateFile(ctx context.Context, path string, reader io.Reader, 
 		return metadata.ErrAlreadyExists
 	}
 
-	// Ensure parent directories exist
-	if err := e.ensureParentDirectories(ctx, path, md.BackendType); err != nil {
+	// Ensure parent directories exist (owned by the creating user)
+	if err := e.ensureParentDirectories(ctx, path, md.BackendType, md.Owner); err != nil {
 		return fmt.Errorf("failed to ensure parent directories: %w", err)
 	}
 
@@ -158,11 +160,13 @@ func (e *Engine) UpdateFile(ctx context.Context, path string, reader io.Reader, 
 		return fmt.Errorf("path is not a file")
 	}
 
-	// Update file in appropriate backend
-	ctx, storage := e.selectBackend(ctx, existingMd)
+	// Update file in appropriate backend.
+	// Use a separate context for backend routing so the original ctx is not
+	// polluted with instance-specific values (needed for replication).
+	backendCtx, storage := e.selectBackend(ctx, existingMd)
 	// Convert absolute path to relative path for backend
 	relativePath := strings.TrimPrefix(path, "/")
-	if err := storage.Update(ctx, relativePath, reader, size); err != nil {
+	if err := storage.Update(backendCtx, relativePath, reader, size); err != nil {
 		return fmt.Errorf("failed to update file in backend: %w", err)
 	}
 
@@ -199,9 +203,16 @@ func (e *Engine) UpdateFile(ctx context.Context, path string, reader io.Reader, 
 	return nil
 }
 
-// DeleteFile removes a file
+// DeleteFile removes a file or empty directory
 func (e *Engine) DeleteFile(ctx context.Context, path string) error {
-	lockKey := fmt.Sprintf("file:%s", path)
+	// Peek at metadata to choose the correct lock prefix (file vs dir).
+	// This avoids cross-lock contention with CreateDirectory which uses "dir:".
+	md, peekErr := e.metadataStore.Get(ctx, path)
+	lockPrefix := "file"
+	if peekErr == nil && md.Type == "directory" {
+		lockPrefix = "dir"
+	}
+	lockKey := fmt.Sprintf("%s:%s", lockPrefix, path)
 
 	// Acquire distributed lock
 	acquired, err := e.lockManager.Acquire(ctx, lockKey)
@@ -217,8 +228,8 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 		}
 	}()
 
-	// Get metadata
-	md, err := e.metadataStore.Get(ctx, path)
+	// Re-fetch metadata under lock for consistency
+	md, err = e.metadataStore.Get(ctx, path)
 	if err != nil {
 		return fmt.Errorf("failed to get metadata: %w", err)
 	}
@@ -235,8 +246,8 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 	}
 
 	// Handle erasure-coded files
-	if md.ErasureCoded && e.erasureManager != nil {
-		if err := e.erasureManager.DeleteFile(ctx, path); err != nil {
+	if em := e.GetErasureManager(); md.ErasureCoded && em != nil {
+		if err := em.DeleteFile(ctx, path); err != nil {
 			return fmt.Errorf("failed to delete erasure-coded file: %w", err)
 		}
 		if err := e.metadataStore.Delete(ctx, path); err != nil {
@@ -280,8 +291,8 @@ func (e *Engine) DeleteFile(ctx context.Context, path string) error {
 
 // CreateErasureMetadata stores metadata for an erasure-coded file (no backend write, shards already distributed).
 func (e *Engine) CreateErasureMetadata(ctx context.Context, path string, md *metadata.Metadata) error {
-	// Ensure parent directories exist
-	if err := e.ensureParentDirectories(ctx, path, "localfs"); err != nil {
+	// Ensure parent directories exist (owned by the creating user)
+	if err := e.ensureParentDirectories(ctx, path, "localfs", md.Owner); err != nil {
 		return fmt.Errorf("failed to ensure parent directories: %w", err)
 	}
 
@@ -307,6 +318,17 @@ func (e *Engine) UpdateMetadataOnly(ctx context.Context, md *metadata.Metadata) 
 	return nil
 }
 
+// DeleteMetadataOnly removes metadata from the store without touching backend files.
+// Used after cross-server proxy deletes to remove orphan local metadata records.
+func (e *Engine) DeleteMetadataOnly(ctx context.Context, path string) error {
+	if err := e.metadataStore.Delete(ctx, path); err != nil {
+		return fmt.Errorf("failed to delete metadata: %w", err)
+	}
+	e.metadataCache.Invalidate(path)
+	e.metadataCache.InvalidatePrefix(filepath.Dir(path))
+	return nil
+}
+
 // GetMetadata retrieves metadata with cache support
 func (e *Engine) GetMetadata(ctx context.Context, path string) (*metadata.Metadata, error) {
 	// Try cache first
@@ -325,6 +347,19 @@ func (e *Engine) GetMetadata(ctx context.Context, path string) (*metadata.Metada
 	e.metadataCache.Set(path, md)
 	e.logger.Debug("Cache miss for metadata - stored in cache", zap.String("path", path))
 
+	return md, nil
+}
+
+// GetMetadataUncached fetches metadata directly from the store, bypassing the cache.
+// Use this when stale cached metadata could cause incorrect behavior (e.g., wrong
+// Content-Length after a cross-server write).
+func (e *Engine) GetMetadataUncached(ctx context.Context, path string) (*metadata.Metadata, error) {
+	md, err := e.metadataStore.Get(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	// Update cache with fresh data
+	e.metadataCache.Set(path, md)
 	return md, nil
 }
 

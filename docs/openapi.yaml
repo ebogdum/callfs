@@ -44,12 +44,9 @@ paths:
             X-CallFS-Mode:
               schema:
                 type: string
-            X-CallFS-UID:
+            X-CallFS-Owner:
               schema:
-                type: integer
-            X-CallFS-GID:
-              schema:
-                type: integer
+                type: string
             X-CallFS-MTime:
               schema:
                 type: string
@@ -92,12 +89,9 @@ paths:
             X-CallFS-Mode:
               schema:
                 type: string
-            X-CallFS-UID:
+            X-CallFS-Owner:
               schema:
-                type: integer
-            X-CallFS-GID:
-              schema:
-                type: integer
+                type: string
             X-CallFS-MTime:
               schema:
                 type: string
@@ -409,16 +403,14 @@ paths:
                         type: "file"
                         size: 1024
                         mode: "0644"
-                        uid: 1000
-                        gid: 1000
+                        owner: "api-user-0"
                         mtime: "2024-01-15T10:30:00Z"
                       - name: "subfolder"
                         path: "/documents/subfolder"
                         type: "directory"
                         size: 0
                         mode: "0755"
-                        uid: 1000
-                        gid: 1000
+                        owner: "api-user-0"
                         mtime: "2024-01-15T09:15:00Z"
                 recursive:
                   summary: Recursive listing with depth limit
@@ -434,24 +426,21 @@ paths:
                         type: "file"
                         size: 1024
                         mode: "0644"
-                        uid: 1000
-                        gid: 1000
+                        owner: "api-user-0"
                         mtime: "2024-01-15T10:30:00Z"
                       - name: "subfolder"
                         path: "/documents/subfolder"
                         type: "directory"
                         size: 0
                         mode: "0755"
-                        uid: 1000
-                        gid: 1000
+                        owner: "api-user-0"
                         mtime: "2024-01-15T09:15:00Z"
                       - name: "nested.txt"
                         path: "/documents/subfolder/nested.txt"
                         type: "file"
                         size: 512
                         mode: "0644"
-                        uid: 1000
-                        gid: 1000
+                        owner: "api-user-0"
                         mtime: "2024-01-15T11:45:00Z"
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -491,17 +480,14 @@ components:
         mode:
           type: string
           description: Unix permissions (e.g., "0644")
-        uid:
-          type: integer
-          description: User ID
-        gid:
-          type: integer
-          description: Group ID
+        owner:
+          type: string
+          description: App-level owner (user ID)
         mtime:
           type: string
           format: date-time
           description: Last modification time
-      required: [name, path, type, size, mode, uid, gid, mtime]
+      required: [name, path, type, size, mode, owner, mtime]
 
     ErrorResponse:
       type: object

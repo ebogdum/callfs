@@ -52,7 +52,7 @@ pass
 
 test_name "Content-Length matches file size"
 callfs_head_method "${NODE1}/v1/files/headers-test.txt"
-assert_header_contains "X-CallFS-Size" "18"
+assert_header_contains "X-CallFS-Size" "19"
 pass
 
 test_name "GET file returns Content-Type header"
@@ -82,8 +82,7 @@ callfs_head_method "${NODE1}/v1/files/headers-test.txt"
 assert_status 200
 assert_header_present "X-CallFS-Size"
 assert_header_present "X-CallFS-Mode"
-assert_header_present "X-CallFS-UID"
-assert_header_present "X-CallFS-GID"
+assert_header_present "X-CallFS-Owner"
 assert_header_present "X-CallFS-MTime"
 pass
 
@@ -93,6 +92,35 @@ test_name "404 response includes security headers"
 callfs_head "${NODE1}/v1/files/nonexistent-sec-test.txt"
 assert_header_contains "X-Content-Type-Options" "nosniff"
 pass
+
+# ---------- HSTS absent on HTTP ----------
+
+test_name "Strict-Transport-Security ABSENT on HTTP"
+callfs_head "${NODE1}/v1/files/headers-test.txt"
+assert_header_absent "Strict-Transport-Security"
+pass
+
+# ---------- Cross-Origin-Embedder-Policy ----------
+
+test_name "Cross-Origin-Embedder-Policy is require-corp"
+callfs_head "${NODE1}/v1/files/headers-test.txt"
+assert_header_equals "Cross-Origin-Embedder-Policy" "require-corp"
+pass
+
+# ---------- X-Request-ID uniqueness ----------
+
+test_name "X-Request-ID values differ between two requests"
+callfs_head "${NODE1}/v1/files/headers-test.txt"
+RID1=$(echo "$LAST_HEADERS" | grep -i "^X-Request-ID:" | head -1 | sed 's/^[^:]*: *//i' | tr -d '\r')
+callfs_head "${NODE1}/v1/files/headers-test.txt"
+RID2=$(echo "$LAST_HEADERS" | grep -i "^X-Request-ID:" | head -1 | sed 's/^[^:]*: *//i' | tr -d '\r')
+if [ -z "$RID1" ] || [ -z "$RID2" ]; then
+  fail "could not extract X-Request-ID from responses"
+elif [ "$RID1" = "$RID2" ]; then
+  fail "X-Request-ID not unique: both are '$RID1'"
+else
+  pass
+fi
 
 # ---------- Cleanup ----------
 

@@ -44,7 +44,7 @@ BODY=$(callfs_curl PUT "${NODE1}/v1/files/put-create.txt" \
   -d "this is a much longer content string for testing size metadata update")
 assert_status 200
 callfs_head_method "${NODE1}/v1/files/put-create.txt"
-assert_header_contains "X-CallFS-Size" "68"
+assert_header_contains "X-CallFS-Size" "69"
 pass
 
 test_name "PUT with smaller content updates size metadata"
@@ -62,6 +62,7 @@ test_name "PUT with empty body creates zero-byte file"
 BODY=$(callfs_curl PUT "${NODE1}/v1/files/put-empty.txt" \
   -H "Content-Type: application/octet-stream" \
   -d "")
+_read_status
 # Should succeed (either 200 or 201)
 if [ "$LAST_STATUS" = "200" ] || [ "$LAST_STATUS" = "201" ]; then
   pass
@@ -105,6 +106,7 @@ test_name "PUT on NODE1, verify from NODE2"
 BODY=$(callfs_curl PUT "${NODE1}/v1/files/cross-put.txt" \
   -H "Content-Type: application/octet-stream" \
   -d "cross-server put")
+_read_status
 # 201 for new file
 if [ "$LAST_STATUS" = "200" ] || [ "$LAST_STATUS" = "201" ]; then
   BODY=$(download_file "$NODE2" "/cross-put.txt")

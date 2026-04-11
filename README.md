@@ -41,7 +41,7 @@ If you're building a file management service, media pipeline, backup system, or 
 
 ### Security & Access Control
 - **API key authentication** -- static bearer tokens with constant-time comparison
-- **Unix-style permissions** -- UID/GID ownership and rwx permission bits on every file and directory
+- **Owner-based permissions** -- app-level user ownership on every file and directory
 - **Single-use download links** -- time-limited, HMAC-signed tokens for secure file sharing
 - **Rate limiting** -- configurable per-endpoint rate limits (link generation: 100 req/s, downloads: 10 req/s)
 - **TLS / HTTPS / HTTP/3 (QUIC)** support out of the box

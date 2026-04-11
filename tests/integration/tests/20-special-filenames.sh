@@ -64,8 +64,9 @@ test_name "POST file with plus sign in name"
 BODY=$(callfs_curl POST "${NODE1}/v1/files/file%2Bplus.txt" \
   -H "Content-Type: application/octet-stream" \
   -d "plus content")
-# Should succeed or return 400 if not allowed
-if [ "$LAST_STATUS" = "201" ] || [ "$LAST_STATUS" = "400" ]; then
+_read_status
+# 201=created, 400=rejected, 409=already exists from prior run
+if [ "$LAST_STATUS" = "201" ] || [ "$LAST_STATUS" = "400" ] || [ "$LAST_STATUS" = "409" ]; then
   pass
 else
   fail "unexpected status $LAST_STATUS for plus-sign filename"
@@ -75,7 +76,8 @@ test_name "POST file with @ sign in name"
 BODY=$(callfs_curl POST "${NODE1}/v1/files/file%40at.txt" \
   -H "Content-Type: application/octet-stream" \
   -d "at content")
-if [ "$LAST_STATUS" = "201" ] || [ "$LAST_STATUS" = "400" ]; then
+_read_status
+if [ "$LAST_STATUS" = "201" ] || [ "$LAST_STATUS" = "400" ] || [ "$LAST_STATUS" = "409" ]; then
   pass
 else
   fail "unexpected status $LAST_STATUS for @-sign filename"

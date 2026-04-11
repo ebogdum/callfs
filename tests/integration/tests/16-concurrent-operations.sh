@@ -62,10 +62,23 @@ case "$BODY" in
 esac
 
 test_name "All nodes return same content after concurrent writes"
+# Allow time for Raft replication, metadata cache expiry, and lock release
+sleep 5
+# Read from leader first to get the authoritative value
 BODY1=$(download_file "$NODE1" "/concurrent.txt")
-BODY2=$(download_file "$NODE2" "/concurrent.txt")
-BODY3=$(download_file "$NODE3" "/concurrent.txt")
-if [ "$BODY1" = "$BODY2" ] && [ "$BODY2" = "$BODY3" ]; then
+_read_status
+# Retry followers up to 3 times to allow for Raft propagation
+BODY2=""
+BODY3=""
+for attempt in 1 2 3; do
+  BODY2=$(download_file "$NODE2" "/concurrent.txt")
+  BODY3=$(download_file "$NODE3" "/concurrent.txt")
+  if [ "$BODY1" = "$BODY2" ] && [ "$BODY1" = "$BODY3" ]; then
+    break
+  fi
+  sleep 2
+done
+if [ "$BODY1" = "$BODY2" ] && [ "$BODY1" = "$BODY3" ]; then
   pass
 else
   fail "inconsistent reads: node1='$BODY1' node2='$BODY2' node3='$BODY3'"
@@ -120,12 +133,69 @@ else
   fail "concurrent reads returned inconsistent data"
 fi
 
+# ---------- Concurrent erasure uploads ----------
+
+test_name "Concurrent erasure uploads of 3 different files"
+for i in 1 2 3; do
+  EFILE="${_TMPDIR}/erasure-conc-${i}.bin"
+  generate_random_binary "$EFILE" 4096
+done
+
+for i in 1 2 3; do
+  EFILE="${_TMPDIR}/erasure-conc-${i}.bin"
+  curl -s -o "/tmp/ec${i}.body" -w '%{http_code}' --max-time "$CURL_TIMEOUT" \
+    -X POST -H "Authorization: Bearer ${API_KEY}" \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary "@${EFILE}" \
+    "${NODE1}/v1/files/erasure-conc-${i}.bin?erasure=true" > "/tmp/ec${i}.status" &
+done
+wait || true
+
+EC_OK=true
+for i in 1 2 3; do
+  s=$(cat "/tmp/ec${i}.status" 2>/dev/null || echo "000")
+  if [ "$s" != "201" ]; then
+    fail "erasure upload $i returned $s, expected 201"
+    EC_OK=false
+    break
+  fi
+done
+
+if [ "$EC_OK" = true ]; then
+  # Verify each file downloads correctly with SHA-256
+  VERIFY_OK=true
+  for i in 1 2 3; do
+    EFILE="${_TMPDIR}/erasure-conc-${i}.bin"
+    DFILE="${_TMPDIR}/erasure-conc-${i}-down.bin"
+    download_file_to_file "$NODE1" "/erasure-conc-${i}.bin" "$DFILE"
+    _read_status
+    if [ "$LAST_STATUS" != "200" ]; then
+      fail "erasure download $i returned $LAST_STATUS, expected 200"
+      VERIFY_OK=false
+      break
+    fi
+    H1=$(sha256_file "$EFILE")
+    H2=$(sha256_file "$DFILE")
+    if [ "$H1" != "$H2" ]; then
+      fail "erasure file $i SHA-256 mismatch: $H1 vs $H2"
+      VERIFY_OK=false
+      break
+    fi
+  done
+  if [ "$VERIFY_OK" = true ]; then
+    pass
+  fi
+fi
+
 # ---------- Cleanup ----------
 
 test_name "Cleanup concurrent test files"
 delete_file "$NODE1" "/concurrent.txt" >/dev/null 2>&1 || true
 for i in $(seq 1 5); do
   delete_file "$NODE1" "/concurrent-batch-${i}.txt" >/dev/null 2>&1 || true
+done
+for i in 1 2 3; do
+  delete_file "$NODE1" "/erasure-conc-${i}.bin" >/dev/null 2>&1 || true
 done
 pass
 

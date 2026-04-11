@@ -49,7 +49,7 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 		// Start timing
 		start := time.Now()
 		defer func() {
-			metrics.HTTPRequestDuration.WithLabelValues(r.Method, "/api/directories/*").Observe(time.Since(start).Seconds())
+			metrics.HTTPRequestDuration.WithLabelValues(r.Method, "/v1/directories/*").Observe(time.Since(start).Seconds())
 		}()
 
 		// Create contexts with timeouts
@@ -67,7 +67,6 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 		// Clean and validate path
 		pathInfo := ParseFilePath(pathParam)
 		if pathInfo.IsInvalid {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/api/directories/*", "400").Inc()
 			SendErrorResponse(w, logger, fmt.Errorf("invalid path"), http.StatusBadRequest)
 			return
 		}
@@ -75,7 +74,6 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 		// Get user ID from context
 		userID, ok := middleware.GetUserID(r.Context())
 		if !ok {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/api/directories/*", "401").Inc()
 			SendErrorResponse(w, logger, auth.ErrAuthenticationFailed, http.StatusUnauthorized)
 			return
 		}
@@ -88,7 +86,6 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 
 		// Authorize access
 		if err := authorizer.Authorize(metadataCtx, userID, enginePath, auth.ReadPerm); err != nil {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/api/directories/*", "403").Inc()
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
 			return
 		}
@@ -96,13 +93,11 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 		// Check if path exists and is a directory
 		md, err := engine.GetMetadata(metadataCtx, enginePath)
 		if err != nil {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/api/directories/*", "404").Inc()
 			SendErrorResponse(w, logger, err, http.StatusNotFound)
 			return
 		}
 
 		if md.Type != "directory" {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/api/directories/*", "400").Inc()
 			SendErrorResponse(w, logger, fmt.Errorf("path is not a directory"), http.StatusBadRequest)
 			return
 		}
@@ -130,7 +125,6 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 		}
 
 		if err != nil {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/api/directories/*", "500").Inc()
 			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 			return
 		}
@@ -144,8 +138,7 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 				Type:  child.Type,
 				Size:  child.Size,
 				Mode:  child.Mode,
-				UID:   child.UID,
-				GID:   child.GID,
+				Owner: child.Owner,
 				MTime: child.MTime.Format("2006-01-02T15:04:05Z07:00"),
 			}
 			fileInfos = append(fileInfos, fileInfo)
@@ -164,20 +157,22 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 			response.MaxDepth = maxDepth
 		}
 
+		// Buffer JSON before writing to avoid malformed response on encoding error
+		jsonBytes, marshalErr := json.Marshal(response)
+		if marshalErr != nil {
+			SendErrorResponse(w, logger, marshalErr, http.StatusInternalServerError)
+			return
+		}
+
 		// Set headers
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-CallFS-Type", "directory")
 		w.Header().Set("X-CallFS-Count", fmt.Sprintf("%d", len(fileInfos)))
 		w.Header().Set("X-CallFS-Recursive", fmt.Sprintf("%t", recursive))
 
-		// Send JSON response
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
-			return
+		if _, err := w.Write(jsonBytes); err != nil {
+			logger.Error("Failed to write directory listing response", zap.Error(err))
 		}
-
-		// Track successful directory listing
-		metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/api/directories/*", "200").Inc()
 
 		// Use secure logging with sanitized data
 		logFields := log.LogFields{

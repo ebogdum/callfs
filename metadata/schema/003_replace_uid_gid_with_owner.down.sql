@@ -1,0 +1,4 @@
+-- Revert: re-add uid/gid columns, drop owner
+ALTER TABLE inodes ADD COLUMN uid INTEGER NOT NULL DEFAULT 1000;
+ALTER TABLE inodes ADD COLUMN gid INTEGER NOT NULL DEFAULT 1000;
+ALTER TABLE inodes DROP COLUMN owner;

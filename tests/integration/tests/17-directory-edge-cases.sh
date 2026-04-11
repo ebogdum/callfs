@@ -6,6 +6,13 @@ source "${SCRIPT_DIR}/../lib.sh"
 
 section "Directory Edge Cases"
 
+# Pre-cleanup: remove paths from prior runs (bottom-up)
+for p in /d1/d2/d3/d4/d5/leaf.txt /d1/d2/d3/d4/d5 /d1/d2/d3/d4 /d1/d2/d3 /d1/d2 /d1 \
+         /nonempty-dir/child.txt /nonempty-dir /empty-dir /type-conflict.txt \
+         /cross-dir/from-node1.txt /cross-dir; do
+  callfs_curl DELETE "${NODE1}/v1/files${p}" >/dev/null 2>&1 || true
+done
+
 # ---------- Non-empty directory deletion ----------
 
 test_name "Setup: create directory with files"
@@ -41,7 +48,7 @@ assert_status 201
 pass
 
 test_name "List /d1 with max_depth=0 returns immediate children only"
-BODY=$(list_directory "$NODE1" "/d1" --data-urlencode "recursive=true" --data-urlencode "max_depth=0")
+BODY=$(list_directory "$NODE1" "/d1" -G --data-urlencode "recursive=true" --data-urlencode "max_depth=0")
 assert_status 200
 # max_depth=0 should show d2 at most, definitely not leaf.txt
 if echo "$BODY" | grep -q "leaf.txt"; then
@@ -51,13 +58,13 @@ else
 fi
 
 test_name "List /d1 with recursive=true shows full tree"
-BODY=$(list_directory "$NODE1" "/d1" --data-urlencode "recursive=true" --data-urlencode "max_depth=100")
+BODY=$(list_directory "$NODE1" "/d1" -G --data-urlencode "recursive=true" --data-urlencode "max_depth=100")
 assert_status 200
 assert_body_contains "$BODY" "leaf.txt"
 pass
 
 test_name "List /d1 with max_depth=2 shows intermediate but not leaf"
-BODY=$(list_directory "$NODE1" "/d1" --data-urlencode "recursive=true" --data-urlencode "max_depth=2")
+BODY=$(list_directory "$NODE1" "/d1" -G --data-urlencode "recursive=true" --data-urlencode "max_depth=2")
 assert_status 200
 assert_body_contains "$BODY" "d3"
 if echo "$BODY" | grep -q "leaf.txt"; then

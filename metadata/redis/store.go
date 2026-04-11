@@ -226,17 +226,17 @@ func (s *RedisStore) UpdateSingleUseLink(ctx context.Context, token string, stat
 			return redis.error_reply("not_found")
 		end
 		local link = cjson.decode(raw)
-		if link.Status ~= "active" then
+		if link.status ~= "active" then
 			return redis.error_reply("not_active")
 		end
-		link.Status = ARGV[1]
+		link.status = ARGV[1]
 		if ARGV[2] ~= "" then
-			link.UsedAt = ARGV[2]
+			link.used_at = ARGV[2]
 		end
 		if ARGV[3] ~= "" then
-			link.UsedByIP = ARGV[3]
+			link.used_by_ip = ARGV[3]
 		end
-		link.UpdatedAt = ARGV[4]
+		link.updated_at = ARGV[4]
 		redis.call("SET", KEYS[1], cjson.encode(link))
 		return "OK"
 	`
@@ -281,7 +281,7 @@ func (s *RedisStore) CleanupExpiredLinks(ctx context.Context, before time.Time) 
 			continue
 		}
 
-		if link.ExpiresAt.Before(before) {
+		if link.Status == "active" && link.ExpiresAt.Before(before) {
 			if err := s.client.Del(ctx, iter.Val()).Err(); err == nil {
 				count++
 			}

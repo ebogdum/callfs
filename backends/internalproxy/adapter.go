@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -24,8 +25,7 @@ type proxiedFileInfo struct {
 	Type  string `json:"type"`
 	Size  int64  `json:"size"`
 	Mode  string `json:"mode"`
-	UID   int    `json:"uid"`
-	GID   int    `json:"gid"`
+	Owner string `json:"owner"`
 	MTime string `json:"mtime"`
 }
 
@@ -33,6 +33,7 @@ type proxiedFileInfo struct {
 // to other CallFS instances for Local FS content
 type InternalProxyAdapter struct {
 	client            *http.Client
+	mu                sync.RWMutex
 	instanceMap       map[string]string // instanceID -> endpoint
 	internalAuthToken string
 	logger            *zap.Logger
@@ -73,6 +74,22 @@ func NewInternalProxyAdapter(peerEndpoints map[string]string, authToken string, 
 	}, nil
 }
 
+// SetPeerEndpoint adds or updates a peer instance endpoint at runtime.
+// This is used when Raft dynamically adds new nodes to the cluster.
+func (a *InternalProxyAdapter) SetPeerEndpoint(instanceID, endpoint string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.instanceMap[instanceID] = endpoint
+}
+
+// getEndpoint returns the endpoint for an instance ID (thread-safe).
+func (a *InternalProxyAdapter) getEndpoint(instanceID string) (string, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	endpoint, exists := a.instanceMap[instanceID]
+	return endpoint, exists
+}
+
 // Open opens a file for reading by proxying to the owning instance
 // This method expects the instance ID to be provided via context
 func (a *InternalProxyAdapter) Open(ctx context.Context, path string) (io.ReadCloser, error) {
@@ -85,7 +102,7 @@ func (a *InternalProxyAdapter) Open(ctx context.Context, path string) (io.ReadCl
 
 // OpenFromInstance opens a file from a specific CallFS instance
 func (a *InternalProxyAdapter) OpenFromInstance(ctx context.Context, instanceID, path string) (io.ReadCloser, error) {
-	endpoint, exists := a.instanceMap[instanceID]
+	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
 		return nil, fmt.Errorf("unknown instance ID: %s", instanceID)
 	}
@@ -138,7 +155,7 @@ func (a *InternalProxyAdapter) Update(ctx context.Context, path string, reader i
 
 // UpdateOnInstance updates a file on a specific CallFS instance
 func (a *InternalProxyAdapter) UpdateOnInstance(ctx context.Context, instanceID, path string, reader io.Reader, size int64) error {
-	endpoint, exists := a.instanceMap[instanceID]
+	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
 		return fmt.Errorf("unknown instance ID: %s", instanceID)
 	}
@@ -190,7 +207,7 @@ func (a *InternalProxyAdapter) Delete(ctx context.Context, path string) error {
 
 // DeleteOnInstance deletes a file on a specific CallFS instance
 func (a *InternalProxyAdapter) DeleteOnInstance(ctx context.Context, instanceID, path string) error {
-	endpoint, exists := a.instanceMap[instanceID]
+	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
 		return fmt.Errorf("unknown instance ID: %s", instanceID)
 	}
@@ -238,7 +255,7 @@ func (a *InternalProxyAdapter) Stat(ctx context.Context, path string) (*metadata
 
 // StatOnInstance gets file metadata from a specific CallFS instance
 func (a *InternalProxyAdapter) StatOnInstance(ctx context.Context, instanceID, path string) (*metadata.Metadata, error) {
-	endpoint, exists := a.instanceMap[instanceID]
+	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
 		return nil, fmt.Errorf("unknown instance ID: %s", instanceID)
 	}
@@ -268,8 +285,7 @@ func (a *InternalProxyAdapter) StatOnInstance(ctx context.Context, instanceID, p
 	}
 
 	size, _ := strconv.ParseInt(resp.Header.Get("X-CallFS-Size"), 10, 64)
-	uid, _ := strconv.Atoi(resp.Header.Get("X-CallFS-UID"))
-	gid, _ := strconv.Atoi(resp.Header.Get("X-CallFS-GID"))
+	owner := resp.Header.Get("X-CallFS-Owner")
 	typeHeader := resp.Header.Get("X-CallFS-Type")
 	if typeHeader == "" {
 		typeHeader = "file"
@@ -299,8 +315,7 @@ func (a *InternalProxyAdapter) StatOnInstance(ctx context.Context, instanceID, p
 		Type:        typeHeader,
 		Size:        size,
 		Mode:        mode,
-		UID:         uid,
-		GID:         gid,
+		Owner:       owner,
 		MTime:       mTime,
 		ATime:       mTime,
 		CTime:       mTime,
@@ -319,7 +334,7 @@ func (a *InternalProxyAdapter) ListDirectory(ctx context.Context, path string) (
 
 // ListDirectoryOnInstance lists directory contents from a specific CallFS instance
 func (a *InternalProxyAdapter) ListDirectoryOnInstance(ctx context.Context, instanceID, path string) ([]*metadata.Metadata, error) {
-	endpoint, exists := a.instanceMap[instanceID]
+	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
 		return nil, fmt.Errorf("unknown instance ID: %s", instanceID)
 	}
@@ -389,8 +404,7 @@ func (a *InternalProxyAdapter) ListDirectoryOnInstance(ctx context.Context, inst
 			Type:        item.Type,
 			Size:        item.Size,
 			Mode:        mode,
-			UID:         item.UID,
-			GID:         item.GID,
+			Owner:       item.Owner,
 			MTime:       itemMTime,
 			ATime:       itemMTime,
 			CTime:       itemMTime,
@@ -437,8 +451,12 @@ func buildProxyURL(endpoint, path string) string {
 	cleanPath := strings.TrimLeft(path, "/")
 	result, err := url.JoinPath(base, "v1", "files", cleanPath)
 	if err != nil {
-		// Fallback: manual construction (should not happen with valid inputs)
-		return base + "/v1/files/" + url.PathEscape(cleanPath)
+		// Fallback: manual construction with per-segment encoding
+		segments := strings.Split(cleanPath, "/")
+		for i, seg := range segments {
+			segments[i] = url.PathEscape(seg)
+		}
+		return base + "/v1/files/" + strings.Join(segments, "/")
 	}
 	return result
 }

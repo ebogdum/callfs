@@ -52,8 +52,11 @@ type Command struct {
 }
 
 type CommandResult struct {
-	CleanupCount int    `json:"cleanup_count,omitempty"`
-	Err          string `json:"err,omitempty"`
+	CleanupCount int                     `json:"cleanup_count,omitempty"`
+	Err          string                  `json:"err,omitempty"`
+	Metadata     *metadata.Metadata      `json:"metadata,omitempty"`
+	Link         *metadata.SingleUseLink `json:"link,omitempty"`
+	Children     []*metadata.Metadata    `json:"children,omitempty"`
 }
 
 type ForwardApplyRequest struct {
@@ -61,8 +64,11 @@ type ForwardApplyRequest struct {
 }
 
 type ForwardApplyResponse struct {
-	CleanupCount int    `json:"cleanup_count,omitempty"`
-	Error        string `json:"error,omitempty"`
+	CleanupCount int                     `json:"cleanup_count,omitempty"`
+	Error        string                  `json:"error,omitempty"`
+	Metadata     *metadata.Metadata      `json:"metadata,omitempty"`
+	Link         *metadata.SingleUseLink `json:"link,omitempty"`
+	Children     []*metadata.Metadata    `json:"children,omitempty"`
 }
 
 type JoinRequest struct {
@@ -192,9 +198,20 @@ func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
 	}
 
 	if cfg.Bootstrap {
-		future := raftNode.BootstrapCluster(hashiraft.Configuration{Servers: []hashiraft.Server{
+		// Build the initial cluster configuration including all known peers.
+		// This allows all nodes to start simultaneously and form a cluster
+		// without needing explicit join commands.
+		servers := []hashiraft.Server{
 			{ID: hashiraft.ServerID(cfg.NodeID), Address: hashiraft.ServerAddress(cfg.BindAddr), Suffrage: hashiraft.Voter},
-		}})
+		}
+		for peerID, peerAddr := range cfg.Peers {
+			servers = append(servers, hashiraft.Server{
+				ID:       hashiraft.ServerID(peerID),
+				Address:  hashiraft.ServerAddress(peerAddr),
+				Suffrage: hashiraft.Voter,
+			})
+		}
+		future := raftNode.BootstrapCluster(hashiraft.Configuration{Servers: servers})
 		if err := future.Error(); err != nil && !errors.Is(err, hashiraft.ErrCantBootstrap) {
 			return nil, fmt.Errorf("failed to bootstrap raft cluster: %w", err)
 		}
@@ -281,6 +298,23 @@ func (s *Store) AddVoter(ctx context.Context, nodeID, raftAddr, apiEndpoint stri
 
 	s.SetAPIPeerEndpoint(nodeID, apiEndpoint)
 
+	// Force a snapshot after adding a voter so the new node can install it
+	// and catch up with the leader's state. Without this, followers that
+	// join after the leader has already committed entries will fail to
+	// replicate via log entries (since the leader's log may have been
+	// compacted, or the follower starts at index 0 while the leader is ahead).
+	snapshotFuture := s.raft.Snapshot()
+	if err := snapshotFuture.Error(); err != nil {
+		s.logger.Warn("Post-join snapshot failed (follower will catch up via log replication if possible)",
+			zap.String("node_id", nodeID), zap.Error(err))
+	}
+
+	// Barrier ensures all pending entries (including the snapshot) are committed
+	if err := s.raft.Barrier(s.applyTimeout).Error(); err != nil {
+		s.logger.Warn("Barrier after voter join returned error",
+			zap.String("node_id", nodeID), zap.Error(err))
+	}
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -290,14 +324,30 @@ func (s *Store) AddVoter(ctx context.Context, nodeID, raftAddr, apiEndpoint stri
 }
 
 func (s *Store) Get(ctx context.Context, path string) (*metadata.Metadata, error) {
+	// Try local FSM first (fast path)
 	s.fsm.mu.RLock()
-	defer s.fsm.mu.RUnlock()
 	md, ok := s.fsm.state.MetadataByPath[path]
-	if !ok {
+	s.fsm.mu.RUnlock()
+	if ok {
+		return cloneMetadata(md), nil
+	}
+
+	// On followers, if not found locally, forward to leader for consistent read.
+	// This handles the case where the follower's FSM hasn't applied recent writes yet.
+	if !s.IsLeader() {
+		result, err := s.forwardToLeader(ctx, Command{Op: "get_metadata", Path: path})
+		if err != nil {
+			return nil, metadata.ErrNotFound
+		}
+		if result.Metadata != nil {
+			return cloneMetadata(result.Metadata), nil
+		}
 		return nil, metadata.ErrNotFound
 	}
-	return cloneMetadata(md), nil
+
+	return nil, metadata.ErrNotFound
 }
+
 
 func (s *Store) Create(ctx context.Context, md *metadata.Metadata) error {
 	if md == nil {
@@ -321,8 +371,30 @@ func (s *Store) Delete(ctx context.Context, path string) error {
 }
 
 func (s *Store) ListChildren(ctx context.Context, parentPath string) ([]*metadata.Metadata, error) {
+	// Leader reads directly from the FSM (authoritative)
+	if s.IsLeader() {
+		return s.listChildrenLocal(parentPath), nil
+	}
+
+	// Followers always forward to leader for consistent reads.
+	// A follower's FSM may be partially replicated (e.g., some children
+	// arrived via Raft but not all), so returning local results risks
+	// missing recently-created entries.
+	result, err := s.forwardToLeader(ctx, Command{Op: "list_children", Path: parentPath})
+	if err != nil {
+		// Fallback to local FSM if leader is unreachable
+		return s.listChildrenLocal(parentPath), nil
+	}
+	if result.Children != nil {
+		sort.Slice(result.Children, func(i, j int) bool { return result.Children[i].Path < result.Children[j].Path })
+		return result.Children, nil
+	}
+	return make([]*metadata.Metadata, 0), nil
+}
+
+// listChildrenLocal reads children from the local FSM state.
+func (s *Store) listChildrenLocal(parentPath string) []*metadata.Metadata {
 	s.fsm.mu.RLock()
-	defer s.fsm.mu.RUnlock()
 	children := make([]*metadata.Metadata, 0)
 	for _, md := range s.fsm.state.MetadataByPath {
 		if md.Path == "/" {
@@ -332,18 +404,33 @@ func (s *Store) ListChildren(ctx context.Context, parentPath string) ([]*metadat
 			children = append(children, cloneMetadata(md))
 		}
 	}
+	s.fsm.mu.RUnlock()
 	sort.Slice(children, func(i, j int) bool { return children[i].Path < children[j].Path })
-	return children, nil
+	return children
 }
 
 func (s *Store) GetSingleUseLink(ctx context.Context, token string) (*metadata.SingleUseLink, error) {
+	// Try local FSM first
 	s.fsm.mu.RLock()
-	defer s.fsm.mu.RUnlock()
 	link, ok := s.fsm.state.LinksByToken[token]
-	if !ok {
+	s.fsm.mu.RUnlock()
+	if ok {
+		return cloneLink(link), nil
+	}
+
+	// On followers, forward to leader for consistent read
+	if !s.IsLeader() {
+		result, err := s.forwardToLeader(ctx, Command{Op: "get_link", Token: token})
+		if err != nil {
+			return nil, metadata.ErrNotFound
+		}
+		if result.Link != nil {
+			return cloneLink(result.Link), nil
+		}
 		return nil, metadata.ErrNotFound
 	}
-	return cloneLink(link), nil
+
+	return nil, metadata.ErrNotFound
 }
 
 func (s *Store) CreateSingleUseLink(ctx context.Context, link *metadata.SingleUseLink) error {
@@ -375,11 +462,18 @@ func (s *Store) CleanupUsedLinks(ctx context.Context, olderThan time.Time) (int,
 	return res.CleanupCount, nil
 }
 
+// TakeSnapshot forces a Raft snapshot. This is useful after initial setup
+// so that followers joining later can install the snapshot and catch up.
+func (s *Store) TakeSnapshot() error {
+	return s.raft.Snapshot().Error()
+}
+
 func (s *Store) Close() error {
 	f := s.raft.Shutdown()
 	if err := f.Error(); err != nil {
 		return fmt.Errorf("failed to shutdown raft: %w", err)
 	}
+	s.forwardClient.CloseIdleConnections()
 	var firstErr error
 	if s.logStore != nil {
 		if err := s.logStore.Close(); err != nil && firstErr == nil {
@@ -398,6 +492,41 @@ func (s *Store) ApplyForwardedCommand(ctx context.Context, cmd Command) (Command
 	if !s.IsLeader() {
 		return CommandResult{}, fmt.Errorf("not leader")
 	}
+
+	// Read-only queries can be served directly from the leader's FSM without
+	// going through Raft Apply, which would needlessly pollute the consensus log.
+	switch cmd.Op {
+	case "get_metadata":
+		s.fsm.mu.RLock()
+		md, ok := s.fsm.state.MetadataByPath[cmd.Path]
+		s.fsm.mu.RUnlock()
+		if !ok {
+			return CommandResult{}, metadata.ErrNotFound
+		}
+		return CommandResult{Metadata: cloneMetadata(md)}, nil
+	case "get_link":
+		s.fsm.mu.RLock()
+		link, ok := s.fsm.state.LinksByToken[cmd.Token]
+		s.fsm.mu.RUnlock()
+		if !ok {
+			return CommandResult{}, metadata.ErrNotFound
+		}
+		return CommandResult{Link: cloneLink(link)}, nil
+	case "list_children":
+		s.fsm.mu.RLock()
+		children := make([]*metadata.Metadata, 0)
+		for _, md := range s.fsm.state.MetadataByPath {
+			if md.Path == "/" {
+				continue
+			}
+			if pathDir(md.Path) == cmd.Path {
+				children = append(children, cloneMetadata(md))
+			}
+		}
+		s.fsm.mu.RUnlock()
+		return CommandResult{Children: children}, nil
+	}
+
 	return s.applyAsLeader(cmd)
 }
 
@@ -465,7 +594,8 @@ func (s *Store) forwardToLeader(ctx context.Context, cmd Command) (CommandResult
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		payload, _ := io.ReadAll(resp.Body)
+		// Limit error body read to prevent unbounded memory allocation from a misbehaving leader
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return CommandResult{}, fmt.Errorf("leader forward failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 
@@ -483,7 +613,7 @@ func (s *Store) forwardToLeader(ctx context.Context, cmd Command) (CommandResult
 			return CommandResult{}, fmt.Errorf("%s", applyResp.Error)
 		}
 	}
-	return CommandResult{CleanupCount: applyResp.CleanupCount}, nil
+	return CommandResult{CleanupCount: applyResp.CleanupCount, Metadata: applyResp.Metadata, Link: applyResp.Link, Children: applyResp.Children}, nil
 }
 
 func (f *fsm) Apply(log *hashiraft.Log) interface{} {
@@ -496,6 +626,33 @@ func (f *fsm) Apply(log *hashiraft.Log) interface{} {
 	defer f.mu.Unlock()
 
 	switch cmd.Op {
+	case "get_metadata":
+		// Read-only query: returns metadata without modifying state.
+		// Used by followers to forward reads to the leader for consistency.
+		md, ok := f.state.MetadataByPath[cmd.Path]
+		if !ok {
+			return CommandResult{Err: "not_found"}
+		}
+		return CommandResult{Metadata: cloneMetadata(md)}
+	case "get_link":
+		// Read-only query: returns link without modifying state.
+		link, ok := f.state.LinksByToken[cmd.Token]
+		if !ok {
+			return CommandResult{Err: "not_found"}
+		}
+		return CommandResult{Link: cloneLink(link)}
+	case "list_children":
+		// Read-only query: returns children of a directory.
+		children := make([]*metadata.Metadata, 0)
+		for _, md := range f.state.MetadataByPath {
+			if md.Path == "/" {
+				continue
+			}
+			if pathDir(md.Path) == cmd.Path {
+				children = append(children, cloneMetadata(md))
+			}
+		}
+		return CommandResult{Children: children}
 	case "create_metadata":
 		if cmd.Metadata == nil {
 			return CommandResult{Err: "metadata_required"}

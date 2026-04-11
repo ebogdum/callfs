@@ -27,8 +27,7 @@ type FileInfo struct {
 	Type  string `json:"type"`
 	Size  int64  `json:"size"`
 	Mode  string `json:"mode"`
-	UID   int    `json:"uid"`
-	GID   int    `json:"gid"`
+	Owner string `json:"owner"`
 	MTime string `json:"mtime"`
 }
 
@@ -42,8 +41,7 @@ type FileInfo struct {
 // @Success 200 {string} binary "File content (if path is file)"
 // @Header 200 {string} X-CallFS-Size "File size in bytes"
 // @Header 200 {string} X-CallFS-Mode "File mode (permissions)"
-// @Header 200 {string} X-CallFS-UID "User ID"
-// @Header 200 {string} X-CallFS-GID "Group ID"
+// @Header 200 {string} X-CallFS-Owner "Resource owner (app user ID)"
 // @Header 200 {string} X-CallFS-MTime "Last modified time"
 // @Failure 401 {object} ErrorResponse "Unauthorized"
 // @Failure 403 {object} ErrorResponse "Forbidden"
@@ -72,7 +70,6 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
 		if pathInfo.IsInvalid {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "400").Inc()
 			SendErrorResponse(w, logger, fmt.Errorf("invalid path"), http.StatusBadRequest)
 			return
 		}
@@ -80,7 +77,6 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 		// Get user ID from context
 		userID, ok := middleware.GetUserID(r.Context())
 		if !ok {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "401").Inc()
 			SendErrorResponse(w, logger, auth.ErrAuthenticationFailed, http.StatusUnauthorized)
 			return
 		}
@@ -93,7 +89,6 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 
 		// SECURITY FIX: Authorize BEFORE checking existence to prevent timing attacks
 		if err := authorizer.Authorize(metadataCtx, userID, enginePath, auth.ReadPerm); err != nil {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "403").Inc()
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
 			return
 		}
@@ -101,32 +96,39 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 		// Now check if file/directory exists
 		md, err := engine.GetMetadata(metadataCtx, enginePath)
 		if err != nil {
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "404").Inc()
 			SendErrorResponse(w, logger, err, http.StatusNotFound)
 			return
 		}
 
-		if md.Type == "file" {
+		switch md.Type {
+		case "file":
 			// Handle erasure-coded files
 			if md.ErasureCoded {
 				em := engine.GetErasureManager()
 				if em != nil {
 					if r.URL.Query().Get("manifest") == "true" {
 						HandleErasureManifest(w, r, em, enginePath, logger)
-						metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "200").Inc()
 						return
 					}
 					HandleErasureDownload(w, r, em, enginePath, md.Size, logger)
-					metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "200").Inc()
 					metrics.FileOperationsTotal.WithLabelValues("read", "erasure").Inc()
 					return
+				}
+			}
+
+			// For cross-server files, re-fetch metadata from the store (bypassing
+			// cache) so Content-Length reflects the actual file size after any
+			// concurrent writes proxied through another node.
+			currentInstanceID := engine.GetCurrentInstanceID()
+			if md.CallFSInstanceID != nil && *md.CallFSInstanceID != currentInstanceID {
+				if freshMd, freshErr := engine.GetMetadataUncached(metadataCtx, enginePath); freshErr == nil {
+					md = freshMd
 				}
 			}
 
 			// Stream file content using file operation timeout
 			reader, err := engine.GetFile(fileCtx, enginePath)
 			if err != nil {
-				metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "500").Inc()
 				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 				return
 			}
@@ -138,8 +140,7 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 			w.Header().Set("X-CallFS-Type", "file")
 			w.Header().Set("X-CallFS-Size", fmt.Sprintf("%d", md.Size))
 			w.Header().Set("X-CallFS-Mode", md.Mode)
-			w.Header().Set("X-CallFS-UID", fmt.Sprintf("%d", md.UID))
-			w.Header().Set("X-CallFS-GID", fmt.Sprintf("%d", md.GID))
+			w.Header().Set("X-CallFS-Owner", md.Owner)
 			w.Header().Set("X-CallFS-MTime", md.MTime.Format("2006-01-02T15:04:05Z07:00"))
 
 			// Stream content
@@ -147,8 +148,6 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 				logger.Error("Failed to stream file content", zap.Error(err))
 			}
 
-			// Track successful file operation
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "200").Inc()
 			metrics.FileOperationsTotal.WithLabelValues("read", md.BackendType).Inc()
 
 			// Use secure logging with sanitized data
@@ -166,11 +165,10 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 				zap.String("backend", logFields.Backend),
 				zap.Int64("size", logFields.Size))
 
-		} else if md.Type == "directory" {
+		case "directory":
 			// List directory contents using metadata timeout
 			children, err := engine.ListDirectory(metadataCtx, enginePath)
 			if err != nil {
-				metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "500").Inc()
 				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 				return
 			}
@@ -184,8 +182,7 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 					Type:  child.Type,
 					Size:  child.Size,
 					Mode:  child.Mode,
-					UID:   child.UID,
-					GID:   child.GID,
+					Owner: child.Owner,
 					MTime: child.MTime.Format("2006-01-02T15:04:05Z07:00"),
 				}
 				fileInfos = append(fileInfos, fileInfo)
@@ -196,18 +193,18 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 			w.Header().Set("X-CallFS-Type", "directory")
 			w.Header().Set("X-CallFS-Size", "0")
 			w.Header().Set("X-CallFS-Mode", md.Mode)
-			w.Header().Set("X-CallFS-UID", fmt.Sprintf("%d", md.UID))
-			w.Header().Set("X-CallFS-GID", fmt.Sprintf("%d", md.GID))
+			w.Header().Set("X-CallFS-Owner", md.Owner)
 			w.Header().Set("X-CallFS-MTime", md.MTime.Format("2006-01-02T15:04:05Z07:00"))
 
-			// Send JSON response
-			if err := json.NewEncoder(w).Encode(fileInfos); err != nil {
-				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+			// Buffer JSON before writing to avoid malformed response on encoding error
+			jsonBytes, marshalErr := json.Marshal(fileInfos)
+			if marshalErr != nil {
+				SendErrorResponse(w, logger, marshalErr, http.StatusInternalServerError)
 				return
 			}
-
-			// Track successful directory listing
-			metrics.HTTPRequestsTotal.WithLabelValues(r.Method, "/files/*", "200").Inc()
+			if _, err := w.Write(jsonBytes); err != nil {
+				logger.Error("Failed to write directory listing", zap.Error(err))
+			}
 
 			// Use secure logging with sanitized data
 			logFields := log.LogFields{
@@ -220,6 +217,9 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 				zap.String("path", logFields.Path),
 				zap.String("user_id", logFields.UserID),
 				zap.Int("children_count", len(children)))
+
+		default:
+			SendErrorResponse(w, logger, fmt.Errorf("unsupported resource type: %s", md.Type), http.StatusInternalServerError)
 		}
 	}
 }

@@ -7,12 +7,10 @@ import (
 	"time"
 )
 
-// Windows-specific helper to handle the fact that Windows doesn't have Unix-style syscall.Stat_t
-func extractUnixMetadata(info os.FileInfo) (mode string, uid, gid int, atime, ctime time.Time) {
-	// Windows defaults
+// extractPlatformMetadata extracts filesystem-level mode and timestamps.
+// Windows has no Unix-style ownership; CallFS tracks ownership via Metadata.Owner.
+func extractPlatformMetadata(info os.FileInfo) (mode string, atime, ctime time.Time) {
 	mode = "0644"
-	uid = 1000
-	gid = 1000
 	atime = info.ModTime()
 	ctime = info.ModTime()
 

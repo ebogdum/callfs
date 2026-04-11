@@ -25,6 +25,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -431,6 +432,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			cfg.Auth.InternalProxySecret,
 			logger,
 		)
+		defer em.Close()
 		coreEngine.SetErasureManager(em)
 		logger.Info("Erasure coding manager initialized",
 			zap.Int("data_shards", cfg.Erasure.DataShards),
@@ -450,6 +452,13 @@ func runServer(cmd *cobra.Command, args []string) error {
 		if raftMetadataStore.IsLeader() {
 			if err := coreEngine.EnsureRootDirectory(context.Background()); err != nil {
 				logger.Fatal("Failed to ensure root directory exists", zap.Error(err))
+			}
+			// Take a snapshot immediately so that followers joining later can install
+			// it and catch up with the leader's state (including root directory).
+			if snapErr := raftMetadataStore.TakeSnapshot(); snapErr != nil {
+				logger.Warn("Initial snapshot after root directory creation failed", zap.Error(snapErr))
+			} else {
+				logger.Info("Initial snapshot taken for follower catch-up")
 			}
 		} else {
 			logger.Info("Skipping root directory bootstrap on follower node",
@@ -479,7 +488,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Initialize HTTP router
 	logger.Info("Initializing HTTP router")
-	router := server.NewRouter(coreEngine, authenticator, authorizer, linkManager, &cfg.Server, &cfg.Backend, cfg.Server.ExternalURL, logger)
+	router, routerResources := server.NewRouter(coreEngine, authenticator, authorizer, linkManager, &cfg.Server, &cfg.Backend, cfg.Server.ExternalURL, logger)
+	defer routerResources.Stop()
 	rootHandler := http.Handler(router)
 
 	// Register internal shard endpoints if erasure is enabled.
@@ -511,7 +521,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 				return
 			}
 
-			authHeader := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
+			authHeader := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 			if subtle.ConstantTimeCompare([]byte(authHeader), []byte(cfg.Auth.InternalProxySecret)) != 1 {
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "error", Error: "unauthorized"})
@@ -542,6 +552,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 				return
 			}
 
+			// Propagate peer endpoint to Engine and InternalProxyAdapter
+			// so cross-server routing works for the newly joined node
+			coreEngine.SetPeerEndpoint(req.NodeID, req.APIEndpoint)
+
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(metadataraft.JoinResponse{Status: "joined", LeaderID: raftMetadataStore.LeaderID()})
 		}))
@@ -551,7 +565,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 				return
 			}
 
-			authHeader2 := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
+			authHeader2 := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 			if subtle.ConstantTimeCompare([]byte(authHeader2), []byte(cfg.Auth.InternalProxySecret)) != 1 {
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: "unauthorized"})
@@ -570,10 +584,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				w.WriteHeader(http.StatusBadGateway)
 				errCode := err.Error()
-				if err == metadata.ErrNotFound {
+				if errors.Is(err, metadata.ErrNotFound) {
 					errCode = "not_found"
 				}
-				if err == metadata.ErrAlreadyExists {
+				if errors.Is(err, metadata.ErrAlreadyExists) {
 					errCode = "already_exists"
 				}
 				_ = json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{Error: errCode})
@@ -581,7 +595,17 @@ func runServer(cmd *cobra.Command, args []string) error {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(metadataraft.ForwardApplyResponse{CleanupCount: res.CleanupCount}); err != nil {
+			resp := metadataraft.ForwardApplyResponse{CleanupCount: res.CleanupCount}
+			if res.Metadata != nil {
+				resp.Metadata = res.Metadata
+			}
+			if res.Link != nil {
+				resp.Link = res.Link
+			}
+			if res.Children != nil {
+				resp.Children = res.Children
+			}
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
 				logger.Error("Failed to encode raft apply response", zap.Error(err))
 			}
 		}))

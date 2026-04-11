@@ -21,6 +21,13 @@ type lockEntry struct {
 
 // LocalManager provides in-process lock management for local/single-node deployments.
 // Each lock tracks an ownerID to prevent releasing another holder's lock after TTL expiry.
+//
+// LIMITATION: Release cannot verify ownership since the Manager interface
+// does not return a token from Acquire. If an operation exceeds the TTL (30s)
+// and another goroutine re-acquires the same lock, Release may incorrectly
+// delete the new holder's lock. This is acceptable because:
+//   - Operations are expected to complete within FileOpTimeout (10s)
+//   - Multi-node deployments use RedisManager which has proper Lua-based ownership
 type LocalManager struct {
 	mu         sync.Mutex
 	locks      map[string]lockEntry

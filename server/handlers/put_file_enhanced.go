@@ -1,10 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -58,11 +58,8 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 			return
 		}
 
-		// Normalize path for engine calls
+		// Normalize path for engine calls (IsDirectory is always false here due to early return above)
 		enginePath := pathInfo.FullPath
-		if pathInfo.IsDirectory && enginePath != "/" {
-			enginePath = strings.TrimSuffix(enginePath, "/")
-		}
 
 		// Limit upload body to 10 GiB
 		const maxUploadBytes int64 = 10 << 30
@@ -94,15 +91,14 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 		currentInstanceID := engine.GetCurrentInstanceID()
 
 		if err != nil {
-			if err == metadata.ErrNotFound {
+			if errors.Is(err, metadata.ErrNotFound) {
 				// File doesn't exist, we'll create it locally
 				statusCode = http.StatusCreated
 				existingMd = &metadata.Metadata{
 					Name:        pathInfo.Name,
 					Type:        "file",
 					Mode:        "0644",
-					UID:         1000,
-					GID:         1000,
+					Owner:       userID,
 					BackendType: backendConfig.DefaultBackend,
 					ATime:       time.Now(),
 					MTime:       time.Now(),
@@ -138,8 +134,14 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 					return
 				}
 
+				// For chunked cross-server uploads, use counted bytes as the actual size
+				proxySize := size
+				if countReader != nil {
+					proxySize = countReader.BytesRead()
+				}
+
 				// Update local metadata to reflect the new size/mtime after proxy write
-				existingMd.Size = size
+				existingMd.Size = proxySize
 				existingMd.MTime = time.Now()
 				existingMd.UpdatedAt = time.Now()
 				if updateErr := engine.UpdateMetadataOnly(r.Context(), existingMd); updateErr != nil {
@@ -153,7 +155,7 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 					zap.String("path", pathInfo.FullPath),
 					zap.String("user_id", userID),
 					zap.String("target_instance", *existingMd.CallFSInstanceID),
-					zap.Int64("size", size))
+					zap.Int64("size", proxySize))
 				return
 			}
 
