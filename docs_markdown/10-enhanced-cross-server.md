@@ -45,7 +45,7 @@ Similar to `PUT`, a `DELETE` request is automatically routed to the node that ho
 
 ### `HEAD /v1/files/{path}` - Get Metadata with Automatic Routing
 
-A `HEAD` request will also be proxied to the correct node to fetch the resource's metadata. The response headers will include the `X-CallFS-Instance-ID` and `X-CallFS-Backend-Type`, telling you exactly where the file is located.
+A `HEAD` request will also be proxied to the correct node to fetch the resource's metadata. The response headers will include `X-CallFS-Instance-ID`, `X-CallFS-Owner`, `X-CallFS-Mode`, `X-CallFS-Size`, and `X-CallFS-MTime`, telling you exactly where the file is located and who owns it.
 
 ## Use Cases
 

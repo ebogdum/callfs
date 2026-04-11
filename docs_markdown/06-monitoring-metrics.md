@@ -4,13 +4,19 @@ CallFS provides comprehensive observability through structured logging, detailed
 
 ## Prometheus Metrics
 
-CallFS exposes a rich set of metrics in Prometheus format at the `/metrics` endpoint. This endpoint does not require authentication.
+CallFS exposes a rich set of metrics in Prometheus format at the `/metrics` endpoint. This endpoint requires authentication on the main API port. A separate unauthenticated metrics endpoint is available when `metrics.listen_addr` is configured (default `:9090`).
 
-**Endpoint:** `GET /metrics`
+**Endpoints:**
+- `GET /metrics` (main port, requires auth)
+- `GET /metrics` (dedicated metrics port, no auth)
 
 **Example:**
 ```bash
-curl -k https://localhost:8443/metrics
+# Via dedicated metrics port (no auth)
+curl http://localhost:9090/metrics
+
+# Via main API port (requires auth)
+curl -H "Authorization: Bearer <api-key>" http://localhost:8443/metrics
 ```
 
 ### Key Metrics
@@ -22,7 +28,10 @@ curl -k https://localhost:8443/metrics
 - **`callfs_metadata_db_queries_total` (Counter)**: Counts queries to the PostgreSQL metadata store, labeled by `operation`.
 - **`callfs_lock_operations_total` (Counter)**: Tracks distributed lock acquisitions and releases, labeled by `operation` and `status`. Critical for diagnosing concurrency issues.
 - **`callfs_active_locks` (Gauge)**: Shows the number of currently active distributed locks.
-- **`callfs_cross_server_operations_total` (Counter)**: Counts cross-server operations like proxying and conflict detection in a clustered setup.
+- **`callfs_file_operations_total` (Counter)**: Counts file operations, labeled by `operation` (`create`, `read`, `update`, `delete`) and `backend_type`.
+- **`callfs_single_use_link_generations_total` (Counter)**: Total single-use links generated.
+- **`callfs_single_use_link_consumptions_total` (Counter)**: Total single-use links consumed, labeled by `status` (`success`, `expired`, `invalid`, `not_found`).
+- **`callfs_errors_total` (Counter)**: Total errors by `component` and `error_type`.
 
 ### Monitoring Setup
 
@@ -51,7 +60,7 @@ log:
 ```
 
 **Log Fields:**
-Logs include contextual information such as `trace_id`, `request_id`, `method`, `path`, `status`, `duration`, and `error` messages, making them easy to parse, search, and analyze in log aggregation platforms like the ELK Stack, Splunk, or Grafana Loki.
+Logs include contextual information such as `method`, `path`, `status`, `duration`, `user_agent`, `remote_addr`, and `error` messages, making them easy to parse, search, and analyze in log aggregation platforms like the ELK Stack, Splunk, or Grafana Loki. Responses include an `X-Request-ID` header for correlation.
 
 **Example JSON Log Entry:**
 ```json

@@ -4,7 +4,7 @@ This document provides a comprehensive reference for the CallFS REST API. All en
 
 ## Authentication
 
-All API endpoints, except for `/health`, `/metrics`, and `/download/{token}`, require bearer token authentication.
+All API endpoints, except for `/health` and `/download/{token}`, require bearer token authentication. The `/metrics` endpoint also requires authentication.
 
 **Header:**
 ```
@@ -40,7 +40,7 @@ curl -k -H "Authorization: Bearer <api-key>" \
 Retrieves metadata for a file or directory without transferring its content. This is an **enhanced** operation.
 
 - **Cross-Server Routing**: If the resource is located on another node in the cluster, this request will be automatically proxied to the correct node.
-- **Response Headers**: Includes detailed metadata such as `X-CallFS-Type`, `X-CallFS-Size`, `X-CallFS-Mode`, `X-CallFS-MTime`, `X-CallFS-Instance-ID`, and `X-CallFS-Backend-Type`.
+- **Response Headers**: Includes detailed metadata such as `X-CallFS-Type`, `X-CallFS-Size`, `X-CallFS-Mode`, `X-CallFS-Owner`, `X-CallFS-MTime`, and `X-CallFS-Instance-ID`.
 
 **Example: Get file metadata**
 ```bash
@@ -53,13 +53,13 @@ curl -k -I -H "Authorization: Bearer <api-key>" \
 Creates a new file or directory. This is an **enhanced** operation.
 
 - **To create a file**: `POST` the raw file data with `Content-Type: application/octet-stream`.
-- **To create a directory**: `POST` a JSON body `{"type":"directory"}` with `Content-Type: application/json`. The path must end with a `/`.
+- **To create a directory**: `POST` to a path ending with `/`. No request body is needed; the trailing slash signals directory creation.
 - **Cross-Server Conflict Detection**: Before creating, CallFS checks if the resource already exists anywhere in the cluster. If a conflict is found, it returns a `409 Conflict` error with details about the existing resource.
 
 **Example: Create a directory**
 ```bash
 curl -k -X POST -H "Authorization: Bearer <api-key>" \
-  -H "Content-Type: application/json" -d '{"type":"directory"}' \
+  -H "Content-Type: application/octet-stream" \
   https://localhost:8443/v1/files/new-folder/
 ```
 
@@ -170,22 +170,24 @@ A simple health check endpoint. Returns a `200 OK` with `{"status":"ok"}` if the
 
 ### `GET /metrics`
 
-Exposes a wide range of performance metrics in Prometheus format for monitoring and alerting. **No authentication required.**
+Exposes a wide range of performance metrics in Prometheus format for monitoring and alerting. **Authentication required.** A separate unauthenticated metrics endpoint can be configured on a dedicated port via `metrics.listen_addr`.
 
 ## Error Responses
 
 Errors are returned with a standard JSON structure:
 ```json
 {
-  "error": "A brief, machine-readable error code",
+  "code": "ERROR_CODE",
   "message": "A human-readable description of the error."
 }
 ```
 
+Error codes: `FILE_NOT_FOUND`, `FILE_ALREADY_EXISTS`, `AUTHENTICATION_FAILED`, `PERMISSION_DENIED`, `INTERNAL_ERROR`.
+
 **Example: File Not Found**
 ```json
 {
-  "error": "not_found",
-  "message": "File or directory not found at path: /non/existent/file.txt"
+  "code": "FILE_NOT_FOUND",
+  "message": "metadata not found"
 }
 ```
