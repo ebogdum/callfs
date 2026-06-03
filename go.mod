@@ -19,7 +19,7 @@ require (
 	github.com/knadh/koanf/v2 v2.2.2
 	github.com/lib/pq v1.10.9
 	github.com/prometheus/client_golang v1.22.0
-	github.com/quic-go/quic-go v0.59.0
+	github.com/quic-go/quic-go v0.59.1
 	github.com/spf13/cobra v1.9.1
 	github.com/swaggo/swag v1.16.4
 	go.uber.org/zap v1.27.0
