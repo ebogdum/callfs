@@ -89,6 +89,13 @@ type Store interface {
 	// Delete removes an inode entry by path
 	Delete(ctx context.Context, path string) error
 
+	// Rename re-keys an inode from oldPath to newPath, updating its name and
+	// path. When oldPath is a directory, every descendant's path is rewritten in
+	// the same atomic operation. It does not move bytes (that is the backend's
+	// job) and does not change ownership, backend, or instance. Returns
+	// ErrNotFound if oldPath does not exist and ErrAlreadyExists if newPath does.
+	Rename(ctx context.Context, oldPath, newPath string) error
+
 	// ListChildren returns all children of a directory
 	ListChildren(ctx context.Context, parentPath string) ([]*Metadata, error)
 

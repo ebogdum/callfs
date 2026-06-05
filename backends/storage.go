@@ -24,6 +24,12 @@ type Storage interface {
 	// Delete removes a file or empty directory
 	Delete(ctx context.Context, path string) error
 
+	// Move relocates the object stored at oldPath to newPath within this
+	// backend, without streaming the bytes through the caller. For local
+	// filesystems this is an atomic rename; for object stores it is a
+	// server-side copy followed by a delete.
+	Move(ctx context.Context, oldPath, newPath string) error
+
 	// Stat returns metadata for a file or directory
 	Stat(ctx context.Context, path string) (*metadata.Metadata, error)
 

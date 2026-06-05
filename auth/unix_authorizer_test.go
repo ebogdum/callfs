@@ -30,6 +30,7 @@ func (s *stubStore) Create(_ context.Context, md *metadata.Metadata) error {
 }
 func (s *stubStore) Update(_ context.Context, _ *metadata.Metadata) error { return nil }
 func (s *stubStore) Delete(_ context.Context, _ string) error             { return nil }
+func (s *stubStore) Rename(_ context.Context, _, _ string) error          { return nil }
 func (s *stubStore) ListChildren(_ context.Context, _ string) ([]*metadata.Metadata, error) {
 	return nil, nil
 }

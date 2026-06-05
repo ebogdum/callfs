@@ -2,14 +2,23 @@ package localfs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/ebogdum/callfs/internal/pathutil"
 	"github.com/ebogdum/callfs/metadata"
 )
+
+// isCrossDevice reports whether err is an EXDEV ("invalid cross-device link")
+// error, which os.Rename returns when source and destination live on different
+// filesystems. syscall.EXDEV is defined on every platform Go supports.
+func isCrossDevice(err error) bool {
+	return errors.Is(err, syscall.EXDEV)
+}
 
 // LocalFSAdapter implements the backends.Storage interface for local filesystem
 type LocalFSAdapter struct {
@@ -168,6 +177,87 @@ func (a *LocalFSAdapter) Delete(ctx context.Context, path string) error {
 	}
 
 	return nil
+}
+
+// Move relocates a file or directory subtree from oldPath to newPath.
+// os.Rename is atomic on the same filesystem and moves a whole directory tree
+// in one call. If the destination lives on a different device (EXDEV), it falls
+// back to a recursive copy followed by removal of the source.
+func (a *LocalFSAdapter) Move(ctx context.Context, oldPath, newPath string) error {
+	srcFull, err := pathutil.SafeJoin(a.rootPath, oldPath)
+	if err != nil {
+		return metadata.ErrForbidden
+	}
+	dstFull, err := pathutil.SafeJoin(a.rootPath, newPath)
+	if err != nil {
+		return metadata.ErrForbidden
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dstFull), 0755); err != nil {
+		return fmt.Errorf("failed to create destination parent directory: %w", err)
+	}
+
+	if err := os.Rename(srcFull, dstFull); err != nil {
+		if os.IsNotExist(err) {
+			return metadata.ErrNotFound
+		}
+		if isCrossDevice(err) {
+			if copyErr := copyPath(srcFull, dstFull); copyErr != nil {
+				return fmt.Errorf("failed to copy across devices: %w", copyErr)
+			}
+			if rmErr := os.RemoveAll(srcFull); rmErr != nil {
+				return fmt.Errorf("failed to remove source after cross-device copy: %w", rmErr)
+			}
+			return nil
+		}
+		return fmt.Errorf("failed to move %s to %s: %w", oldPath, newPath, err)
+	}
+
+	return nil
+}
+
+// copyPath recursively copies a file or directory tree from src to dst.
+func copyPath(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() {
+		if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := copyPath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // Stat returns metadata for a file or directory
