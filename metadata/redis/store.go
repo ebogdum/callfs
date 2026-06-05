@@ -145,6 +145,107 @@ func (s *RedisStore) Delete(ctx context.Context, path string) error {
 	return nil
 }
 
+// Rename re-keys an inode (and, for a directory, its whole subtree) from
+// oldPath to newPath. Only name and path change. Metadata entries and the
+// children-set indexes are rewritten together so the tree stays consistent.
+func (s *RedisStore) Rename(ctx context.Context, oldPath, newPath string) error {
+	src, err := s.Get(ctx, oldPath)
+	if err != nil {
+		return err
+	}
+	if _, err := s.Get(ctx, newPath); err == nil {
+		return metadata.ErrAlreadyExists
+	} else if err != metadata.ErrNotFound {
+		return err
+	}
+
+	rewrite := func(p string) string { return newPath + p[len(oldPath):] }
+
+	// Gather every metadata path affected: the source plus, for a directory,
+	// all descendants. Rewrite each onto its new path.
+	affected := []*metadata.Metadata{src}
+	if src.Type == "directory" {
+		iter := s.client.Scan(ctx, 0, s.metadataKey(oldPath)+"/*", 0).Iterator()
+		for iter.Next(ctx) {
+			raw, getErr := s.client.Get(ctx, iter.Val()).Result()
+			if getErr != nil {
+				continue
+			}
+			var md metadata.Metadata
+			if json.Unmarshal([]byte(raw), &md) != nil {
+				continue
+			}
+			affected = append(affected, &md)
+		}
+		if err := iter.Err(); err != nil {
+			return fmt.Errorf("failed to scan descendants: %w", err)
+		}
+	}
+
+	now := time.Now().UTC()
+	pipe := s.client.TxPipeline()
+
+	for _, md := range affected {
+		oldMdPath := md.Path
+		md.Path = rewrite(oldMdPath)
+		md.Name = pathBaseRedis(md.Path)
+		md.UpdatedAt = now
+		raw, marshalErr := json.Marshal(md)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to encode metadata: %w", marshalErr)
+		}
+		pipe.Set(ctx, s.metadataKey(md.Path), raw, 0)
+		pipe.Del(ctx, s.metadataKey(oldMdPath))
+	}
+
+	// Re-key the children-set indexes (the source's own set plus any descendant
+	// directory sets), rewriting the member paths they contain.
+	childSetKeys := []string{s.childrenKey(oldPath)}
+	if src.Type == "directory" {
+		iter := s.client.Scan(ctx, 0, s.childrenKey(oldPath)+"/*", 0).Iterator()
+		for iter.Next(ctx) {
+			childSetKeys = append(childSetKeys, iter.Val())
+		}
+		if err := iter.Err(); err != nil {
+			return fmt.Errorf("failed to scan children sets: %w", err)
+		}
+	}
+	for _, oldSetKey := range childSetKeys {
+		members, smErr := s.client.SMembers(ctx, oldSetKey).Result()
+		if smErr != nil {
+			return fmt.Errorf("failed to read children set: %w", smErr)
+		}
+		// oldSetKey is "<prefix>children:<dirPath>"; derive the new set key by
+		// rewriting the embedded directory path.
+		oldDir := strings.TrimPrefix(oldSetKey, s.prefix+"children:")
+		newSetKey := s.childrenKey(rewrite(oldDir))
+		pipe.Del(ctx, oldSetKey)
+		if len(members) > 0 {
+			rewritten := make([]any, 0, len(members))
+			for _, m := range members {
+				rewritten = append(rewritten, rewrite(m))
+			}
+			pipe.SAdd(ctx, newSetKey, rewritten...)
+		}
+	}
+
+	// Move the entry within its parents' children sets.
+	pipe.SRem(ctx, s.childrenKey(parentPath(oldPath)), oldPath)
+	pipe.SAdd(ctx, s.childrenKey(parentPath(newPath)), newPath)
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("failed to apply rename: %w", err)
+	}
+	return nil
+}
+
+func pathBaseRedis(path string) string {
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
+}
+
 func (s *RedisStore) ListChildren(ctx context.Context, parentPath string) ([]*metadata.Metadata, error) {
 	paths, err := s.client.SMembers(ctx, s.childrenKey(parentPath)).Result()
 	if err != nil {

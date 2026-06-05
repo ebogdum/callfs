@@ -40,6 +40,7 @@ type Config struct {
 type Command struct {
 	Op          string                    `json:"op"`
 	Path        string                    `json:"path,omitempty"`
+	NewPath     string                    `json:"new_path,omitempty"`
 	Metadata    *metadata.Metadata        `json:"metadata,omitempty"`
 	Token       string                    `json:"token,omitempty"`
 	Link        *metadata.SingleUseLink   `json:"link,omitempty"`
@@ -399,6 +400,11 @@ func (s *Store) Delete(ctx context.Context, path string) error {
 	return err
 }
 
+func (s *Store) Rename(ctx context.Context, oldPath, newPath string) error {
+	_, err := s.applyCommand(ctx, Command{Op: "rename_metadata", Path: oldPath, NewPath: newPath})
+	return err
+}
+
 func (s *Store) ListChildren(ctx context.Context, parentPath string) ([]*metadata.Metadata, error) {
 	// Leader reads directly from the FSM (authoritative)
 	if s.IsLeader() {
@@ -677,6 +683,35 @@ func (f *fsm) applyMetadataOp(cmd *Command) CommandResult {
 		}
 		delete(f.state.MetadataByPath, cmd.Path)
 		return CommandResult{}
+	case "rename_metadata":
+		src, exists := f.state.MetadataByPath[cmd.Path]
+		if !exists {
+			return CommandResult{Err: "not_found"}
+		}
+		if _, exists := f.state.MetadataByPath[cmd.NewPath]; exists {
+			return CommandResult{Err: "already_exists"}
+		}
+		now := time.Now().UTC()
+		// Collect affected paths first to avoid mutating the map while iterating.
+		affected := []string{cmd.Path}
+		if src.Type == "directory" {
+			prefix := cmd.Path + "/"
+			for p := range f.state.MetadataByPath {
+				if strings.HasPrefix(p, prefix) {
+					affected = append(affected, p)
+				}
+			}
+		}
+		for _, oldP := range affected {
+			md := f.state.MetadataByPath[oldP]
+			newP := cmd.NewPath + oldP[len(cmd.Path):]
+			md.Path = newP
+			md.Name = pathBaseRaft(newP)
+			md.UpdatedAt = now
+			delete(f.state.MetadataByPath, oldP)
+			f.state.MetadataByPath[newP] = md
+		}
+		return CommandResult{}
 	default:
 		children := make([]*metadata.Metadata, 0)
 		for _, md := range f.state.MetadataByPath {
@@ -767,6 +802,7 @@ var opCategory = map[string]string{
 	"create_metadata":       "metadata",
 	"update_metadata":       "metadata",
 	"delete_metadata":       "metadata",
+	"rename_metadata":       "metadata",
 	"get_link":              "link",
 	"create_link":           "link",
 	"update_link":           "link",
@@ -914,6 +950,13 @@ func pathDir(p string) string {
 		return "/"
 	}
 	return p[:lastSlash]
+}
+
+func pathBaseRaft(p string) string {
+	if idx := strings.LastIndex(p, "/"); idx >= 0 {
+		return p[idx+1:]
+	}
+	return p
 }
 
 func copyStringMap(in map[string]string) map[string]string {

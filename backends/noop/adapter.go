@@ -38,6 +38,11 @@ func (n *NoopAdapter) Delete(ctx context.Context, path string) error {
 	return fmt.Errorf("backend not enabled: cannot delete file %s", path)
 }
 
+// Move always returns an error for noop backend
+func (n *NoopAdapter) Move(ctx context.Context, oldPath, newPath string) error {
+	return fmt.Errorf("backend not enabled: cannot move file %s", oldPath)
+}
+
 // Stat always returns an error for noop backend
 func (n *NoopAdapter) Stat(ctx context.Context, path string) (*metadata.Metadata, error) {
 	return nil, fmt.Errorf("backend not enabled: cannot stat file %s", path)

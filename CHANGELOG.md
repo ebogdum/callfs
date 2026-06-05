@@ -1,5 +1,29 @@
 # Changelog
 
+## [v1.5.0] - 2026-06-05
+
+### **New Features**
+- **First-class rename and move** (`PATCH /v1/files/{path}`), resolving [#3](https://github.com/ebogdum/callfs/issues/3). Two distinct operations selected by the request body:
+  - **Rename** (`{"name":"..."}`) — change a resource's name in place, keeping the same folder, backend, and instance.
+  - **Move** (`{"destination":"..."}`) — relocate to a different folder and, optionally, a different `backend` or `instance`, with `overwrite` and `create_parents` flags.
+  - Both files and directories (with their entire subtree) are supported. Each operation updates the metadata store **and** relocates the underlying bytes together — bytes first, then metadata, leaving the source intact if the byte move fails. Same-instance localfs renames are atomic.
+  - Supported on all metadata stores (SQLite, PostgreSQL, Redis, Raft) and all backends (local FS, S3, internal proxy); erasure-coded files are renamed by re-keying their shard metadata without moving shard data.
+  - Cross-server aware: requests are proxied to the owning (or target) node automatically.
+
+### **Enhancements**
+- New `metadata.Store.Rename` primitive (atomic subtree re-key) and `backends.Storage.Move` primitive (atomic local rename / server-side S3 copy+delete).
+
+### **Tests**
+- Added unit tests for SQLite subtree rename, local FS move (incl. cross-device fallback), and engine-level rename/move (folder move, overwrite, cross-backend relocation, directory move, validation). Added integration suite `34-rename-move.sh`.
+
+### **Documentation**
+- Documented the rename/move API in `README.md`, `docs_markdown/03-api-reference.md`, and the OpenAPI/Swagger specs.
+
+### **v1 Limitations**
+- Re-tiering a file to/from the `erasure` backend and moving a *directory* across backends or instances are not supported and return `400`.
+
+---
+
 ## [v1.3.0] - 2026-04-11
 
 ### **Breaking Changes**
