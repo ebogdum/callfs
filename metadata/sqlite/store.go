@@ -270,6 +270,63 @@ func (s *SQLiteStore) Delete(ctx context.Context, path string) error {
 	return nil
 }
 
+// Rename re-keys an inode (and, for a directory, its whole subtree) from
+// oldPath to newPath in a single transaction. Only name and path change.
+func (s *SQLiteStore) Rename(ctx context.Context, oldPath, newPath string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin rename transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var srcType string
+	err = tx.QueryRowContext(ctx, `SELECT type FROM inodes WHERE path = ?`, oldPath).Scan(&srcType)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return metadata.ErrNotFound
+		}
+		return fmt.Errorf("failed to read source inode: %w", err)
+	}
+
+	var destExists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM inodes WHERE path = ?`, newPath).Scan(&destExists); err != nil {
+		return fmt.Errorf("failed to check destination inode: %w", err)
+	}
+	if destExists > 0 {
+		return metadata.ErrAlreadyExists
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	newName := pathBase(newPath)
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE inodes SET name = ?, path = ?, updated_at = ? WHERE path = ?`,
+		newName, newPath, now, oldPath,
+	); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: inodes.path") {
+			return metadata.ErrAlreadyExists
+		}
+		return fmt.Errorf("failed to rename inode: %w", err)
+	}
+
+	if srcType == "directory" {
+		// Rewrite every descendant path: strip the old prefix, prepend the new one.
+		// substr is 1-indexed; +2 skips the old path plus its trailing '/'.
+		prefixLen := len(oldPath) + 2
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE inodes SET path = ? || substr(path, ?), updated_at = ? WHERE path LIKE ? ESCAPE '\'`,
+			newPath+"/", prefixLen, now, escapeLikePattern(oldPath)+"/%",
+		); err != nil {
+			return fmt.Errorf("failed to rename descendants: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit rename: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) ListChildren(ctx context.Context, parentPath string) ([]*metadata.Metadata, error) {
 	var (
 		rows *sql.Rows
@@ -534,6 +591,14 @@ func nullString(value *string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: *value, Valid: true}
+}
+
+// pathBase returns the last path segment (the inode name) of an absolute path.
+func pathBase(path string) string {
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
 }
 
 // escapeLikePattern escapes SQL LIKE metacharacters (\, %, _) in a string

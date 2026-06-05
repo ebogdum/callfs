@@ -205,6 +205,60 @@ func (a *InternalProxyAdapter) Delete(ctx context.Context, path string) error {
 	return a.DeleteOnInstance(ctx, instanceID, path)
 }
 
+// Move relocates a file by proxying a PATCH (move) request to the owning
+// instance. The instance ID is taken from the context.
+func (a *InternalProxyAdapter) Move(ctx context.Context, oldPath, newPath string) error {
+	instanceID := a.getInstanceIDFromContext(ctx)
+	if instanceID == "" {
+		return fmt.Errorf("internal proxy requires instance ID in context")
+	}
+	body, err := json.Marshal(map[string]any{"destination": newPath})
+	if err != nil {
+		return fmt.Errorf("failed to encode move request: %w", err)
+	}
+	return a.MoveOnInstance(ctx, instanceID, oldPath, body)
+}
+
+// MoveOnInstance sends a PATCH (rename/move) request for srcPath to a specific
+// CallFS instance. The body is a JSON move/rename payload; the target instance
+// performs the operation against its own backend and the shared metadata store.
+func (a *InternalProxyAdapter) MoveOnInstance(ctx context.Context, instanceID, srcPath string, body []byte) error {
+	endpoint, exists := a.getEndpoint(instanceID)
+	if !exists {
+		return fmt.Errorf("unknown instance ID: %s", instanceID)
+	}
+
+	reqURL := buildProxyURL(endpoint, srcPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, reqURL, strings.NewReader(string(body)))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", a.internalAuthToken))
+	req.Header.Set("Content-Type", "application/json")
+
+	a.logger.Debug("Proxying file move request",
+		zap.String("instance_id", instanceID),
+		zap.String("path", srcPath),
+		zap.String("url", reqURL))
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to proxy request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return metadata.ErrNotFound
+		}
+		if resp.StatusCode == http.StatusConflict {
+			return metadata.ErrAlreadyExists
+		}
+		return fmt.Errorf("proxy request failed with status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // DeleteOnInstance deletes a file on a specific CallFS instance
 func (a *InternalProxyAdapter) DeleteOnInstance(ctx context.Context, instanceID, path string) error {
 	endpoint, exists := a.getEndpoint(instanceID)

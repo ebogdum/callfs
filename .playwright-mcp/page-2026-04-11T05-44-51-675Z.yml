@@ -1,0 +1,10 @@
+- main [ref=e2]:
+  - link "Google" [ref=e3] [cursor=pointer]:
+    - /url: //www.google.com
+    - img "Google" [ref=e4]
+  - paragraph [ref=e5]:
+    - text: "429."
+    - insertion [ref=e6]: That’s an error.
+  - paragraph [ref=e7]:
+    - text: We're sorry, but you have sent too many requests to us recently. Please try again later.
+    - insertion [ref=e8]: That’s all we know.

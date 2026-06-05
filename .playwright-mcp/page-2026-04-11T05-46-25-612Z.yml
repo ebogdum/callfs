@@ -1,0 +1,402 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]: Our free tool
+        - heading "Free Keyword Search Volume Tool" [level=1] [ref=e9]:
+          - text: Free Keyword
+          - strong [ref=e10]: Search Volume
+          - text: Tool
+        - generic [ref=e12]:
+          - paragraph [ref=e13]: Simply enter all your keywords in the field below and click “Submit” to get search volume for each keyword.
+          - generic [ref=e16]:
+            - generic [ref=e17]:
+              - textbox "Enter one keyword per line" [ref=e18]
+              - generic [ref=e19]: 0/800
+            - generic [ref=e20]:
+              - combobox [ref=e22] [cursor=pointer]:
+                - option "Germany"
+                - option "Denmark"
+                - option "France"
+                - option "United Kingdom"
+                - option "Italy"
+                - option "Netherlands"
+                - option "Norway"
+                - option "Brazil"
+                - option "Sweden"
+                - option "United States" [selected]
+              - button "Submit" [ref=e24] [cursor=pointer]
+        - generic [ref=e25]:
+          - generic [ref=e26]: OUR PAID PLATFORM
+          - heading "Find keywords with AI and make sure they don’t compete with each other" [level=2] [ref=e27]
+        - paragraph [ref=e28]: Uncover hidden keyword gems with access to billions of keyword data points, competitor insights, AI assistance and a cannibalization checker - all in one place, and at a low price.
+      - generic [ref=e29]:
+        - link "Try free now →" [ref=e30] [cursor=pointer]:
+          - /url: https://app.searchvolume.io/register
+        - generic [ref=e31]: Get full access instantly. Cancel anytime.
+    - banner [ref=e40]:
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - link "AI Writer for SEO" [ref=e44] [cursor=pointer]:
+            - /url: https://searchvolume.io/
+            - img "AI Writer for SEO" [ref=e45]
+          - navigation [ref=e47]:
+            - list [ref=e48]:
+              - listitem [ref=e49]:
+                - link "Features" [ref=e50] [cursor=pointer]:
+                  - /url: /
+              - listitem [ref=e51]:
+                - link "Pricing" [ref=e52] [cursor=pointer]:
+                  - /url: /pricing
+              - listitem [ref=e53]:
+                - link "Blog" [ref=e54] [cursor=pointer]:
+                  - /url: /blog
+          - generic [ref=e55]:
+            - link "Sign in" [ref=e56] [cursor=pointer]:
+              - /url: https://app.searchvolume.io/
+            - link "7-day free trial" [ref=e58] [cursor=pointer]:
+              - /url: https://app.searchvolume.io/register
+              - strong [ref=e59]: 7-day free trial
+        - text: 
+  - generic [ref=e61]:
+    - generic [ref=e62]:
+      - heading "All the keyword research tools you really need..." [level=2] [ref=e63]
+      - paragraph [ref=e64]: Get everything you need to find, analyze, and optimize keywords and take your organic traffic from Google to the next level.
+    - generic [ref=e65]:
+      - generic [ref=e66]:
+        - generic [ref=e68]:
+          - heading "AI Keyword Assistant" [level=3] [ref=e69]
+          - paragraph [ref=e70]: Let AI identify high-impact keywords based on seed keywords or prompts.
+        - generic [ref=e72]:
+          - heading "Keyword Cannibalization" [level=3] [ref=e73]
+          - paragraph [ref=e74]: Detect overlapping keywords that prevent your from ranking.
+        - generic [ref=e76]:
+          - heading "Competitor Keywords" [level=3] [ref=e77]
+          - paragraph [ref=e78]: Gain insights into your competitors strategies and specific ranking keywords.
+        - generic [ref=e80]:
+          - heading "Keyword Search Volume" [level=3] [ref=e81]
+          - paragraph [ref=e82]: Understand search volume, difficulty and cost if you were to buy Google Ads.
+        - generic [ref=e84]:
+          - heading "Related Keywords" [level=3] [ref=e85]
+          - paragraph [ref=e86]: Find semantic related keywords based on a seed keyword.
+        - generic [ref=e88]:
+          - heading "Long-tail Keywords" [level=3] [ref=e89]
+          - paragraph [ref=e90]: Get long-tail keyword ideas in order to attract niche audience searches.
+      - generic [ref=e92]:
+        - link "Start for free" [ref=e93] [cursor=pointer]:
+          - /url: https://app.searchvolume.io/register
+        - link "Learn more" [ref=e94] [cursor=pointer]:
+          - /url: /blog
+  - generic [ref=e97]:
+    - generic [ref=e99]:
+      - heading "The most user-friendly keyword research tool" [level=2] [ref=e100]
+      - paragraph [ref=e101]: Designed with simplicity in mind, our tool makes keyword research accessible to everyone, from beginners to experts.
+    - generic [ref=e105]:
+      - heading "Effective keyword research will boost your traffic" [level=2] [ref=e106]
+      - paragraph [ref=e107]: Transform your SEO strategy with data-backed keywords that lead to real traffic growth and better visibility.
+  - generic [ref=e108]:
+    - generic [ref=e109]:
+      - heading "Backed by huge datasets" [level=2] [ref=e110]
+      - paragraph [ref=e111]: Built on billions of data points to provide you with the most reliable insights and search volumes.
+    - generic [ref=e113]:
+      - link "+7,000,000,000 Google Keywords Keywords with stats in our databases across markets" [ref=e115] [cursor=pointer]:
+        - /url: "#"
+        - generic [ref=e116]:
+          - heading "+7,000,000,000" [level=2] [ref=e117]
+          - paragraph [ref=e118]: Google Keywords
+          - paragraph [ref=e119]: Keywords with stats in our databases across markets
+      - link "+2,500,000,000,000 Live Backlinks Amount of backlinks our tool provide information about" [ref=e121] [cursor=pointer]:
+        - /url: "#"
+        - generic [ref=e122]:
+          - heading "+2,500,000,000,000" [level=2] [ref=e123]
+          - paragraph [ref=e124]: Live Backlinks
+          - paragraph [ref=e125]: Amount of backlinks our tool provide information about
+      - link "+500,000,000 Backlink Domains Number of unique domains currently in our databases" [ref=e127] [cursor=pointer]:
+        - /url: "#"
+        - generic [ref=e128]:
+          - heading "+500,000,000" [level=2] [ref=e129]:
+            - strong [ref=e130]: +500,000,000
+          - paragraph [ref=e131]: Backlink Domains
+          - paragraph [ref=e132]: Number of unique domains currently in our databases
+  - generic [ref=e138]:
+    - heading "Affordable and simple pricing" [level=2] [ref=e140]
+    - generic [ref=e141]:
+      - generic [ref=e142]:
+        - generic [ref=e143]:
+          - generic [ref=e144]:
+            - heading "Lite" [level=1] [ref=e145]
+            - heading "$29 /month" [level=1] [ref=e146]
+            - generic [ref=e147]: For individual in-house marketers and freelancers.
+          - link "Start Free Trial →" [ref=e148] [cursor=pointer]:
+            - /url: https://app.searchvolume.io/register
+          - generic [ref=e149]:
+            - generic [ref=e150]:
+              - strong [ref=e151]: "500"
+              - text: monthly credits
+            - generic [ref=e152]: AI Keyword Assistant
+            - generic [ref=e153]: Keyword Search Volume
+            - generic [ref=e154]: Long-tail Keywords
+            - generic [ref=e155]: Competitors Keywords
+            - generic [ref=e156]: Related Keywords
+            - generic [ref=e157]: Keyword Cannibalization
+          - generic [ref=e159]: E-mail support
+        - generic [ref=e160]:
+          - generic [ref=e161]:
+            - heading "Standard" [level=1] [ref=e162]
+            - heading "$69 /month" [level=1] [ref=e163]
+            - generic [ref=e164]: Perfect for marketers ready to take their SEO to the next level.
+          - link "Start Free Trial →" [ref=e165] [cursor=pointer]:
+            - /url: https://app.searchvolume.io/register
+          - generic [ref=e166]:
+            - generic [ref=e167]:
+              - strong [ref=e168]: 2,000
+              - text: monthly credits
+            - generic [ref=e169]: AI Keyword Assistant
+            - generic [ref=e170]: Keyword Search Volume
+            - generic [ref=e171]: Long-tail Keywords
+            - generic [ref=e172]: Competitors Keywords
+            - generic [ref=e173]: Related Keywords
+            - generic [ref=e174]: Keyword Cannibalization
+          - generic [ref=e176]: E-mail support
+        - generic [ref=e177]:
+          - generic [ref=e178]:
+            - heading "Scale" [level=1] [ref=e179]
+            - heading "$119 /month" [level=1] [ref=e180]
+            - generic [ref=e181]: Ideal for marketers looking to scale their SEO efforts.
+          - link "Start Free Trial →" [ref=e182] [cursor=pointer]:
+            - /url: https://app.searchvolume.io/register
+          - generic [ref=e183]:
+            - generic [ref=e184]:
+              - strong [ref=e185]: 5,000
+              - text: monthly credits
+            - generic [ref=e186]: AI Keyword Assistant
+            - generic [ref=e187]: Keyword Search Volume
+            - generic [ref=e188]: Long-tail Keywords
+            - generic [ref=e189]: Competitors Keywords
+            - generic [ref=e190]: Related Keywords
+            - generic [ref=e191]: Keyword Cannibalization
+          - generic [ref=e193]: E-mail + video call support
+      - paragraph [ref=e194]:
+        - text: Credits are used per lookup or per keyword analyzed. Some lookups might provide hundreds or thousands of results, but still only cost a single credit.
+        - text: Unlimited is within fair usage guidelines, and to protect our service we actively check for unusual activity. If any is identified, access may be temporarily limited.
+  - generic [ref=e195]:
+    - generic [ref=e196]:
+      - paragraph [ref=e197]: The insight and data you need
+      - heading "Google Keyword Search Volume" [level=2] [ref=e198]
+      - paragraph [ref=e199]:
+        - text: The hidden search volume in Google Keyword Planner is back! We’ve built a new free bulk keyword search volume tool/checker.
+        - text: Simply enter all your keywords in the field above and click “Submit.”
+        - text: "Then the magic happens: In seconds, you’ll see the average monthly search volume for your selected keywords. The data can be exported to Excel. This is handy for people who work with online marketing and SEO."
+        - strong [ref=e200]: About the Free Keyword Tool
+        - text: You may know that Google now hides its search volume in Keyword Planner until you begin paying for Google Ads (former AdWords). Instead of showing exact numbers, Google now merely gives you ranges.
+        - text: Since we’re guessing that Google will eventually limit the data to search volume ranges for all users of Keyword Planner, we’ve developed a method to measure search volumes using our own tools and data purchased from third-party providers.
+        - text: Our goal is to provide keyword search volume for those without a Google Ads account and for a future in which we may not be able to rely on data from Google.
+        - strong [ref=e201]: What is search volume?
+        - text: Search volume is a measure of the total number of searches that are performed through search engines, expressed as the average monthly volume during the previous 12-month period.
+        - emphasis [ref=e202]: Search volume data is a very important foundational element in your search engine optimization (SEO) strategy.
+        - text: In order to target the most profitable keywords you need to know how many people out there (if anybody) are actually looking for a particular set of key search terms.
+        - text: With the search volume finder
+        - emphasis [ref=e203]: SearchVolume.io
+        - text: you can do exactly that – estimate keyword traffic for free.
+        - text: ‍
+        - text: ‍
+        - strong [ref=e204]: How to do keyword research?
+        - text: Who doesn’t want to get more relevant traffic to one’s website?
+        - text: ‍
+        - text: But how do you find keywords for SEO that can give you that first-class traffic?
+        - text: ‍
+        - text: Well, first you need to identify the relevant search behavior of your target audience. In other words, you need to dig at little bit deeper to find out what people are actually searching for on Google and other search engines. How do you do that?
+        - text: "Let us show you how you find the best keywords that will get you a lot of new visitors and customers. Follow these steps to perform real solid keyword research for your SEO strategy:"
+        - strong [ref=e205]: Make a brainstorm.
+        - text: Sit down with 1-2 of your colleagues and start brainstorming words related to your topic. Use search engines to find related keywords. Write down all the words you can think of.
+        - text: ‍
+        - strong [ref=e206]: Create a gross list with keywords.
+        - text: Now choose the words from the brainstorm that make sense for your business to rank for. Write down the words on a list. This is your gross list, which you will need in the further research.
+        - text: ‍
+        - strong [ref=e207]: Check the competition.
+        - text: Find out how many (and how good) the competing pages are in the search engine results for a given keyword. Many excellent pages will of course make it more difficult to rank. These keywords will take more of your time and therefore have to be worth it. Consider that before trying to rank for the high volume keywords.
+        - text: ‍
+        - strong [ref=e208]: Use the relevant keywords.
+        - text: Now you have a well-informed understanding of the search behavior significant for your site. It’s now time to use the relevant keywords in your search engine optimization efforts. Maybe even use tools as
+        - link "SEO.AI" [ref=e209] [cursor=pointer]:
+          - /url: https://seo.ai/
+        - text: to help you generate content or implement the keywords.
+        - text: ‍
+        - text: ‍
+        - strong [ref=e210]: How do I find keyword search volume data?
+        - text: Search engines like Google and Bing have their own tools that provide search volume numbers based on how many searches their users perform.
+        - text: They are often tricky to use, and now Google has made it harder to obtain these search volume numbers.
+        - text: While there are a few alternative keyword tools out there, none of them are free, fast, or easy to use. And they don't let you bulk thousands of keywords at a time when seeking search volume data.
+        - text: That's what we do for you!
+    - generic [ref=e211]:
+      - link "Find keywords →" [ref=e212] [cursor=pointer]:
+        - /url: https://app.searchvolume.io/register
+      - generic [ref=e213]: Rely on one of the largest keyword databases in the world!
+  - generic [ref=e216]:
+    - generic [ref=e217]:
+      - heading "Keyword data in many languages" [level=2] [ref=e218]
+      - paragraph [ref=e219]: We support 40 different languages and continuously work on expanding this list.
+    - generic [ref=e221]:
+      - paragraph [ref=e222]: Arabic 🇦🇪
+      - paragraph [ref=e223]: Bengali 🇧🇩
+      - paragraph [ref=e224]: Bulgarian 🇧🇬
+      - paragraph [ref=e225]: Chinese 🇨🇳
+      - paragraph [ref=e226]: Croatian 🇭🇷
+      - paragraph [ref=e227]: Czech 🇨🇿
+      - paragraph [ref=e228]: Danish 🇩🇰
+      - paragraph [ref=e229]: Dutch 🇳🇱
+      - paragraph [ref=e230]: English 🇬🇧 🇺🇸
+      - paragraph [ref=e231]: Estonian 🇪🇪
+      - paragraph [ref=e232]: Farsi 🇮🇷
+      - paragraph [ref=e233]: Finnish 🇫🇮
+      - paragraph [ref=e234]: French 🇫🇷
+      - paragraph [ref=e235]: German 🇩🇪
+      - paragraph [ref=e236]: Hebrew 🇮🇱
+      - paragraph [ref=e237]: Hindi 🇮🇳
+      - paragraph [ref=e238]: Hungarian 🇭🇺
+      - paragraph [ref=e239]: Icelandic 🇮🇸
+      - paragraph [ref=e240]: Italian 🇮🇹
+      - paragraph [ref=e241]: Japanese 🇯🇵
+      - paragraph [ref=e242]: Korean 🇰🇷
+      - paragraph [ref=e243]: Latvian 🇱🇻
+      - paragraph [ref=e244]: Lithuanian 🇱🇹
+      - paragraph [ref=e245]: Malay 🇲🇾 🇮🇩 🇧🇳
+      - paragraph [ref=e246]: Malayalam
+      - paragraph [ref=e247]: Norwegian 🇳🇴
+      - paragraph [ref=e248]: Polish 🇵🇱
+      - paragraph [ref=e249]: Portuguese 🇵🇹
+      - paragraph [ref=e250]: Romanian 🇷🇴
+      - paragraph [ref=e251]: Russian 🇷🇺
+      - paragraph [ref=e252]: Serbian 🇷🇸
+      - paragraph [ref=e253]: Slovak 🇸🇰
+      - paragraph [ref=e254]: Slovenian 🇸🇮
+      - paragraph [ref=e255]: Spanish 🇪🇸
+      - paragraph [ref=e256]: Swedish 🇸🇪
+      - paragraph [ref=e257]: Tamil 🇱🇰
+      - paragraph [ref=e258]: Thai 🇹🇭
+      - paragraph [ref=e259]: Turkish 🇹🇷
+      - paragraph [ref=e260]: Ukrainian 🇺🇦
+      - paragraph [ref=e261]: Vietnamese 🇻🇳
+  - generic [ref=e263]:
+    - generic [ref=e264]:
+      - heading "Latest articles" [level=2] [ref=e266]
+      - link "Browse all articles" [ref=e268] [cursor=pointer]:
+        - /url: /blog
+    - generic [ref=e269]:
+      - list [ref=e270]:
+        - listitem [ref=e271]:
+          - link "Keyword Rank Checker Tool (No Need for Signup) Tool Keyword Rank Checker Tool (No Need for Signup) Calendar Icon - Dark X Webflow Template March 18, 2025 The Keyword Rank Checker helps you check your website rank on Google for specific keywords, showing your position among the top 100 search results. Read more " [ref=e272] [cursor=pointer]:
+            - /url: /resources/keyword-rank-checker-tool
+            - generic [ref=e273]:
+              - img "Keyword Rank Checker Tool (No Need for Signup)" [ref=e274]
+              - generic [ref=e276]: Tool
+            - generic [ref=e277]:
+              - heading "Keyword Rank Checker Tool (No Need for Signup)" [level=3] [ref=e278]
+              - generic [ref=e280]:
+                - img "Calendar Icon - Dark X Webflow Template" [ref=e281]
+                - generic [ref=e282]: March 18, 2025
+              - paragraph [ref=e283]: The Keyword Rank Checker helps you check your website rank on Google for specific keywords, showing your position among the top 100 search results.
+              - generic [ref=e285]:
+                - generic [ref=e286]: Read more
+                - generic [ref=e287]: 
+        - listitem [ref=e289]:
+          - link "What is Semantic SEO? Articles Articles What is Semantic SEO? Calendar Icon - Dark X Webflow Template November 7, 2024 Transform your approach to ranking by learning what is semantic seo, a method emphasizing context, intent, and thorough content. Read more " [ref=e290] [cursor=pointer]:
+            - /url: /resources/what-is-semantic-seo
+            - generic [ref=e291]:
+              - img "What is Semantic SEO?" [ref=e292]
+              - generic [ref=e293]:
+                - img "Articles" [ref=e294]
+                - generic [ref=e295]: Articles
+            - generic [ref=e296]:
+              - heading "What is Semantic SEO?" [level=3] [ref=e297]
+              - generic [ref=e299]:
+                - img "Calendar Icon - Dark X Webflow Template" [ref=e300]
+                - generic [ref=e301]: November 7, 2024
+              - paragraph [ref=e302]: Transform your approach to ranking by learning what is semantic seo, a method emphasizing context, intent, and thorough content.
+              - generic [ref=e304]:
+                - generic [ref=e305]: Read more
+                - generic [ref=e306]: 
+        - listitem [ref=e308]:
+          - link "Guide to SEO Conferences in 2024 Articles Articles Guide to SEO Conferences in 2024 Calendar Icon - Dark X Webflow Template July 8, 2024 Explore top insights and trends in the global SEO conferences landscape of 2024, particularly focusing on prominent SEO events. Attend conferences to learn from exper Read more " [ref=e309] [cursor=pointer]:
+            - /url: /resources/guide-to-seo-conferences
+            - generic [ref=e310]:
+              - img "Guide to SEO Conferences in 2024" [ref=e311]
+              - generic [ref=e312]:
+                - img "Articles" [ref=e313]
+                - generic [ref=e314]: Articles
+            - generic [ref=e315]:
+              - heading "Guide to SEO Conferences in 2024" [level=3] [ref=e316]
+              - generic [ref=e318]:
+                - img "Calendar Icon - Dark X Webflow Template" [ref=e319]
+                - generic [ref=e320]: July 8, 2024
+              - paragraph [ref=e321]: Explore top insights and trends in the global SEO conferences landscape of 2024, particularly focusing on prominent SEO events. Attend conferences to learn from exper
+              - generic [ref=e323]:
+                - generic [ref=e324]: Read more
+                - generic [ref=e325]: 
+        - listitem [ref=e327]:
+          - link "What is the GPT Store from OpenAI? Articles Articles What is the GPT Store from OpenAI? Calendar Icon - Dark X Webflow Template January 12, 2024 OpenAI has launched the GPT Store, a platform for users of ChatGPT Plus, Team, and Enterprise to browse and utilize millions of custom GPT versions. Read more " [ref=e328] [cursor=pointer]:
+            - /url: /resources/what-is-the-gpt-store-from-openai
+            - generic [ref=e329]:
+              - img "What is the GPT Store from OpenAI?" [ref=e330]
+              - generic [ref=e331]:
+                - img "Articles" [ref=e332]
+                - generic [ref=e333]: Articles
+            - generic [ref=e334]:
+              - heading "What is the GPT Store from OpenAI?" [level=3] [ref=e335]
+              - generic [ref=e337]:
+                - img "Calendar Icon - Dark X Webflow Template" [ref=e338]
+                - generic [ref=e339]: January 12, 2024
+              - paragraph [ref=e340]: OpenAI has launched the GPT Store, a platform for users of ChatGPT Plus, Team, and Enterprise to browse and utilize millions of custom GPT versions.
+              - generic [ref=e342]:
+                - generic [ref=e343]: Read more
+                - generic [ref=e344]: 
+      - navigation "List"
+  - contentinfo [ref=e346]:
+    - generic [ref=e347]:
+      - generic [ref=e348]:
+        - generic [ref=e349]:
+          - generic [ref=e350]:
+            - generic [ref=e351]: Tools
+            - list [ref=e353]:
+              - listitem [ref=e354]:
+                - link "Google Keyword Planner Alternative" [ref=e355] [cursor=pointer]:
+                  - /url: https://searchvolume.io/resources/google-keyword-planner-alternative-tools
+              - listitem [ref=e356]:
+                - link "Keyword Tool" [ref=e357] [cursor=pointer]:
+                  - /url: /
+              - listitem [ref=e358]:
+                - link "Free SEO tools" [ref=e359] [cursor=pointer]:
+                  - /url: /tools
+              - listitem [ref=e360]:
+                - link "AI Keyword Tool" [ref=e361] [cursor=pointer]:
+                  - /url: https://seo.ai/
+              - listitem [ref=e362]:
+                - link "Blog NEW POST" [ref=e363] [cursor=pointer]:
+                  - /url: /blog
+                  - generic [ref=e364]: Blog
+                  - generic [ref=e366]: NEW POST
+          - generic [ref=e368]:
+            - generic [ref=e369]: Use cases
+            - list [ref=e371]:
+              - listitem [ref=e372]:
+                - link "SEO Keyword List" [ref=e373] [cursor=pointer]:
+                  - /url: https://searchvolume.io/resources/how-to-build-a-strong-seo-keyword-list-and-the-1-free-tool
+              - listitem [ref=e374]:
+                - link "Long-Tailed Keywords" [ref=e375] [cursor=pointer]:
+                  - /url: https://searchvolume.io/resources/long-tailed-keywords-tool-guide
+              - listitem [ref=e376]:
+                - link "Reverse Keyword Search" [ref=e377] [cursor=pointer]:
+                  - /url: https://searchvolume.io/resources/reverse-keyword-search
+              - listitem [ref=e378]:
+                - link "Best AI Writing Tools" [ref=e379] [cursor=pointer]:
+                  - /url: https://seo.ai/blog/the-best-ai-writing-tools
+        - generic [ref=e380]:
+          - generic [ref=e381]: Subscribe to our SEO + AI newsletter
+          - paragraph [ref=e382]: Keep up with the hottest trends in AI writing and SEO! Get the scoop on the best tips and tricks to enhance your automated writing and SEO abilities.
+          - generic [ref=e387]:
+            - textbox [ref=e389]: Enter your email
+            - button "Subscribe" [ref=e391] [cursor=pointer]
+      - generic [ref=e392]:
+        - link [ref=e393] [cursor=pointer]:
+          - /url: /
+        - generic [ref=e394]: Copyright © Search Volume | 2024

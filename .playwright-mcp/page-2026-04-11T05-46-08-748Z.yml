@@ -1,0 +1,72 @@
+- generic [active] [ref=e1]:
+  - region "This site uses cookies from Google to deliver and enhance the quality of its services and to analyze traffic." [ref=e2]:
+    - generic [ref=e3]:
+      - text: This site uses cookies from Google to deliver and enhance the quality of its services and to analyze traffic.
+      - generic [ref=e4]:
+        - link "Learn more" [ref=e5] [cursor=pointer]:
+          - /url: https://policies.google.com/technologies/cookies?hl=en
+        - button "OK, got it" [ref=e6] [cursor=pointer]
+  - generic [ref=e9]:
+    - banner [ref=e10]:
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - button [ref=e17] [cursor=pointer]:
+              - generic "Open menu" [ref=e18]:
+                - generic [ref=e19]:
+                  - img
+            - generic [ref=e20]:
+              - link [ref=e21] [cursor=pointer]:
+                - /url: /trends?geo=&hl=en-US
+              - generic [ref=e23]:
+                - link "Home" [ref=e25] [cursor=pointer]:
+                  - /url: /trends/?geo=&hl=en-US
+                  - text: Home
+                - link "Explore" [ref=e27] [cursor=pointer]:
+                  - /url: /trends/explore?geo=&hl=en-US
+                  - text: Explore
+                - link "Trending Now" [ref=e30] [cursor=pointer]:
+                  - /url: /trends/trendingsearches/daily?geo=&hl=en-US
+                  - text: Trending Now
+          - generic [ref=e31]:
+            - button "Share" [ref=e33] [cursor=pointer]:
+              - generic [ref=e34]: share
+            - button "feedback" [ref=e35] [cursor=pointer]:
+              - generic [ref=e36]: feedback
+            - generic [ref=e40]:
+              - button "Google apps" [ref=e44] [cursor=pointer]:
+                - img [ref=e45]
+              - link "Sign in" [ref=e48] [cursor=pointer]:
+                - /url: https://accounts.google.com/ServiceLogin?passive=1209600&continue=https://trends.google.com/trends/explore?q%3Dgolang%2Bfile%2Bserver,file%2Bupload%2Bgolang,prometheus%2Bmonitoring%2Bsetup,file%2Bpermissions%2Blinux,curl%2Bupload%2Bfile%26hl%3Den-US&followup=https://trends.google.com/trends/explore?q%3Dgolang%2Bfile%2Bserver,file%2Bupload%2Bgolang,prometheus%2Bmonitoring%2Bsetup,file%2Bpermissions%2Blinux,curl%2Bupload%2Bfile%26hl%3Den-US&hl=en-US&ec=GAZAPA
+        - generic [ref=e49]:
+          - generic [ref=e52]:
+            - button "Worldwide" [ref=e55] [cursor=pointer]:
+              - generic:
+                - generic: Worldwide
+                - generic: ▼
+            - 'listbox "Select time period: Past 12 months" [ref=e58]':
+              - generic [ref=e59]:
+                - generic [ref=e60]: Past 12 months
+                - generic [ref=e61]: ▼
+            - button "All categories" [ref=e64] [cursor=pointer]:
+              - generic:
+                - generic: All categories
+                - generic: ▼
+            - 'listbox "Select stories location: Web Search" [ref=e65]':
+              - generic [ref=e66]:
+                - generic [ref=e67]: Web Search
+                - generic [ref=e68]: ▼
+          - generic [ref=e70] [cursor=pointer]:
+            - generic [ref=e71]:
+              - generic "golang file server" [ref=e72]:
+                - generic [ref=e74]: golang file server
+              - generic "file upload golang" [ref=e75]:
+                - generic [ref=e77]: file upload golang
+              - generic "prometheus monitoring setup" [ref=e78]:
+                - generic [ref=e80]: prometheus monitoring setup
+              - generic "file permissions linux" [ref=e81]:
+                - generic [ref=e83]: file permissions linux
+              - generic "curl upload file" [ref=e84]:
+                - generic [ref=e86]: curl upload file
+            - generic [ref=e87]: Worldwide, Past 12 months
+    - img [ref=e89]

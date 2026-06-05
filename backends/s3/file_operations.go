@@ -105,6 +105,50 @@ func (a *S3Adapter) Delete(ctx context.Context, path string) error {
 	return nil
 }
 
+// Move relocates an object from oldPath to newPath using a server-side copy
+// followed by a delete of the source. S3 has no native rename, but the copy is
+// performed entirely within S3 so the object bytes never transit the server.
+func (a *S3Adapter) Move(ctx context.Context, oldPath, newPath string) error {
+	srcKey := a.pathToKey(oldPath)
+	dstKey := a.pathToKey(newPath)
+
+	copyInput := &s3.CopyObjectInput{
+		Bucket:     aws.String(a.bucketName),
+		CopySource: aws.String(a.bucketName + "/" + srcKey),
+		Key:        aws.String(dstKey),
+	}
+	if a.serverSideEncryption != "" {
+		copyInput.ServerSideEncryption = aws.String(a.serverSideEncryption)
+		if a.serverSideEncryption == "aws:kms" && a.kmsKeyID != "" {
+			copyInput.SSEKMSKeyId = aws.String(a.kmsKeyID)
+		}
+	}
+	if a.acl != "" {
+		copyInput.ACL = aws.String(a.acl)
+	}
+
+	if _, err := a.client.CopyObjectWithContext(ctx, copyInput); err != nil {
+		if isS3NotFound(err) {
+			return metadata.ErrNotFound
+		}
+		return fmt.Errorf("failed to copy object during move: %w", err)
+	}
+
+	if _, err := a.client.DeleteObjectWithContext(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(a.bucketName),
+		Key:    aws.String(srcKey),
+	}); err != nil {
+		return fmt.Errorf("failed to delete source object after move: %w", err)
+	}
+
+	a.logger.Debug("Object moved in S3",
+		zap.String("bucket", a.bucketName),
+		zap.String("src_key", srcKey),
+		zap.String("dst_key", dstKey))
+
+	return nil
+}
+
 // Stat gets file information
 func (a *S3Adapter) Stat(ctx context.Context, path string) (*metadata.Metadata, error) {
 	key := a.pathToKey(path)

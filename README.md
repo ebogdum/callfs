@@ -150,14 +150,26 @@ curl http://localhost:8443/v1/files/hello.txt \
 curl http://localhost:8443/v1/directories/ \
   -H "Authorization: Bearer my-secret-api-key-at-least-16-chars"
 
+# Rename it (in place — name only)
+curl -X PATCH http://localhost:8443/v1/files/hello.txt \
+  -H "Authorization: Bearer my-secret-api-key-at-least-16-chars" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "greeting.txt"}'
+
+# Move it to another folder (creating the folder if needed)
+curl -X PATCH http://localhost:8443/v1/files/greeting.txt \
+  -H "Authorization: Bearer my-secret-api-key-at-least-16-chars" \
+  -H "Content-Type: application/json" \
+  -d '{"destination": "/archive/greeting.txt", "create_parents": true}'
+
 # Create a single-use download link (expires in 1 hour)
 curl -X POST http://localhost:8443/v1/links/generate \
   -H "Authorization: Bearer my-secret-api-key-at-least-16-chars" \
   -H "Content-Type: application/json" \
-  -d '{"path": "/hello.txt", "expiry_seconds": 3600}'
+  -d '{"path": "/archive/greeting.txt", "expiry_seconds": 3600}'
 
 # Delete the file
-curl -X DELETE http://localhost:8443/v1/files/hello.txt \
+curl -X DELETE http://localhost:8443/v1/files/archive/greeting.txt \
   -H "Authorization: Bearer my-secret-api-key-at-least-16-chars"
 ```
 
@@ -175,8 +187,44 @@ All endpoints are prefixed with `/v1` and require `Authorization: Bearer <api-ke
 | `HEAD` | `/v1/files/{path}` | Get file metadata headers |
 | `POST` | `/v1/files/{path}` | Create a file or directory |
 | `PUT` | `/v1/files/{path}` | Update (overwrite) a file |
+| `PATCH` | `/v1/files/{path}` | Rename or move a file or directory |
 | `DELETE` | `/v1/files/{path}` | Delete a file or directory |
 | `GET` | `/v1/files/ws/{path}?mode=download\|upload` | WebSocket file transfer (64KB chunks, 100MB upload limit) |
+
+### Rename & Move
+
+`PATCH /v1/files/{path}` performs two distinct operations, selected by the request body. Exactly one of `name` or `destination` must be present. Both a file and a directory (with its whole subtree) can be renamed or moved.
+
+**Rename** — change the name only, keeping the same folder, backend, and instance:
+
+```bash
+curl -X PATCH http://localhost:8443/v1/files/reports/q1.txt \
+  -H "Authorization: Bearer <key>" -H "Content-Type: application/json" \
+  -d '{"name": "q1-final.txt"}'           # -> /reports/q1-final.txt
+```
+
+**Move** — relocate to a different folder and, optionally, a different backend or instance:
+
+```bash
+curl -X PATCH http://localhost:8443/v1/files/reports/q1-final.txt \
+  -H "Authorization: Bearer <key>" -H "Content-Type: application/json" \
+  -d '{"destination": "/archive/2026/q1.txt", "create_parents": true}'
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | — | New name (single path segment, no `/`). Renames in place. |
+| `destination` | string | — | Absolute target path. Moves the resource. |
+| `backend` | string | source's | Target backend (`localfs`, `s3`). Moves the bytes to that backend. |
+| `instance` | string | source's | Target instance ID. Moves the bytes to that node. |
+| `overwrite` | bool | `false` | Replace an existing destination (also `?overwrite=true`). |
+| `create_parents` | bool | `false` | Create missing destination parent folders. |
+
+Both rename and move update the metadata store **and** relocate the underlying bytes together (bytes first, then metadata; the source is preserved if the byte move fails). Same-instance localfs renames are atomic. Authorization requires ownership of the source and write access to the destination's parent.
+
+**Responses:** `200 OK` (body `{"path":"/new/path"}`); `400` invalid request (bad name, both/neither of `name`/`destination`, moving a directory into itself, missing parent without `create_parents`); `403` not owner / no write on destination parent; `404` source missing; `409` destination exists and `overwrite=false`.
+
+> **v1 limitations:** moving a file to/from the `erasure` backend (re-tiering) and moving a *directory* across backends or instances are not supported and return `400`; rename, in-place reorganization, cross-backend/cross-instance *file* moves, and same-backend directory moves are fully supported.
 
 ### Directories
 

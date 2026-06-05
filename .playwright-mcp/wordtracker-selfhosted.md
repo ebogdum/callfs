@@ -1,0 +1,199 @@
+- generic [ref=e1]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e8] [cursor=pointer]:
+        - button "Play" [ref=e10]
+        - img "Mike Mindel takes you through the Wordttracker keyword tool"
+      - button "×" [ref=e11] [cursor=pointer]
+    - generic [ref=e12]:
+      - banner [ref=e13]:
+        - link "Wordtracker" [ref=e14] [cursor=pointer]:
+          - /url: /#/search
+          - heading "Wordtracker" [level=1] [ref=e15]:
+            - strong: Wordtracker
+        - list [ref=e16]:
+          - listitem [ref=e17]:
+            - link "By Search" [ref=e18] [cursor=pointer]:
+              - /url: /search
+          - listitem [ref=e19]:
+            - link "By Domain" [ref=e20] [cursor=pointer]:
+              - /url: /domain
+          - listitem [ref=e21]:
+            - link "By Rank" [ref=e22] [cursor=pointer]:
+              - /url: /ranking
+        - list [ref=e23]:
+          - listitem [ref=e24]:
+            - link "Log in" [ref=e25] [cursor=pointer]:
+              - /url: /login
+          - listitem [ref=e26]:
+            - button " Unlock full tool" [ref=e27] [cursor=pointer]
+          - text: 
+      - search [ref=e29]:
+        - generic: 
+        - generic [ref=e32]: 1 free searches remaining. Unlock now...
+        - generic [ref=e35]:
+          - generic [ref=e36]:
+            - text:  Enter a seed term to reveal what people search for online
+            - textbox " Enter a seed term to reveal what people search for online" [active] [ref=e37]:
+              - /placeholder: eg, cheap hotels
+              - text: self hosted file storage
+          - generic [ref=e38]:
+            - text:  Territory
+            - generic [ref=e39]:
+              - button " Territory" [ref=e40] [cursor=pointer]:  United States
+              - text:                                                                                                                                                                                                                                           
+          - button "Search" [disabled] [ref=e41]
+          - button [ref=e43] [cursor=pointer]:  Import...
+          - button " Show search options..." [ref=e45] [cursor=pointer]
+        - generic [ref=e46]:
+          - generic [ref=e47]:
+            - generic [ref=e48]:
+              - generic [ref=e49]:
+                - generic [ref=e50]:
+                  - button "Track..." [ref=e51] [cursor=pointer]:
+                    - generic [ref=e52]: 
+                    - text: Track...
+                  - text: 
+                - button " Save" [ref=e54] [cursor=pointer]
+                - button " Export" [ref=e56] [cursor=pointer]
+                - button " Remove..." [ref=e58] [cursor=pointer]
+              - generic [ref=e59]:
+                - text: 
+                - heading "Showing 3 keywords for 'self hosted file storage'" [level=3] [ref=e60]:
+                  - generic [ref=e61]:
+                    - text: Showing
+                    - strong [ref=e62]: "3"
+                    - text: keywords
+                  - generic [ref=e63]:
+                    - text: for
+                    - strong [ref=e64]: "'self hosted file storage'"
+              - generic [ref=e65]:
+                - button " Columns..." [ref=e67] [cursor=pointer]
+                - generic [ref=e68]:
+                  - button "PPC" [ref=e69] [cursor=pointer]
+                  - button "SEO" [ref=e70] [cursor=pointer]
+                  - button "GSC" [ref=e71] [cursor=pointer]
+            - generic [ref=e77]:
+              - generic [ref=e78]:
+                - button " + Volume..." [ref=e79] [cursor=pointer]
+                - button " + Competition..." [ref=e80] [cursor=pointer]
+                - button " + KEI..." [ref=e81] [cursor=pointer]
+                - button " + No Click Searches..." [ref=e82] [cursor=pointer]
+                - button " + Is Question..." [ref=e83] [cursor=pointer]
+              - table [ref=e85]:
+                - rowgroup [ref=e86]:
+                  - row "Keyword  Volume  Competition  KEI  No Click Searches " [ref=e87]:
+                    - columnheader [ref=e88]:
+                      - checkbox [ref=e89]
+                    - columnheader "Keyword" [ref=e90]:
+                      - generic [ref=e91]: Keyword
+                    - columnheader " Volume " [ref=e92]:
+                      - text: 
+                      - generic [ref=e93]:
+                        - text: Volume
+                        - generic [ref=e94]: 
+                    - columnheader "Competition " [ref=e95]:
+                      - generic [ref=e96]:
+                        - text: Competition
+                        - generic [ref=e97]: 
+                    - columnheader "KEI " [ref=e98]:
+                      - generic [ref=e99]:
+                        - text: KEI
+                        - generic [ref=e100]: 
+                    - columnheader "No Click Searches " [ref=e101]:
+                      - generic [ref=e102]:
+                        - text: No Click Searches
+                        - generic [ref=e103]: 
+                - rowgroup [ref=e104]:
+                  - row "cloud file storage self hosting 32 – — -" [ref=e105]:
+                    - cell [ref=e106]:
+                      - checkbox [ref=e107]
+                    - cell "cloud file storage self hosting" [ref=e108]:
+                      - generic [ref=e109]: cloud file storage self hosting
+                      - img [ref=e111] [cursor=pointer]
+                    - cell "32" [ref=e113]
+                    - cell "–" [ref=e114]:
+                      - generic [ref=e115]: –
+                    - cell "—" [ref=e116]
+                    - cell "-" [ref=e117]:
+                      - generic [ref=e118]: "-"
+                  - row "cloud file storage self hosted — – — -" [ref=e119]:
+                    - cell [ref=e120]:
+                      - checkbox [ref=e121]
+                    - cell "cloud file storage self hosted" [ref=e122]:
+                      - generic [ref=e123]: cloud file storage self hosted
+                      - img [ref=e125] [cursor=pointer]
+                    - cell "—" [ref=e127]
+                    - cell "–" [ref=e128]:
+                      - generic [ref=e129]: –
+                    - cell "—" [ref=e130]
+                    - cell "-" [ref=e131]:
+                      - generic [ref=e132]: "-"
+                  - row "self hosted file storage — 9 — -" [ref=e133]:
+                    - cell [ref=e134]:
+                      - checkbox [ref=e135]
+                    - cell "self hosted file storage" [ref=e136]:
+                      - generic [ref=e137]: self hosted file storage
+                      - img [ref=e139] [cursor=pointer]
+                    - cell "—" [ref=e141]
+                    - cell "9" [ref=e142]:
+                      - generic [ref=e143]: "9"
+                    - cell "—" [ref=e144]
+                    - cell "-" [ref=e145]:
+                      - generic [ref=e146]: "-"
+                  - row " kumupawul mihufiza yuducemoru — — — —" [ref=e147]:
+                    - cell "" [ref=e148]
+                    - cell "kumupawul mihufiza yuducemoru" [ref=e149]:
+                      - generic [ref=e150]: kumupawul mihufiza yuducemoru
+                      - img [ref=e152] [cursor=pointer]
+                    - cell "—" [ref=e154]
+                    - cell "—" [ref=e155]
+                    - cell "—" [ref=e156]
+                    - cell "—" [ref=e157]
+          - generic [ref=e159]:
+            - generic [ref=e160]:
+              - heading "Filter results by text" [level=4] [ref=e161]
+              - generic [ref=e162]:
+                - textbox "Enter term..." [ref=e163]
+                - button " Include" [disabled] [ref=e164] [cursor=pointer]
+                - button " Exclude" [disabled] [ref=e165] [cursor=pointer]
+            - generic [ref=e167]:
+              - heading "My lists" [level=4] [ref=e168]
+              - generic [ref=e170]: Upgrade to save
+              - button " New" [ref=e171] [cursor=pointer]
+              - text: 
+              - generic [ref=e172]:  Go to list
+              - text: 
+              - generic [ref=e174]:
+                - button " Rename" [ref=e175] [cursor=pointer]
+                - button " Untitled list" [ref=e176] [cursor=pointer]
+              - table [ref=e179]:
+                - rowgroup [ref=e180]:
+                  - row "Saved keywords" [ref=e181]:
+                    - columnheader "Saved keywords" [ref=e182]:
+                      - generic [ref=e183]: Saved keywords
+                - rowgroup
+                - rowgroup [ref=e184]:
+                  - row "Click a result to add it to this list..." [ref=e185]:
+                    - cell "Click a result to add it to this list..." [ref=e186]
+            - generic [ref=e188]:
+              - heading "Suggestions" [level=4] [ref=e189]
+              - table [ref=e191]:
+                - rowgroup:
+                  - row
+                - rowgroup [ref=e192]:
+                  - row "Fetching search terms..." [ref=e193]:
+                    - cell "Fetching search terms..." [ref=e194]:
+                      - generic [ref=e195]: Fetching search terms...
+  - dialog "Mike Mindel helps you discover the keywords your competitors rank for":
+    - generic [ref=e200]:
+      - generic "Mike Mindel helps you discover the keywords your competitors rank for" [ref=e202]
+      - generic [ref=e204]:
+        - generic [ref=e205]:
+          - generic:
+            - 'button "Play Video: Mike Mindel helps you discover the keywords your competitors rank for"'
+          - img "Mike Mindel takes you through the Wordttracker keyword tool" [ref=e207]
+        - 'button "Play Video: Mike Mindel helps you discover the keywords your competitors rank for" [ref=e209] [cursor=pointer]':
+          - img [ref=e212]
+    - button "Close" [ref=e214] [cursor=pointer]:
+      - img "Click to close video" [ref=e215]

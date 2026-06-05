@@ -426,6 +426,34 @@ func (m *Manager) DeleteFile(ctx context.Context, path string) error {
 	return nil
 }
 
+// RenameFile re-keys an erasure-coded file's metadata from oldPath to newPath.
+// Shards are keyed by content hash, independent of the file path, so no shard
+// data is moved — only the erasure info record is re-pointed.
+func (m *Manager) RenameFile(ctx context.Context, oldPath, newPath string) error {
+	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, oldPath)
+	if err != nil {
+		return fmt.Errorf("failed to get erasure info for rename: %w", err)
+	}
+
+	mdInfo.FilePath = newPath
+	if err := m.erasureStore.CreateErasureInfo(ctx, newPath, mdInfo); err != nil {
+		return fmt.Errorf("failed to write erasure metadata at new path: %w", err)
+	}
+
+	if err := m.erasureStore.DeleteErasureInfo(ctx, oldPath); err != nil {
+		// New record is in place; a stale old record is reclaimable, so log and continue.
+		m.logger.Warn("Failed to delete old erasure metadata after rename",
+			zap.String("old_path", oldPath),
+			zap.String("new_path", newPath),
+			zap.Error(err))
+	}
+
+	m.logger.Info("Erasure-coded file metadata renamed",
+		zap.String("old_path", oldPath),
+		zap.String("new_path", newPath))
+	return nil
+}
+
 // extractShardPrefix extracts the hash prefix from a shard path like ".erasure/<prefix>/<idx>".
 func extractShardPrefix(shardPath string) string {
 	trimmed := strings.TrimPrefix(shardPath, ".erasure/")

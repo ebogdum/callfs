@@ -1,13 +1,6 @@
 basePath: /v1
 definitions:
-  github_com_ebogdum_callfs_server_handlers.ErrorResponse:
-    properties:
-      code:
-        type: string
-      message:
-        type: string
-    type: object
-  server_handlers.CrossServerConflictResponse:
+  handlers.CrossServerConflictResponse:
     properties:
       backend_type:
         type: string
@@ -22,13 +15,13 @@ definitions:
       update_url:
         type: string
     type: object
-  server_handlers.DirectoryListingResponse:
+  handlers.DirectoryListingResponse:
     properties:
       count:
         type: integer
       items:
         items:
-          $ref: '#/definitions/server_handlers.FileInfo'
+          $ref: '#/definitions/handlers.FileInfo'
         type: array
       max_depth:
         type: integer
@@ -40,14 +33,14 @@ definitions:
         description: '"directory"'
         type: string
     type: object
-  server_handlers.ErrorResponse:
+  handlers.ErrorResponse:
     properties:
       code:
         type: string
       message:
         type: string
     type: object
-  server_handlers.FileInfo:
+  handlers.FileInfo:
     properties:
       mode:
         type: string
@@ -64,7 +57,22 @@ definitions:
       type:
         type: string
     type: object
-  server_handlers_links.GenerateLinkRequest:
+  handlers.renameMoveRequest:
+    properties:
+      backend:
+        type: string
+      create_parents:
+        type: boolean
+      destination:
+        type: string
+      instance:
+        type: string
+      name:
+        type: string
+      overwrite:
+        type: boolean
+    type: object
+  links.GenerateLinkRequest:
     properties:
       expiry_seconds:
         example: 3600
@@ -73,7 +81,7 @@ definitions:
         example: /path/to/file
         type: string
     type: object
-  server_handlers_links.GenerateLinkResponse:
+  links.GenerateLinkResponse:
     properties:
       expires:
         example: "2025-07-13T13:34:56Z"
@@ -98,7 +106,7 @@ info:
     url: https://opensource.org/licenses/MIT
   termsOfService: http://swagger.io/terms/
   title: CallFS API
-  version: 1.4.0
+  version: 1.5.0
 paths:
   /download/{token}:
     get:
@@ -120,19 +128,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "404":
           description: Token not found
           schema:
-            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "410":
           description: Token expired or already used
           schema:
-            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
       summary: Download file via single-use link
       tags:
       - links
@@ -157,23 +165,23 @@ paths:
         "200":
           description: Directory listing
           schema:
-            $ref: '#/definitions/server_handlers.DirectoryListingResponse'
+            $ref: '#/definitions/handlers.DirectoryListingResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: List directory contents
@@ -195,23 +203,23 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "502":
           description: Bad Gateway (cross-server proxy error)
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Delete file or directory with cross-server support
@@ -247,19 +255,19 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get file or directory
@@ -299,26 +307,77 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "502":
           description: Bad Gateway (cross-server proxy error)
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get file metadata with cross-server support
+      tags:
+      - files
+    patch:
+      description: Renames a resource in place ({"name":"..."}) or moves it, optionally
+        to a different folder, backend, or instance ({"destination":"...","backend":"...","instance":"..."}).
+      parameters:
+      - description: Source file or directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      - description: Rename or move request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.renameMoveRequest'
+      responses:
+        "200":
+          description: Renamed/moved; returns the new path
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway (cross-server proxy error)
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Rename or move a file or directory
       tags:
       - files
     post:
@@ -343,23 +402,23 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "409":
           description: Conflict - resource exists on another server
           schema:
-            $ref: '#/definitions/server_handlers.CrossServerConflictResponse'
+            $ref: '#/definitions/handlers.CrossServerConflictResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Create or update file or directory with cross-server conflict detection
@@ -388,27 +447,27 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "502":
           description: Bad Gateway (cross-server proxy error)
           schema:
-            $ref: '#/definitions/server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Update file with cross-server support
@@ -426,26 +485,26 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/server_handlers_links.GenerateLinkRequest'
+          $ref: '#/definitions/links.GenerateLinkRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Link generated successfully
           schema:
-            $ref: '#/definitions/server_handlers_links.GenerateLinkResponse'
+            $ref: '#/definitions/links.GenerateLinkResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_ebogdum_callfs_server_handlers.ErrorResponse'
+            $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Generate single-use download link
