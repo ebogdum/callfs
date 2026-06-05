@@ -129,6 +129,7 @@ func NewRouter(
 			r.Head("/*", handlers.V1HeadFileEnhanced(engine, authorizer, logger))
 			r.Post("/*", handlers.V1PostFileEnhanced(engine, authorizer, backendConfig, serverConfig, logger))
 			r.Put("/*", handlers.V1PutFileEnhanced(engine, authorizer, backendConfig, serverConfig, logger))
+			r.Patch("/*", handlers.V1PatchFileEnhanced(engine, authorizer, backendConfig, serverConfig, logger))
 			r.Delete("/*", handlers.V1DeleteFileEnhanced(engine, authorizer, logger))
 		})
 

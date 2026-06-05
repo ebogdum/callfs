@@ -77,6 +77,51 @@ curl -k -X PUT -H "Authorization: Bearer <api-key>" \
   https://localhost:8443/v1/files/documents/remote-file.txt
 ```
 
+### `PATCH /v1/files/{path}`
+
+Renames or moves a file or directory as a first-class operation. The request body (JSON) selects the operation; exactly one of `name` or `destination` must be present. Directories are renamed/moved together with their entire subtree. Both the metadata store and the underlying bytes are updated together (bytes first, then metadata), so a failed byte move leaves the source intact.
+
+- **Cross-Server Routing**: a request that lands on a node which does not own the resource is automatically proxied to the owning (or, for relocations, the target) node.
+- **Authorization**: requires ownership of the source and write access to the destination's parent directory.
+
+**Request fields**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | — | New name (single path segment). Renames in place — same folder, backend, instance. |
+| `destination` | string | — | Absolute destination path. Moves the resource. |
+| `backend` | string | source's | Target backend (`localfs`, `s3`). |
+| `instance` | string | source's | Target instance ID. |
+| `overwrite` | bool | `false` | Replace an existing destination (also accepted as `?overwrite=true`). |
+| `create_parents` | bool | `false` | Create missing destination parent directories. |
+
+**Example: Rename in place**
+```bash
+curl -k -X PATCH -H "Authorization: Bearer <api-key>" \
+  -H "Content-Type: application/json" -d '{"name": "renamed.txt"}' \
+  https://localhost:8443/v1/files/documents/report.txt
+```
+
+**Example: Move to another folder**
+```bash
+curl -k -X PATCH -H "Authorization: Bearer <api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"destination": "/archive/2026/report.txt", "create_parents": true}' \
+  https://localhost:8443/v1/files/documents/renamed.txt
+```
+
+**Example: Move a file to the S3 backend**
+```bash
+curl -k -X PATCH -H "Authorization: Bearer <api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"destination": "/cold/report.txt", "backend": "s3"}' \
+  https://localhost:8443/v1/files/archive/2026/report.txt
+```
+
+**Responses**: `200 OK` with body `{"path": "<new path>"}`; `400` for an invalid request (bad name, both/neither of `name`/`destination`, moving a directory into itself, or a missing destination parent without `create_parents`); `403` if the caller is not the source owner or lacks write access to the destination parent; `404` if the source does not exist; `409` if the destination exists and `overwrite` is false.
+
+**v1 limitations**: re-tiering to/from the `erasure` backend and moving a *directory* across backends or instances are not supported (`400`). Rename, in-place reorganization, cross-backend/cross-instance *file* moves, and same-backend directory moves are fully supported.
+
 ### `DELETE /v1/files/{path}`
 
 Deletes a file or an empty directory. This is an **enhanced** operation.

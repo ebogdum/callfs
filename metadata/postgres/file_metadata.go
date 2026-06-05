@@ -179,6 +179,68 @@ func (s *PostgresStore) Delete(ctx context.Context, path string) error {
 	return nil
 }
 
+// pathBase returns the last path segment (the inode name) of an absolute path.
+func pathBase(path string) string {
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
+}
+
+// Rename re-keys an inode (and, for a directory, its whole subtree) from
+// oldPath to newPath in a single transaction. Only name and path change.
+func (s *PostgresStore) Rename(ctx context.Context, oldPath, newPath string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin rename transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var srcType string
+	err = tx.QueryRowContext(ctx, `SELECT type FROM inodes WHERE path = $1`, oldPath).Scan(&srcType)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return metadata.ErrNotFound
+		}
+		return fmt.Errorf("failed to read source inode: %w", err)
+	}
+
+	var destExists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM inodes WHERE path = $1)`, newPath).Scan(&destExists); err != nil {
+		return fmt.Errorf("failed to check destination inode: %w", err)
+	}
+	if destExists {
+		return metadata.ErrAlreadyExists
+	}
+
+	newName := pathBase(newPath)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE inodes SET name = $1, path = $2, updated_at = NOW() WHERE path = $3`,
+		newName, newPath, oldPath,
+	); err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			return metadata.ErrAlreadyExists
+		}
+		return fmt.Errorf("failed to rename inode: %w", err)
+	}
+
+	if srcType == "directory" {
+		// substring is 1-indexed; +2 skips the old path plus its trailing '/'.
+		prefixLen := len(oldPath) + 2
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE inodes SET path = $1 || substring(path FROM $2), updated_at = NOW() WHERE path LIKE $3 ESCAPE '\'`,
+			newPath+"/", prefixLen, escapeLikePattern(oldPath)+"/%",
+		); err != nil {
+			return fmt.Errorf("failed to rename descendants: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit rename: %w", err)
+	}
+	return nil
+}
+
 // ListChildren lists all direct children of a directory
 func (s *PostgresStore) ListChildren(ctx context.Context, parentPath string) ([]*metadata.Metadata, error) {
 	query := `
