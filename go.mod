@@ -4,7 +4,7 @@ go 1.24.2
 
 require (
 	github.com/aws/aws-sdk-go v1.55.7
-	github.com/go-chi/chi/v5 v5.2.2
+	github.com/go-chi/chi/v5 v5.2.4
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/gorilla/websocket v1.5.3
