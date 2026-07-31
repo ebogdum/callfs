@@ -13,8 +13,16 @@ server:
   metadata_op_timeout: 5s
 
 auth:
-  api_keys:
-    - "your-api-key-here-at-least-16-chars"
+  # Preferred: bind each key to an explicit app user ID. The user ID is stored as
+  # the "owner" of everything the key creates, and stays stable when other keys
+  # are revoked, rotated, or reordered.
+  api_key_users:
+    alice: "your-api-key-here-at-least-16-chars"
+  # Legacy alternative: user IDs are derived from list position (api-user-0, ...).
+  # Removing or reordering an entry shifts every later key's identity and hands
+  # the removed user's files to the next key holder. Only append to this list.
+  # api_keys:
+  #   - "your-api-key-here-at-least-16-chars"
   internal_proxy_secret: "your-internal-secret-here-16ch"
   single_use_link_secret: "your-link-secret-here-16chars"
 

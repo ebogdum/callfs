@@ -89,6 +89,37 @@ func ParseFilePath(urlPath string) PathInfo {
 		}
 	}
 
+	// SECURITY: Canonicalize before deriving anything from the path.
+	//
+	// The metadata stores key on this exact string, while the storage backends
+	// run it through pathutil.Clean (via SafeJoin) before touching disk. Building
+	// FullPath from the raw request would let the two disagree: a request for
+	// "dir/../secret.txt" would create a fresh metadata entry under
+	// "/dir/../secret.txt" (so no ErrAlreadyExists, and the ownership check falls
+	// through to a parent that does not exist and is allowed) while the bytes
+	// landed on "<root>/secret.txt", overwriting another user's file.
+	canonical, err := pathutil.Clean(cleanPath)
+	if err != nil {
+		return PathInfo{
+			FullPath:    "/",
+			ParentPath:  "/",
+			Name:        "",
+			IsDirectory: true,
+			IsInvalid:   true,
+		}
+	}
+	cleanPath = strings.TrimPrefix(canonical, "/")
+
+	// A path that canonicalizes away entirely (e.g. "a/..") addresses the root.
+	if cleanPath == "" {
+		return PathInfo{
+			FullPath:    "/",
+			ParentPath:  "/",
+			Name:        "",
+			IsDirectory: true,
+		}
+	}
+
 	// Build full path - always start with /
 	fullPath := "/" + cleanPath
 	if isDirectory {

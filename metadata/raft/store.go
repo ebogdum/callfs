@@ -50,6 +50,13 @@ type Command struct {
 	Before      *time.Time                `json:"before,omitempty"`
 	OlderThan   *time.Time                `json:"older_than,omitempty"`
 	ErasureInfo *metadata.ErasureFileInfo `json:"erasure_info,omitempty"`
+
+	// Timestamp is stamped once by the leader in applyAsLeader, immediately before
+	// the command enters the Raft log. The FSM must use this value rather than
+	// calling time.Now(): Apply runs independently on every replica (and again on
+	// log replay after a restart), so a wall-clock read inside Apply would produce
+	// a different value per replica and rewrite history on replay.
+	Timestamp time.Time `json:"timestamp,omitempty"`
 }
 
 type CommandResult struct {
@@ -107,6 +114,78 @@ type state struct {
 type fsm struct {
 	mu    sync.RWMutex
 	state state
+
+	// childIndex maps a directory path to the set of its direct children. It is
+	// derived entirely from state.MetadataByPath and is deliberately NOT part of
+	// the serialized snapshot: it is rebuilt by rebuildChildIndex on Restore, so
+	// the on-disk snapshot format is unchanged and a bug here can never corrupt
+	// replicated state.
+	//
+	// Without it, listing one directory scanned every metadata entry in the
+	// cluster while holding the FSM lock, so listing cost grew with total
+	// filesystem size rather than with the size of the directory being listed.
+	childIndex map[string]map[string]struct{}
+}
+
+// newFSM returns an FSM with empty state and an initialized child index. Both
+// production and tests must build FSMs through this, so a new state field cannot
+// be left uninitialized in one path and not the other.
+func newFSM() *fsm {
+	return &fsm{
+		state: state{
+			MetadataByPath: map[string]*metadata.Metadata{},
+			LinksByToken:   map[string]*metadata.SingleUseLink{},
+			ErasureByPath:  map[string]*metadata.ErasureFileInfo{},
+		},
+		childIndex: map[string]map[string]struct{}{},
+	}
+}
+
+// indexChild records child under its parent directory. Caller must hold the lock.
+func (f *fsm) indexChild(path string) {
+	if path == "/" {
+		return
+	}
+	parent := pathDir(path)
+	if f.childIndex[parent] == nil {
+		f.childIndex[parent] = make(map[string]struct{})
+	}
+	f.childIndex[parent][path] = struct{}{}
+}
+
+// unindexChild removes child from its parent's set. Caller must hold the lock.
+func (f *fsm) unindexChild(path string) {
+	if path == "/" {
+		return
+	}
+	parent := pathDir(path)
+	if set := f.childIndex[parent]; set != nil {
+		delete(set, path)
+		if len(set) == 0 {
+			delete(f.childIndex, parent)
+		}
+	}
+}
+
+// rebuildChildIndex regenerates the whole index from metadata. Caller must hold
+// the lock. Used on snapshot restore, where state is replaced wholesale.
+func (f *fsm) rebuildChildIndex() {
+	f.childIndex = make(map[string]map[string]struct{}, len(f.state.MetadataByPath))
+	for path := range f.state.MetadataByPath {
+		f.indexChild(path)
+	}
+}
+
+// childrenOf returns the direct children of parentPath. Caller must hold at
+// least a read lock.
+func (f *fsm) childrenOf(parentPath string) []*metadata.Metadata {
+	children := make([]*metadata.Metadata, 0, len(f.childIndex[parentPath]))
+	for path := range f.childIndex[parentPath] {
+		if md, ok := f.state.MetadataByPath[path]; ok {
+			children = append(children, cloneMetadata(md))
+		}
+	}
+	return children
 }
 
 type stateSnapshot struct {
@@ -156,11 +235,7 @@ func NewRaftStore(cfg Config, logger *zap.Logger) (*Store, error) {
 		return nil, fmt.Errorf("failed to create raft data dir: %w", err)
 	}
 
-	fsmInstance := &fsm{state: state{
-		MetadataByPath: map[string]*metadata.Metadata{},
-		LinksByToken:   map[string]*metadata.SingleUseLink{},
-		ErasureByPath:  map[string]*metadata.ErasureFileInfo{},
-	}}
+	fsmInstance := newFSM()
 
 	raftCfg := hashiraft.DefaultConfig()
 	raftCfg.LocalID = hashiraft.ServerID(cfg.NodeID)
@@ -430,15 +505,7 @@ func (s *Store) ListChildren(ctx context.Context, parentPath string) ([]*metadat
 // listChildrenLocal reads children from the local FSM state.
 func (s *Store) listChildrenLocal(parentPath string) []*metadata.Metadata {
 	s.fsm.mu.RLock()
-	children := make([]*metadata.Metadata, 0)
-	for _, md := range s.fsm.state.MetadataByPath {
-		if md.Path == "/" {
-			continue
-		}
-		if pathDir(md.Path) == parentPath {
-			children = append(children, cloneMetadata(md))
-		}
-	}
+	children := s.fsm.childrenOf(parentPath)
 	s.fsm.mu.RUnlock()
 	sort.Slice(children, func(i, j int) bool { return children[i].Path < children[j].Path })
 	return children
@@ -549,15 +616,7 @@ func (s *Store) ApplyForwardedCommand(ctx context.Context, cmd Command) (Command
 		return CommandResult{Link: cloneLink(link)}, nil
 	case "list_children":
 		s.fsm.mu.RLock()
-		children := make([]*metadata.Metadata, 0)
-		for _, md := range s.fsm.state.MetadataByPath {
-			if md.Path == "/" {
-				continue
-			}
-			if pathDir(md.Path) == cmd.Path {
-				children = append(children, cloneMetadata(md))
-			}
-		}
+		children := s.fsm.childrenOf(cmd.Path)
 		s.fsm.mu.RUnlock()
 		return CommandResult{Children: children}, nil
 	}
@@ -573,6 +632,12 @@ func (s *Store) applyCommand(ctx context.Context, cmd Command) (CommandResult, e
 }
 
 func (s *Store) applyAsLeader(cmd Command) (CommandResult, error) {
+	// Stamp the command once, here, from the leader's clock. This is the single
+	// point where every command (local or forwarded from a follower) enters the
+	// Raft log, so stamping here guarantees all replicas apply an identical value.
+	// Always overwrite rather than honouring an inbound value: a forwarded command
+	// arrives over the wire, and the leader's clock must be the only source.
+	cmd.Timestamp = time.Now().UTC()
 	data, err := json.Marshal(cmd)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("failed to marshal command: %w", err)
@@ -667,6 +732,7 @@ func (f *fsm) applyMetadataOp(cmd *Command) CommandResult {
 			return CommandResult{Err: "already_exists"}
 		}
 		f.state.MetadataByPath[cmd.Metadata.Path] = cloneMetadata(cmd.Metadata)
+		f.indexChild(cmd.Metadata.Path)
 		return CommandResult{}
 	case "update_metadata":
 		if cmd.Metadata == nil {
@@ -682,6 +748,7 @@ func (f *fsm) applyMetadataOp(cmd *Command) CommandResult {
 			return CommandResult{Err: "not_found"}
 		}
 		delete(f.state.MetadataByPath, cmd.Path)
+		f.unindexChild(cmd.Path)
 		return CommandResult{}
 	case "rename_metadata":
 		src, exists := f.state.MetadataByPath[cmd.Path]
@@ -691,7 +758,10 @@ func (f *fsm) applyMetadataOp(cmd *Command) CommandResult {
 		if _, exists := f.state.MetadataByPath[cmd.NewPath]; exists {
 			return CommandResult{Err: "already_exists"}
 		}
-		now := time.Now().UTC()
+		// Use the leader-stamped timestamp, never time.Now(): see Command.Timestamp.
+		// A zero timestamp means a pre-upgrade log entry is being replayed; preserve
+		// the existing UpdatedAt in that case so replay stays deterministic.
+		now := cmd.Timestamp
 		// Collect affected paths first to avoid mutating the map while iterating.
 		affected := []string{cmd.Path}
 		if src.Type == "directory" {
@@ -707,19 +777,17 @@ func (f *fsm) applyMetadataOp(cmd *Command) CommandResult {
 			newP := cmd.NewPath + oldP[len(cmd.Path):]
 			md.Path = newP
 			md.Name = pathBaseRaft(newP)
-			md.UpdatedAt = now
+			if !now.IsZero() {
+				md.UpdatedAt = now
+			}
 			delete(f.state.MetadataByPath, oldP)
+			f.unindexChild(oldP)
 			f.state.MetadataByPath[newP] = md
+			f.indexChild(newP)
 		}
 		return CommandResult{}
 	default:
-		children := make([]*metadata.Metadata, 0)
-		for _, md := range f.state.MetadataByPath {
-			if md.Path != "/" && pathDir(md.Path) == cmd.Path {
-				children = append(children, cloneMetadata(md))
-			}
-		}
-		return CommandResult{Children: children}
+		return CommandResult{Children: f.childrenOf(cmd.Path)}
 	}
 }
 
@@ -759,7 +827,10 @@ func (f *fsm) applyLinkOp(cmd *Command) CommandResult {
 		link.Status = cmd.Status
 		link.UsedAt = cloneTimePtr(cmd.UsedAt)
 		link.UsedByIP = cloneStringPtr(cmd.UsedByIP)
-		link.UpdatedAt = time.Now().UTC()
+		// Leader-stamped, never time.Now(): see Command.Timestamp.
+		if !cmd.Timestamp.IsZero() {
+			link.UpdatedAt = cmd.Timestamp
+		}
 		f.state.LinksByToken[cmd.Token] = link
 		return CommandResult{}
 	case "cleanup_expired_links":
@@ -865,6 +936,8 @@ func (f *fsm) Restore(rc io.ReadCloser) error {
 		LinksByToken:   cloneLinkMap(restored.LinksByToken),
 		ErasureByPath:  cloneErasureMap(restored.ErasureByPath),
 	}
+	// The index is derived, not restored: state was just replaced wholesale.
+	f.rebuildChildIndex()
 	return nil
 }
 

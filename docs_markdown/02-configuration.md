@@ -27,8 +27,14 @@ server:
 
 # Authentication and authorization
 auth:
-  api_keys:
-    - "your-secure-api-key-1"
+  # Preferred: explicit user ID -> key. Identity is stable across key changes.
+  api_key_users:
+    alice: "your-secure-api-key-1"
+  # Legacy alternative: user IDs are assigned by list position (api-user-0, ...).
+  # Removing or reordering an entry reassigns those IDs and transfers ownership
+  # of existing files. Only append to this list; prefer api_key_users.
+  # api_keys:
+  #   - "your-secure-api-key-1"
   internal_proxy_secret: "a-strong-secret-for-internal-traffic"
   single_use_link_secret: "another-strong-secret-for-links"
 
@@ -118,6 +124,7 @@ All YAML configuration keys can be set using environment variables. The format i
 | `CALLFS_SERVER__ENABLE_QUIC`                    | `server.enable_quic`                     | `false`               |
 | `CALLFS_SERVER__QUIC_LISTEN_ADDR`               | `server.quic_listen_addr`                | `:8443`               |
 | `CALLFS_AUTH__API_KEYS`                         | `auth.api_keys`                          | (none)                |
+| `CALLFS_AUTH__API_KEY_USERS__<USER_ID>`         | `auth.api_key_users.<user_id>`           | (none)                |
 | `CALLFS_AUTH__INTERNAL_PROXY_SECRET`            | `auth.internal_proxy_secret`             | (none)                |
 | `CALLFS_AUTH__SINGLE_USE_LINK_SECRET`           | `auth.single_use_link_secret`            | (none)                |
 | `CALLFS_LOG__LEVEL`                             | `log.level`                              | `info`                |

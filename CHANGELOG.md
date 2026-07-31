@@ -1,5 +1,44 @@
 # Changelog
 
+## [v1.6.0] - 2026-07-31
+
+Findings from an adversarial security and performance review of the whole codebase. Ten confirmed defects fixed at the root, each covered by a regression test that was first confirmed to fail against the pre-fix code. No existing behaviour was changed except where noted under Breaking Changes.
+
+### **Security**
+- **Path-confusion privilege escalation (critical).** The metadata stores key on the exact request path string, while the storage backends normalize it via `pathutil.Clean` before touching disk. `ParseFilePath` validated the path but built `FullPath` from the raw request, so the two disagreed for any non-canonical path. `PUT /v1/files/dir/../secret.txt` created metadata under `/dir/../secret.txt` — no `ErrAlreadyExists`, and the ownership check fell through to a parent that does not exist and was allowed — while the bytes landed on `<root>/secret.txt`, **overwriting another user's file**. Any authenticated user could destroy any other user's data and leave orphaned metadata behind. `ParseFilePath` now canonicalizes before deriving `FullPath`, `ParentPath`, or `Name`.
+- **Same class via the move endpoint (critical).** `PATCH /v1/files` resolved the `destination` body field with no validation and no canonicalization at all, giving a second independent route to the same overwrite. Request-body paths never pass through `ParseFilePath`, so they are now validated and canonicalized explicitly.
+- **Root-escape check bypass.** `pathutil.Clean` returned early when a path collapsed to `/`, skipping the traversal-depth check entirely, so `..` and `a/../..` were accepted instead of rejected. Combined with canonicalization this would have retargeted operations at the root — a `DELETE` on `..` becoming a delete of `/`. The depth check now runs before the early return.
+- **Unstable API-key identity.** User IDs were derived from a key's **position** in `auth.api_keys` (`api-user-0`, `api-user-1`, …) and that string is persisted as each resource's `owner`. Revoking one key shifted every later key's identity, silently transferring ownership of the revoked user's files to the next key holder. See New Features for the fix.
+- **WebSocket upload memory exhaustion.** Uploads were buffered whole in memory, so peak usage was upload size × concurrency with no cap on concurrent sockets. Payloads now spool to an immediately-unlinked temp file past 8 MiB, bounding memory per connection.
+
+### **Bug Fixes**
+- **Raft FSM non-determinism.** `Apply` called `time.Now()`, but it runs independently on every replica and again on log replay after a restart. Replicas persisted different `UpdatedAt` values for the same log entry, and a restarting node **rewrote history** — every renamed file's modification time jumped to the restart moment. Commands are now stamped once by the leader in `applyAsLeader`, the single point where any command (local or forwarded) enters the log. Pre-upgrade log entries carry no timestamp and preserve their existing value on replay.
+
+### **New Features**
+- **`auth.api_key_users`** — maps an explicit app user ID to its API key, so identity is bound to a name rather than to list position. Keys can be revoked, rotated, or reordered without reassigning ownership of existing files. Configurable per entry from the environment as `CALLFS_AUTH__API_KEY_USERS__<USER_ID>`. The legacy `auth.api_keys` list is unchanged and continues to work; both forms may be used together for migration, and a startup warning is logged when the positional form is in use.
+
+### **Performance**
+- **Raft directory listing is no longer O(total files).** Listing one directory scanned every metadata entry in the cluster while holding the FSM lock. A child index now answers listings directly. The index is derived, not persisted — it is rebuilt on snapshot restore, so the snapshot format is unchanged and a defect there cannot corrupt replicated state.
+- **Redis directory listing no longer issues one round trip per child.** `ListChildren` called `GET` per entry, so latency grew linearly with directory size. It now batches through `MGET` in bounded chunks of 512.
+- **Rate-limiter eviction no longer scans per request.** At the 100k-entry cap the limiter scanned the whole map under its mutex to evict a single entry, so every request from a new IP paid a full scan — an address-rotating client could hold the map at the cap and serialize all request handling. Eviction now reclaims expired entries first, otherwise frees a 1,000-entry batch.
+
+### **Breaking Changes**
+- CallFS now **refuses to start if `auth.internal_proxy_secret` is reused as an API key**. Such a configuration previously started and silently granted that key holder full admin bypass. A config doing this will need the duplicate removed before upgrading.
+- `auth.api_key_users` rejects the reserved user IDs `root`, `internal-proxy`, and anything matching `api-user-<number>`, and a key may appear only once across both key forms.
+- The `api_keys` default no longer pre-seeds the `default-api-key` placeholder. That value was always rejected at validation, so a server with no configured keys still fails to start — only the error message changes.
+
+### **Internal Changes**
+- The release workflow is now idempotent: it uploads into an existing release for the tag instead of failing, so a tag published by `release.sh` no longer leaves a red build.
+- Raft FSMs are built through a single `newFSM` constructor shared by production and tests, so state fields cannot be initialized in one path and missed in the other.
+
+### **Tests**
+- Nine new test files covering path canonicalization and root-escape rejection, move-destination validation, FSM determinism and legacy-log replay, the Raft child index (validated against the full scan it replaced, including snapshot restore), API-key identity stability across revocation, auth config validation, environment-variable overrides, rate-limiter eviction, and upload spooling across the memory/disk boundary.
+
+### **Documentation**
+- `README.md`, `config.yaml.example`, `docs_markdown/02-configuration.md`, and `docs_markdown/04-authentication-security.md` document `api_key_users`, the positional-identity hazard in `api_keys`, and the reserved user IDs. The documented environment-variable form was verified by an executing test rather than assumed.
+
+---
+
 ## [v1.5.1] - 2026-07-31
 
 Security patch release. Resolves all 16 open dependency advisories reported against the repository. `govulncheck` now reports **0 vulnerabilities affecting CallFS code** and 0 in imported packages.

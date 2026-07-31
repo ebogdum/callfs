@@ -19,7 +19,12 @@ func DefaultAppConfig() AppConfig {
 			MetadataOpTimeout: 5 * time.Second,
 		},
 		Auth: AuthConfig{
-			APIKeys:             []string{"default-api-key"},
+			// Deliberately empty: validateAuthConfig requires the operator to
+			// supply keys via api_keys or api_key_users. Pre-seeding a placeholder
+			// here would make a config that sets only api_key_users fail the
+			// "must not use default value" check on a key it never asked for.
+			APIKeys:             nil,
+			APIKeyUsers:         nil,
 			InternalProxySecret: "change-me-internal-secret",
 			SingleUseLinkSecret: "change-me-link-secret",
 		},

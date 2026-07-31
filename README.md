@@ -99,8 +99,8 @@ server:
   external_url: "http://localhost:8443"  # Used for single-use link URLs
 
 auth:
-  api_keys:
-    - "my-secret-api-key-at-least-16-chars"
+  api_key_users:                                           # user ID -> key; identity is stable
+    alice: "my-secret-api-key-at-least-16-chars"
   internal_proxy_secret: "my-internal-proxy-secret-16ch"   # Must not use default value
   single_use_link_secret: "my-link-secret-at-least-16ch!"  # Must not use default value
 
