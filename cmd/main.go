@@ -1,7 +1,7 @@
 package main
 
 //	@title		CallFS API
-//	@version	1.5.1
+//	@version	1.6.0
 //	@description	CallFS is an ultra-lightweight, high-performance REST API filesystem that provides precise Linux filesystem semantics over various backends.
 //	@termsOfService	http://swagger.io/terms/
 
@@ -395,7 +395,11 @@ func ensureRaftRootDirectory(cfg *config.AppConfig, raftStore *metadataraft.Stor
 
 func buildHTTPHandler(ctx context.Context, cfg *config.AppConfig, coreEngine *core.Engine, metadataStore metadata.Store, localFSBackend backends.Storage, raftMetadataStore *metadataraft.Store, logger *zap.Logger) (http.Handler, *server.RouterResources, error) {
 	logger.Info("Initializing authentication and authorization")
-	authenticator := auth.NewAPIKeyAuthenticator(cfg.Auth.APIKeys, cfg.Auth.InternalProxySecret)
+	if len(cfg.Auth.APIKeys) > 0 {
+		logger.Warn("auth.api_keys assigns user IDs by list position (api-user-N); removing or reordering a key reassigns those IDs and transfers ownership of existing files to the next key holder. Use auth.api_key_users to bind each key to a stable identity.",
+			zap.Int("positional_key_count", len(cfg.Auth.APIKeys)))
+	}
+	authenticator := auth.NewAPIKeyAuthenticator(cfg.Auth.APIKeys, cfg.Auth.APIKeyUsers, cfg.Auth.InternalProxySecret)
 	authorizer := auth.NewUnixAuthorizer(metadataStore)
 
 	logger.Info("Initializing link manager")

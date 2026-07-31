@@ -14,6 +14,9 @@ const (
 	rateLimiterCleanupInterval = 5 * time.Minute
 	rateLimiterEntryTTL        = 10 * time.Minute
 	rateLimiterMaxEntries      = 100_000
+	// rateLimiterEvictBatch is how many entries a single eviction frees once the
+	// map is full, so the O(n) scan is amortized rather than paid per request.
+	rateLimiterEvictBatch = 1_000
 )
 
 type limiterEntry struct {
@@ -52,7 +55,7 @@ func (p *perIPRateLimiter) getLimiter(ip string) *rate.Limiter {
 
 	// Enforce max entries cap to prevent unbounded growth
 	if len(p.limiters) >= rateLimiterMaxEntries {
-		p.evictOldest()
+		p.evictBatch()
 	}
 
 	limiter := rate.NewLimiter(p.rate, p.burst)
@@ -63,21 +66,57 @@ func (p *perIPRateLimiter) getLimiter(ip string) *rate.Limiter {
 	return limiter
 }
 
-// evictOldest removes the oldest entry (caller must hold lock).
-func (p *perIPRateLimiter) evictOldest() {
-	var oldestIP string
-	var oldestTime time.Time
-	first := true
+// evictBatch frees capacity when the limiter map is full (caller must hold lock).
+//
+// It first drops entries that are already past their TTL, and only if that frees
+// nothing does it evict the oldest rateLimiterEvictBatch entries by lastSeen.
+//
+// Evicting a single entry per call would make every request from a new IP pay a
+// full O(rateLimiterMaxEntries) scan while holding the mutex, once the map is
+// full. An attacker rotating source addresses (trivial over IPv6) could hold the
+// map at the cap and serialize all request handling behind that scan. Freeing a
+// batch amortizes the scan over rateLimiterEvictBatch insertions instead.
+func (p *perIPRateLimiter) evictBatch() {
+	cutoff := time.Now().Add(-rateLimiterEntryTTL)
+	evicted := 0
 	for ip, entry := range p.limiters {
-		if first || entry.lastSeen.Before(oldestTime) {
-			oldestIP = ip
-			oldestTime = entry.lastSeen
-			first = false
+		if entry.lastSeen.Before(cutoff) {
+			delete(p.limiters, ip)
+			evicted++
 		}
 	}
-	if !first {
-		delete(p.limiters, oldestIP)
+	if evicted > 0 {
+		return
 	}
+
+	// Nothing was stale, so every entry is live: drop the batch with the oldest
+	// lastSeen. A partial selection sort over the batch size keeps this to a
+	// single pass rather than sorting all rateLimiterMaxEntries entries.
+	oldest := make([]limiterAge, 0, rateLimiterEvictBatch)
+	for ip, entry := range p.limiters {
+		if len(oldest) < rateLimiterEvictBatch {
+			oldest = append(oldest, limiterAge{ip: ip, lastSeen: entry.lastSeen})
+			continue
+		}
+		newestIdx := 0
+		for i := 1; i < len(oldest); i++ {
+			if oldest[i].lastSeen.After(oldest[newestIdx].lastSeen) {
+				newestIdx = i
+			}
+		}
+		if entry.lastSeen.Before(oldest[newestIdx].lastSeen) {
+			oldest[newestIdx] = limiterAge{ip: ip, lastSeen: entry.lastSeen}
+		}
+	}
+	for _, c := range oldest {
+		delete(p.limiters, c.ip)
+	}
+}
+
+// limiterAge pairs an IP with its last-seen time for batch eviction.
+type limiterAge struct {
+	ip       string
+	lastSeen time.Time
 }
 
 // cleanupLoop periodically removes stale entries.

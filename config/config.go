@@ -36,9 +36,22 @@ type ServerConfig struct {
 
 // AuthConfig holds authentication configuration
 type AuthConfig struct {
-	APIKeys             []string `koanf:"api_keys"`
-	InternalProxySecret string   `koanf:"internal_proxy_secret"`
-	SingleUseLinkSecret string   `koanf:"single_use_link_secret"`
+	// APIKeys is the legacy positional form. Each key is assigned the user ID
+	// "api-user-<index>", derived from its position in this list.
+	//
+	// That identity is NOT stable: removing or reordering an entry shifts every
+	// later key's user ID, which silently transfers ownership of the removed
+	// user's existing files to whoever holds the next key. Prefer APIKeyUsers,
+	// which binds each key to an explicit, position-independent identity.
+	APIKeys []string `koanf:"api_keys"`
+
+	// APIKeyUsers maps an explicit app user ID to its API key. Identity is bound
+	// to the name, not to ordering, so keys can be revoked, rotated, or reordered
+	// without reassigning ownership of existing files.
+	APIKeyUsers map[string]string `koanf:"api_key_users"`
+
+	InternalProxySecret string `koanf:"internal_proxy_secret"`
+	SingleUseLinkSecret string `koanf:"single_use_link_secret"`
 }
 
 // LogConfig holds logging configuration

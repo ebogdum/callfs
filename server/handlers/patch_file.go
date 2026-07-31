@@ -12,6 +12,7 @@ import (
 	"github.com/ebogdum/callfs/auth"
 	"github.com/ebogdum/callfs/config"
 	"github.com/ebogdum/callfs/core"
+	"github.com/ebogdum/callfs/internal/pathutil"
 	"github.com/ebogdum/callfs/server/middleware"
 )
 
@@ -122,25 +123,49 @@ func V1PatchFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backen
 }
 
 // resolveDestination computes the absolute destination path from the request.
+//
+// SECURITY: both branches must return a canonical path. These paths arrive in the
+// request body, so they never pass through ParseFilePath. Returning a raw path
+// here would reintroduce the metadata/backend split that canonicalization in
+// ParseFilePath exists to prevent: the metadata stores key on this exact string
+// while the backends normalize it before touching disk, so "/dir/../victim.txt"
+// would authorize against a non-existent parent while overwriting victim.txt.
 func resolveDestination(srcPath string, req renameMoveRequest) (string, error) {
 	if req.Name != "" {
 		if strings.Contains(req.Name, "/") || req.Name == "." || req.Name == ".." {
 			return "", errors.New("name must be a single path segment")
 		}
+		if err := pathutil.ValidatePath(req.Name); err != nil {
+			return "", errors.New("name contains invalid characters")
+		}
 		parent := srcPath[:strings.LastIndex(srcPath, "/")]
 		if parent == "" {
-			return "/" + req.Name, nil
+			return canonicalDestination("/" + req.Name)
 		}
-		return parent + "/" + req.Name, nil
+		return canonicalDestination(parent + "/" + req.Name)
+	}
+
+	if err := pathutil.ValidatePath(req.Destination); err != nil {
+		return "", errors.New("destination is not a valid path")
 	}
 	dst := req.Destination
 	if !strings.HasPrefix(dst, "/") {
 		dst = "/" + dst
 	}
-	if dst != "/" {
-		dst = strings.TrimSuffix(dst, "/")
+	return canonicalDestination(dst)
+}
+
+// canonicalDestination normalizes an absolute destination path, rejecting any
+// path that escapes the root.
+func canonicalDestination(dst string) (string, error) {
+	canonical, err := pathutil.Clean(dst)
+	if err != nil {
+		return "", errors.New("destination escapes the filesystem root")
 	}
-	return dst, nil
+	if canonical != "/" {
+		canonical = strings.TrimSuffix(canonical, "/")
+	}
+	return canonical, nil
 }
 
 // writeMoveError maps engine errors to HTTP status codes.

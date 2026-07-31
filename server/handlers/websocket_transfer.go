@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -85,27 +86,100 @@ func wsDownload(conn *websocket.Conn, r *http.Request, engine *core.Engine, auth
 	}
 }
 
-func wsReadUploadPayload(conn *websocket.Conn, logger *zap.Logger) (*bytes.Buffer, bool) {
-	var payload bytes.Buffer
+// uploadSpool holds a websocket upload while it is being received. Small uploads
+// stay in memory; anything larger spills to a temp file.
+//
+// Buffering the whole payload in memory made peak usage the product of upload
+// size and concurrency: any authenticated client could open many upload sockets
+// and push the server toward OOM, since nothing caps concurrent connections.
+// Spooling to disk past a threshold bounds memory per connection regardless of
+// how many are open, while still giving CreateFile/UpdateFile the byte count they
+// require up front.
+type uploadSpool struct {
+	buf  bytes.Buffer
+	file *os.File
+	size int64
+}
+
+// wsSpillThreshold is the point at which an in-progress upload moves to disk.
+const wsSpillThreshold = 8 << 20 // 8 MiB
+
+func (s *uploadSpool) Write(p []byte) error {
+	if s.file == nil && s.size+int64(len(p)) > wsSpillThreshold {
+		f, err := os.CreateTemp("", "callfs-ws-upload-*")
+		if err != nil {
+			return fmt.Errorf("failed to create upload spool file: %w", err)
+		}
+		// Unlink immediately: the descriptor keeps the data reachable, and the
+		// space is reclaimed by the OS even if this process dies mid-upload.
+		if err := os.Remove(f.Name()); err != nil {
+			f.Close()
+			return fmt.Errorf("failed to unlink upload spool file: %w", err)
+		}
+		if _, err := f.Write(s.buf.Bytes()); err != nil {
+			f.Close()
+			return fmt.Errorf("failed to spill upload to disk: %w", err)
+		}
+		s.buf.Reset()
+		s.file = f
+	}
+
+	var err error
+	if s.file != nil {
+		_, err = s.file.Write(p)
+	} else {
+		_, err = s.buf.Write(p)
+	}
+	if err != nil {
+		return err
+	}
+	s.size += int64(len(p))
+	return nil
+}
+
+// Reader rewinds the spool and returns a reader over the full payload.
+func (s *uploadSpool) Reader() (io.Reader, error) {
+	if s.file == nil {
+		return bytes.NewReader(s.buf.Bytes()), nil
+	}
+	if _, err := s.file.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("failed to rewind upload spool: %w", err)
+	}
+	return s.file, nil
+}
+
+// Close releases the spool's temp file, if one was created.
+func (s *uploadSpool) Close() {
+	if s.file != nil {
+		s.file.Close()
+		s.file = nil
+	}
+}
+
+func wsReadUploadPayload(conn *websocket.Conn, logger *zap.Logger) (*uploadSpool, bool) {
+	spool := &uploadSpool{}
 	const maxWSUpload = 100 << 20 // 100 MB max
 	for {
 		messageType, data, readErr := conn.ReadMessage()
 		if readErr != nil {
 			if websocket.IsCloseError(readErr, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				return &payload, true
+				return spool, true
 			}
 			logger.Warn("Failed reading websocket upload message", zap.Error(readErr))
+			spool.Close()
 			return nil, false
 		}
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		if int64(payload.Len())+int64(len(data)) > maxWSUpload {
+		if spool.size+int64(len(data)) > maxWSUpload {
 			wsCloseWithError(conn, websocket.CloseMessageTooBig, "upload too large")
+			spool.Close()
 			return nil, false
 		}
-		if _, err := payload.Write(data); err != nil {
+		if err := spool.Write(data); err != nil {
 			logger.Warn("Failed buffering websocket upload payload", zap.Error(err))
+			spool.Close()
 			return nil, false
 		}
 	}
@@ -121,12 +195,19 @@ func wsUpload(conn *websocket.Conn, r *http.Request, engine *core.Engine, author
 	if !ok {
 		return
 	}
+	defer payload.Close()
 
-	size := int64(payload.Len())
+	size := payload.size
 	existingMd, err := engine.GetMetadata(r.Context(), enginePath)
 	if err != nil {
 		if !errors.Is(err, metadata.ErrNotFound) {
 			wsCloseWithError(conn, websocket.CloseInternalServerErr, "metadata lookup failed")
+			return
+		}
+		reader, readerErr := payload.Reader()
+		if readerErr != nil {
+			logger.Error("Failed to read buffered websocket upload", zap.Error(readerErr))
+			wsCloseWithError(conn, websocket.CloseInternalServerErr, "file create failed")
 			return
 		}
 		createMd := &metadata.Metadata{
@@ -139,7 +220,7 @@ func wsUpload(conn *websocket.Conn, r *http.Request, engine *core.Engine, author
 			MTime:       time.Now(),
 			CTime:       time.Now(),
 		}
-		if err := engine.CreateFile(r.Context(), enginePath, bytes.NewReader(payload.Bytes()), size, createMd); err != nil {
+		if err := engine.CreateFile(r.Context(), enginePath, reader, size, createMd); err != nil {
 			wsCloseWithError(conn, websocket.CloseInternalServerErr, "file create failed")
 			return
 		}
@@ -148,7 +229,13 @@ func wsUpload(conn *websocket.Conn, r *http.Request, engine *core.Engine, author
 			wsCloseWithError(conn, websocket.CloseUnsupportedData, "target path is not a file")
 			return
 		}
-		if err := engine.UpdateFile(r.Context(), enginePath, bytes.NewReader(payload.Bytes()), size, existingMd); err != nil {
+		reader, readerErr := payload.Reader()
+		if readerErr != nil {
+			logger.Error("Failed to read buffered websocket upload", zap.Error(readerErr))
+			wsCloseWithError(conn, websocket.CloseInternalServerErr, "file update failed")
+			return
+		}
+		if err := engine.UpdateFile(r.Context(), enginePath, reader, size, existingMd); err != nil {
 			wsCloseWithError(conn, websocket.CloseInternalServerErr, "file update failed")
 			return
 		}

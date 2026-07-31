@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/knadh/koanf/parsers/json"
@@ -199,18 +200,60 @@ func validateDLMConfig(cfg *AppConfig) error {
 	return nil
 }
 
+// reservedUserIDPattern matches the identities CallFS assigns itself: the
+// positional "api-user-N" form and the built-in admin accounts. An operator must
+// not be able to claim one of these via api_key_users, because "root" and
+// "internal-proxy" bypass every permission check and an "api-user-N" collision
+// would let two different keys resolve to the same owner.
+var reservedUserIDPattern = regexp.MustCompile(`^api-user-\d+$`)
+
+func validateAPIKey(source, key string) error {
+	if key == "default-api-key" {
+		return fmt.Errorf("auth.%s must not use default value 'default-api-key'", source)
+	}
+	if len(key) < 16 {
+		return fmt.Errorf("auth.%s: each key must be at least 16 characters", source)
+	}
+	return nil
+}
+
 func validateAuthConfig(cfg *AppConfig) error {
-	if len(cfg.Auth.APIKeys) == 0 {
-		return fmt.Errorf("auth.api_keys must contain at least one key")
+	if len(cfg.Auth.APIKeys) == 0 && len(cfg.Auth.APIKeyUsers) == 0 {
+		return fmt.Errorf("auth.api_keys or auth.api_key_users must contain at least one key")
 	}
 
-	for _, key := range cfg.Auth.APIKeys {
-		if key == "default-api-key" {
-			return fmt.Errorf("auth.api_keys must not use default value 'default-api-key'")
+	// A key must resolve to exactly one identity. If the same secret appeared in
+	// both forms, the authenticated user would depend on map iteration order.
+	seenKeys := make(map[string]string, len(cfg.Auth.APIKeys)+len(cfg.Auth.APIKeyUsers))
+
+	for i, key := range cfg.Auth.APIKeys {
+		if err := validateAPIKey("api_keys", key); err != nil {
+			return err
 		}
-		if len(key) < 16 {
-			return fmt.Errorf("auth.api_keys: each key must be at least 16 characters")
+		if owner, dup := seenKeys[key]; dup {
+			return fmt.Errorf("auth.api_keys: key at index %d is already configured for %s", i, owner)
 		}
+		seenKeys[key] = fmt.Sprintf("api_keys index %d", i)
+	}
+
+	for userID, key := range cfg.Auth.APIKeyUsers {
+		if strings.TrimSpace(userID) == "" {
+			return fmt.Errorf("auth.api_key_users: user ID must not be empty")
+		}
+		if userID == "root" || userID == "internal-proxy" || reservedUserIDPattern.MatchString(userID) {
+			return fmt.Errorf("auth.api_key_users: user ID %q is reserved", userID)
+		}
+		if err := validateAPIKey("api_key_users", key); err != nil {
+			return err
+		}
+		if owner, dup := seenKeys[key]; dup {
+			return fmt.Errorf("auth.api_key_users: key for %q is already configured for %s", userID, owner)
+		}
+		seenKeys[key] = fmt.Sprintf("api_key_users %q", userID)
+	}
+
+	if _, dup := seenKeys[cfg.Auth.InternalProxySecret]; dup && cfg.Auth.InternalProxySecret != "" {
+		return fmt.Errorf("auth.internal_proxy_secret must not be reused as an API key")
 	}
 
 	if cfg.Auth.InternalProxySecret == "" || cfg.Auth.InternalProxySecret == "change-me-internal-secret" {

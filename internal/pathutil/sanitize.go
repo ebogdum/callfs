@@ -37,14 +37,13 @@ func Clean(path string) (string, error) {
 		return "", metadata.ErrForbidden
 	}
 
-	// Security check: if the cleaned path tries to go above root, reject it
-	// This happens when we have more ".." than directory levels
-	if cleaned == "/" {
-		return cleaned, nil
-	}
-
-	// Check if the path escaped the root by going up too many levels
-	// We'll simulate the path resolution to see if it stays within bounds
+	// Check if the path escaped the root by going up too many levels.
+	// We simulate the path resolution to see if it stays within bounds.
+	//
+	// This must run BEFORE any early return for cleaned == "/": filepath.Clean
+	// collapses an escaping path such as ".." or "a/../.." to "/", so returning
+	// early on "/" would silently rewrite an out-of-bounds path into the root
+	// instead of rejecting it.
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	depth := 0
 

@@ -15,6 +15,11 @@ import (
 	"github.com/ebogdum/callfs/metadata"
 )
 
+// listChildrenBatchSize caps how many child keys are fetched per MGET, so a
+// directory with a very large number of entries is read in bounded batches
+// rather than as one oversized command.
+const listChildrenBatchSize = 512
+
 type RedisStore struct {
 	client *redis.Client
 	prefix string
@@ -253,15 +258,51 @@ func (s *RedisStore) ListChildren(ctx context.Context, parentPath string) ([]*me
 	}
 
 	children := make([]*metadata.Metadata, 0, len(paths))
+	if len(paths) == 0 {
+		return children, nil
+	}
+
+	// Fetch every child in a single round trip. Calling Get per child issued one
+	// Redis GET per entry, so listing a directory of N children cost N sequential
+	// round trips and listing latency grew linearly with directory size.
+	keys := make([]string, 0, len(paths))
 	for _, path := range paths {
-		md, getErr := s.Get(ctx, path)
-		if getErr != nil {
-			if getErr == metadata.ErrNotFound {
+		keys = append(keys, s.metadataKey(path))
+	}
+
+	// Batch the fetch rather than issuing one MGET over every key: a directory
+	// with a very large number of children would otherwise build a single
+	// enormous command, which blocks the Redis event loop for the duration and
+	// can exceed the server's request size limits.
+	for start := 0; start < len(keys); start += listChildrenBatchSize {
+		end := start + listChildrenBatchSize
+		if end > len(keys) {
+			end = len(keys)
+		}
+		batch := keys[start:end]
+
+		values, err := s.client.MGet(ctx, batch...).Result()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get child metadata: %w", err)
+		}
+
+		for i, value := range values {
+			// A nil element means the child key expired or was deleted after
+			// SMEMBERS returned it; skip it exactly as the per-key ErrNotFound
+			// path did.
+			if value == nil {
 				continue
 			}
-			return nil, getErr
+			raw, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("unexpected redis value type %T for key %s", value, batch[i])
+			}
+			var md metadata.Metadata
+			if err := json.Unmarshal([]byte(raw), &md); err != nil {
+				return nil, fmt.Errorf("failed to decode metadata for %s: %w", batch[i], err)
+			}
+			children = append(children, &md)
 		}
-		children = append(children, md)
 	}
 
 	sort.Slice(children, func(i, j int) bool {

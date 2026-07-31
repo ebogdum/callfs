@@ -7,7 +7,7 @@ import (
 )
 
 func TestAuthenticateValidKey(t *testing.T) {
-	a := NewAPIKeyAuthenticator([]string{"secret-key-1", "secret-key-2"}, "internal-secret")
+	a := NewAPIKeyAuthenticator([]string{"secret-key-1", "secret-key-2"}, nil, "internal-secret")
 	ctx := context.Background()
 
 	user, err := a.Authenticate(ctx, "secret-key-1")
@@ -28,7 +28,7 @@ func TestAuthenticateValidKey(t *testing.T) {
 }
 
 func TestAuthenticateInternalProxy(t *testing.T) {
-	a := NewAPIKeyAuthenticator([]string{"key"}, "proxy-secret")
+	a := NewAPIKeyAuthenticator([]string{"key"}, nil, "proxy-secret")
 	ctx := context.Background()
 
 	user, err := a.Authenticate(ctx, "proxy-secret")
@@ -41,7 +41,7 @@ func TestAuthenticateInternalProxy(t *testing.T) {
 }
 
 func TestAuthenticateInvalidKey(t *testing.T) {
-	a := NewAPIKeyAuthenticator([]string{"key"}, "proxy")
+	a := NewAPIKeyAuthenticator([]string{"key"}, nil, "proxy")
 	ctx := context.Background()
 
 	_, err := a.Authenticate(ctx, "wrong-key")
@@ -51,7 +51,7 @@ func TestAuthenticateInvalidKey(t *testing.T) {
 }
 
 func TestAuthenticateEmptyToken(t *testing.T) {
-	a := NewAPIKeyAuthenticator([]string{"key"}, "proxy")
+	a := NewAPIKeyAuthenticator([]string{"key"}, nil, "proxy")
 	ctx := context.Background()
 
 	_, err := a.Authenticate(ctx, "")
@@ -61,7 +61,7 @@ func TestAuthenticateEmptyToken(t *testing.T) {
 }
 
 func TestAuthenticateBearerPrefix(t *testing.T) {
-	a := NewAPIKeyAuthenticator([]string{"my-key"}, "")
+	a := NewAPIKeyAuthenticator([]string{"my-key"}, nil, "")
 	ctx := context.Background()
 
 	user, err := a.Authenticate(ctx, "Bearer my-key")
@@ -75,7 +75,7 @@ func TestAuthenticateBearerPrefix(t *testing.T) {
 
 func TestAuthenticateEmptyKeys(t *testing.T) {
 	// Empty strings in keys should be ignored
-	a := NewAPIKeyAuthenticator([]string{"", "valid-key", ""}, "")
+	a := NewAPIKeyAuthenticator([]string{"", "valid-key", ""}, nil, "")
 	ctx := context.Background()
 
 	user, err := a.Authenticate(ctx, "valid-key")

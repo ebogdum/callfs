@@ -11,12 +11,44 @@ All protected API endpoints use bearer token authentication.
 **Configuration:**
 API keys are defined in your `config.yaml` or via environment variables. It is recommended to use a secrets management system in production.
 
+Each API key maps to an app user ID, and that ID is what gets stored as the `owner`
+of every resource the key creates. There are two ways to configure keys.
+
+**Recommended — `api_key_users`, explicit and stable identities:**
+```yaml
+auth:
+  api_key_users:
+    alice: "your-strong-api-key-1"
+    bob: "your-strong-api-key-2"
+```
+Identity is bound to the name, so keys can be revoked, rotated, or reordered
+without changing who owns existing files.
+
+**Legacy — `api_keys`, positional identities:**
 ```yaml
 auth:
   api_keys:
-    - "your-strong-api-key-1"
-    - "your-strong-api-key-2"
+    - "your-strong-api-key-1"   # user ID: api-user-0
+    - "your-strong-api-key-2"   # user ID: api-user-1
 ```
+Here the user ID is derived from the key's **position** in the list. This form
+still works unchanged, but be aware of the consequence: removing or reordering an
+entry shifts the IDs of every later key. If you revoke `api-user-0`'s key, the key
+that was `api-user-1` becomes `api-user-0` and inherits ownership of all files the
+revoked user created. Prefer `api_key_users`, and if you must use `api_keys`, only
+ever append to the list. CallFS logs a warning at startup when this form is in use.
+
+Both forms may be used together, which is what a migration looks like. A key may
+appear only once across both — CallFS refuses to start if the same secret is
+configured twice, since its identity would be ambiguous.
+
+The user IDs `root`, `internal-proxy`, and anything matching `api-user-<number>`
+are reserved and rejected in `api_key_users`.
+
+Individual entries can also be set from the environment as
+`CALLFS_AUTH__API_KEY_USERS__<USER_ID>`. Environment keys are lowercased, so
+`CALLFS_AUTH__API_KEY_USERS__ALICE` configures the user `alice`.
+
 **Usage:**
 Provide the key in the `Authorization` header of your HTTP requests.
 ```http
@@ -44,7 +76,7 @@ CallFS enforces an owner-based permission model for all file and directory opera
 - **Directories**: all authenticated users can read and create children (write). Only the owner can delete the directory.
 - **Files**: all authenticated users can read. Only the owner can write (update) or delete.
 
-Ownership is assigned automatically when a resource is created, based on the authenticated API key's user identity.
+Ownership is assigned automatically when a resource is created, based on the authenticated API key's user identity. Because the stored `owner` is that identity string, keeping it stable across key changes matters — see the `api_key_users` guidance above.
 
 ## TLS/SSL Encryption
 

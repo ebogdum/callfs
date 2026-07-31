@@ -46,10 +46,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            builds/* \
-            --generate-notes \
-            --title "${GITHUB_REF_NAME}"
+          # Idempotent: release.sh also creates releases, so a tag pushed by that
+          # script (or a re-run of this workflow) would otherwise fail here with
+          # "a release with the same tag name already exists". Upload into the
+          # existing release instead, keeping its curated changelog notes.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; uploading binaries to it."
+            gh release upload "${GITHUB_REF_NAME}" builds/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              builds/* \
+              --generate-notes \
+              --title "${GITHUB_REF_NAME}"
+          fi
 
       - name: Trigger Go module proxy
         run: GOPROXY=https://proxy.golang.org go list -m github.com/ebogdum/callfs@${GITHUB_REF_NAME}
