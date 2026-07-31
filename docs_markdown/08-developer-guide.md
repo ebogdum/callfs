@@ -5,7 +5,7 @@ This guide is for developers who want to contribute to CallFS or understand its 
 ## Development Environment Setup
 
 ### Prerequisites
-- **Go**: Version 1.24+
+- **Go**: Version 1.25+
 - **Docker & Docker Compose**: For running dependencies and integration tests.
 - **`golangci-lint`**: Recommended for code linting.
 

@@ -68,7 +68,7 @@ Choose the metadata store that fits your deployment:
 
 ### Prerequisites
 
-- **Go 1.24+** (or use a [prebuilt binary](builds/) or Docker)
+- **Go 1.25+** (or use a [prebuilt binary](builds/) or Docker)
 - A metadata store: PostgreSQL, SQLite, Redis, or Raft (built-in)
 - Optionally: Redis for distributed locking, S3 credentials for object storage
 
