@@ -1,5 +1,27 @@
 # Changelog
 
+## [v1.5.1] - 2026-07-31
+
+Security patch release. Resolves all 16 open dependency advisories reported against the repository. `govulncheck` now reports **0 vulnerabilities affecting CallFS code** and 0 in imported packages.
+
+### **Security**
+- **quic-go 0.59.0 → 0.59.1** — fixes HTTP/3 QPACK trailer expansion memory exhaustion ([GHSA/quic-go](https://github.com/quic-go/quic-go/security/advisories)). This was the one directly reachable advisory: `http3.Server` is exposed whenever QUIC is enabled, so an unauthenticated peer could drive memory growth via crafted trailers.
+- **go-chi/chi 5.2.2 → 5.3.0** — fixes an open redirect in the `RedirectSlashes` middleware plus three further routing advisories (GO-2026-5774/5775/5777). CallFS does not mount `RedirectSlashes`, so the open redirect was not exploitable here; upgraded regardless.
+- **golang.org/x/crypto 0.45.0 → 0.53.0** — clears 12 advisories (4 critical), all in `x/crypto/ssh`: agent-constraint bypass, `@revoked` auth bypass, FIDO/U2F presence-check bypass, `VerifiedPublicKeyCallback` permission skips, server deadlock, and several panic/DoS paths. CallFS imports no SSH code, so these were transitive-only.
+- **golang.org/x/net 0.47.0 → 0.56.0** — fixes an HTML-parser DoS (GO-2026-5942) and related advisories.
+- **golang.org/x/text 0.37.0 → 0.39.0** — fixes GO-2026-5970.
+
+Three advisories remain unresolved upstream with no patched release available: `GO-2026-5932` (`x/crypto`) and `GO-2022-0635`/`GO-2022-0646` (`aws-sdk-go` S3 crypto client). None are reachable from CallFS code.
+
+### **Breaking Changes**
+- **Minimum Go version for building from source is now 1.25** (was 1.24), required by quic-go 0.59.1. The Docker build image moves to `golang:1.25-alpine`. Prebuilt binaries and container images are unaffected.
+
+### **Internal Changes**
+- Closes Dependabot PRs [#4](https://github.com/ebogdum/callfs/pull/4), [#6](https://github.com/ebogdum/callfs/pull/6), [#7](https://github.com/ebogdum/callfs/pull/7), [#8](https://github.com/ebogdum/callfs/pull/8) — superseded by this consolidated upgrade, which lands newer patched versions than the individual PRs proposed.
+- Updated the Go version requirement in `README.md`, `docs_markdown/01-installation.md`, and `docs_markdown/08-developer-guide.md`.
+
+---
+
 ## [v1.5.0] - 2026-06-05
 
 ### **New Features**
