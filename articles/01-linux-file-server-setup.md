@@ -1,19 +1,19 @@
 # How to Set Up a REST API File Server on Linux
 
-Setting up a file server on Linux no longer requires complex daemon configurations or proprietary protocols. CallFS is an open-source, REST API-native file server that runs as a single binary on any Linux system. It exposes every file operation — upload, download, list, update, delete — as a standard HTTP endpoint, making it scriptable with `curl`, integratable with any HTTP client library, and straightforward to monitor and secure. This tutorial walks you through installing CallFS, configuring it for a single-node deployment, and performing common file operations using plain HTTP requests.
+Setting up a file server on Linux no longer requires complex daemon configurations or proprietary protocols. CallFS is an open-source, REST API-native file server that runs as a single binary on any Linux system. It exposes every file operation (upload, download, list, rename, delete) as a standard HTTP endpoint, making it scriptable with `curl`, easy to call from any HTTP client library, and straightforward to monitor and secure. It also ships a web console at `/ui/` for people who prefer a browser. This tutorial walks you through installing CallFS, configuring it for a single-node deployment, and performing common file operations using plain HTTP requests.
 
 ---
 
 ## What You'll Build
 
-By the end of this guide you will have a fully operational Linux file server that accepts authenticated HTTP requests to upload, download, list, and delete files. The server stores files on local disk and tracks metadata in a local SQLite database — no external services required to get started. You will also configure it as a systemd service so it survives reboots, and learn how to switch it to HTTPS when you are ready to expose it beyond a local network.
+By the end of this guide you will have a working Linux file server that accepts authenticated HTTP requests to upload, download, list, move, and delete files. The server stores files on local disk and tracks metadata in a local SQLite database, so no external services are required to get started. You will also run it as a systemd service so it survives reboots, and learn how to switch it to HTTPS when you are ready to expose it beyond a local network.
 
 ---
 
 ## Prerequisites
 
 - A Linux server (any modern distribution: Debian, Ubuntu, RHEL, Rocky, Fedora, or similar)
-- `curl` installed (available by default on most distributions)
+- `curl` and `openssl` installed (both are available by default on most distributions)
 - A user account with `sudo` privileges
 
 No programming language runtime or package manager is needed. CallFS ships as a statically linked binary.
@@ -22,41 +22,55 @@ No programming language runtime or package manager is needed. CallFS ships as a 
 
 ## Installation
 
-Download the latest release binary directly from GitHub, make it executable, and move it to a system-wide location:
+Download the release binary from GitHub, check it against the published checksums, and install it system-wide. Pin the version you want instead of using a "latest" link:
 
 ```bash
-curl -Lo callfs https://github.com/ebogdum/callfs/releases/latest/download/callfs-linux-amd64 \
-  && chmod +x callfs \
-  && sudo mv callfs /usr/local/bin/
+VERSION=v2.0.0
+curl -LO https://github.com/ebogdum/callfs/releases/download/$VERSION/callfs-linux-amd64
+curl -LO https://github.com/ebogdum/callfs/releases/download/$VERSION/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+sudo install -m 755 callfs-linux-amd64 /usr/local/bin/callfs
+callfs --help
 ```
 
-CallFS is now available system-wide.
+`sha256sum` must print `OK` for `callfs-linux-amd64`. Stop if it prints `FAILED`. On ARM64 machines use `callfs-linux-arm64`.
+
+The prebuilt binaries include the web console at `/ui/`. Everything in this tutorial also works from the command line.
 
 ---
 
 ## Configuration
 
-CallFS reads a YAML configuration file at startup. Create the directories it will use, then write the configuration:
+CallFS reads a YAML configuration file at startup. Create a service user, the directories CallFS will use, and the secrets it needs:
 
 ```bash
-sudo mkdir -p /var/lib/callfs/data
-sudo mkdir -p /etc/callfs
+sudo useradd --system --shell /usr/sbin/nologin --home /var/lib/callfs callfs
+sudo mkdir -p /var/lib/callfs/data /etc/callfs
+sudo chown -R callfs:callfs /var/lib/callfs
+
+API_KEY=$(openssl rand -hex 32)
+SECRET_1=$(openssl rand -hex 32)
+SECRET_2=$(openssl rand -hex 32)
+echo "Your API key: $API_KEY"
 ```
 
-Create `/etc/callfs/config.yaml` with the following content. This is a minimal single-node configuration using local disk storage and SQLite for metadata — the simplest possible setup for a Linux file server:
+Save the API key. You need it for every request and to sign in to the console.
 
-```yaml
+Create `/etc/callfs/config.yaml`. This is a minimal single-node configuration using local disk storage and SQLite for metadata, the simplest possible setup for a Linux file server:
+
+```bash
+sudo tee /etc/callfs/config.yaml > /dev/null <<EOF
 server:
   listen_addr: ":8443"
   protocol: "http"
-  read_timeout: 30s
-  write_timeout: 60s
+  external_url: "http://localhost:8443"
 
 auth:
-  api_keys:
-    - "your-api-key-here-change-me"
-  internal_proxy_secret: "internal-secret-change-me"
-  single_use_link_secret: "link-secret-change-this"
+  api_key_users:
+    admin: "$API_KEY"
+  admin_users: ["admin"]
+  internal_proxy_secret: "$SECRET_1"
+  single_use_link_secret: "$SECRET_2"
 
 backend:
   default_backend: "localfs"
@@ -70,19 +84,39 @@ dlm:
   type: "local"
 
 instance_discovery:
-  instance_id: "server-1"
+  instance_id: "node-1"
+
+metrics:
+  listen_addr: "127.0.0.1:9090"
+EOF
+sudo chown callfs:callfs /etc/callfs/config.yaml
+sudo chmod 600 /etc/callfs/config.yaml
 ```
 
 ### Configuration notes
 
-- **`listen_addr`** — the address and port the server binds to. `:8443` means all interfaces on port 8443. You can change the port to any unprivileged port (1024 and above) without requiring elevated privileges.
-- **`protocol`** — set to `http` for this tutorial. See the HTTPS section below for production hardening.
-- **`api_keys`** — a list of bearer tokens clients must present in the `Authorization: Bearer` header. Replace the placeholder with a random string of at least 16 characters. You can list multiple keys to support key rotation without downtime.
-- **`internal_proxy_secret`** — used for authenticated communication between CallFS nodes in a cluster. Even on a single node, this field is required and must be set to a non-empty value.
-- **`single_use_link_secret`** — the signing secret for time-limited download links. Required even if you do not plan to use the feature.
-- **`localfs_root_path`** — the directory where uploaded files are stored on disk. Ensure this path exists and is writable by the user running CallFS.
-- **`sqlite_path`** — where CallFS writes its metadata database. SQLite is a good choice for single-node deployments and development. For multi-node setups, CallFS also supports PostgreSQL and Redis.
-- **`dlm.type: local`** — uses an in-process distributed lock manager, appropriate for single-node deployments. Switch to `redis` when running multiple instances to coordinate concurrent writes across nodes.
+- **`listen_addr`**: the address and port the server binds to. `:8443` means all interfaces on port 8443. Any port of 1024 and above works without elevated privileges.
+- **`protocol`**: `http`, `https` or `auto`. The default is `https`, which requires `cert_file` and `key_file`. This tutorial uses `http`; see the HTTPS section below for production.
+- **`external_url`**: the public address CallFS puts into the download links it creates. Without a `http://` prefix it assumes `https://`.
+- **`api_key_users`**: maps a user name to an API key. The user name is recorded as the owner of everything that key creates, and it stays the same when other keys are added, rotated or removed. Each key must be at least 16 characters, must be different from every other key and secret, and must not contain placeholder text such as `your-`, `change-me` or `a-strong-`. The names `root`, `internal-proxy` and `api-user-N` are reserved.
+- **`admin_users`**: users who can see the administration pages of the web console and change settings. Every name here must also exist in `api_key_users`.
+- **`internal_proxy_secret`**: the shared secret that CallFS nodes use to trust each other. It is required even on a single node, must be at least 16 characters, and must differ from every API key and from `single_use_link_secret`.
+- **`single_use_link_secret`**: the signing secret for one-time download links. It is required even if you do not plan to use the feature, and it has the same rules as `internal_proxy_secret`.
+- **`localfs_root_path`**: the directory where uploaded files are stored. It must exist and be writable by the user running CallFS. Changing it later does not move existing files.
+- **`sqlite_path`**: where CallFS writes its metadata database. SQLite is a good choice for a single node. For several nodes use the embedded NATS metadata store, or PostgreSQL or Redis.
+- **`dlm.type: local`**: in-process locking, correct for one node. Use `nats` or `redis` when you run several nodes.
+- **`instance_id`**: a name for this server. It is required and has no default.
+- **`metrics.listen_addr`**: a separate, unauthenticated port for Prometheus metrics. The default `:9090` listens on every interface; binding it to `127.0.0.1` keeps it private.
+
+You can also supply any setting as an environment variable. The name is `CALLFS_` followed by the key path in upper case with `__` between levels, for example `CALLFS_AUTH__INTERNAL_PROXY_SECRET`. Environment variables win over the file. Every setting is listed in [Configuration](../docs_markdown/02-configuration.md).
+
+### Validate the file
+
+```bash
+sudo -u callfs callfs config validate --config /etc/callfs/config.yaml
+```
+
+It prints `Configuration is valid` and exits with 0, or prints the first problem and exits with 1. It checks the settings only; it does not connect to any database or remote service.
 
 ---
 
@@ -91,26 +125,32 @@ instance_discovery:
 Run CallFS directly from the command line to confirm it starts correctly:
 
 ```bash
-callfs server --config /etc/callfs/config.yaml
+sudo -u callfs callfs server --config /etc/callfs/config.yaml
 ```
 
-You should see structured JSON log output indicating the server is listening on the configured address. The log format and level are configurable; for human-readable output during development, add the following block to your config:
+The server logs to standard error as structured JSON. For human-readable output during development, add this block to your config:
 
 ```yaml
 log:
   level: "info"
-  format: "console"
+  format: "text"
 ```
 
-Leave the server running and open a second terminal to test file operations with `curl`.
+`level` is `debug`, `info`, `warn` or `error`. Leave the server running and open a second terminal to test file operations with `curl`.
 
 ---
 
 ## Working with Files
 
-All file operations use standard HTTP verbs against the `/v1/files/` and `/v1/directories/` endpoint prefixes. The API follows REST conventions: POST creates, GET reads, PUT replaces, DELETE removes. Authentication is handled through a bearer token in the `Authorization` header on every request (except the health endpoint).
+All file operations use standard HTTP verbs against the `/v1/files/` and `/v1/directories/` endpoint prefixes. POST creates, GET reads, PUT creates or replaces, PATCH renames or moves, and DELETE removes. Authentication is a bearer token in the `Authorization` header on every request, except for the health endpoints and one-time download links.
 
-Replace `YOUR_API_KEY` in each example with the key you set in `config.yaml`.
+In the examples below, set the key once:
+
+```bash
+export CALLFS_API_KEY=your-api-key
+```
+
+Use the key printed during configuration instead of `your-api-key`.
 
 ### Health check
 
@@ -126,47 +166,60 @@ Expected response:
 {"status":"ok"}
 ```
 
-The health endpoint requires no authentication and is suitable for use with load balancers and monitoring probes.
+The health endpoint requires no authentication and is suitable for load balancers and monitoring probes. `GET /health/ready` is a deeper check of this server: it returns `{"status":"ok"}` or `{"status":"degraded"}` with HTTP 200 while the server can work, and `{"status":"down"}` with HTTP 503 when it cannot. Problems with other servers are listed under `peers` and never fail readiness. The command `callfs healthcheck --config /etc/callfs/config.yaml` calls `/health` and reports the result through its exit code, which is handy for container health checks.
 
 ### Create a directory
 
-CallFS uses a trailing slash convention to distinguish directory operations from file operations. Directories are created with a POST request to a path ending in a trailing slash:
+CallFS uses a trailing slash to tell directories from files. Create a directory with a POST to a path that ends in a slash:
 
 ```bash
 curl -X POST \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer $CALLFS_API_KEY" \
   http://localhost:8443/v1/files/projects/
 ```
 
+A new directory returns `201 Created` and gets mode `0777`; new files get `0644`. The owner and administrators can do everything; other users follow the "other" bits of the mode (read lets them read or list, write lets them overwrite or create items, delete stays with the owner). Creating one that already exists returns `200 OK`, so the call is safe to repeat in setup scripts.
+
 ### Upload a file
 
-Send file content as an octet-stream body. CallFS writes the file to disk and records its metadata — path, size, owner, and modification time — atomically in the metadata store. The parent directory must exist before uploading:
+Send the file content as the request body. CallFS stores the data and records its metadata (path, size, owner, modification time and a content tag called the ETag) in the metadata store. Create the parent directory first, as in the previous step:
 
 ```bash
-curl -X POST \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+curl -i -X POST \
+  -H "Authorization: Bearer $CALLFS_API_KEY" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @readme.txt \
   http://localhost:8443/v1/files/projects/readme.txt
 ```
 
+A successful create returns `201 Created` and an `ETag` header. POST creates only: if the file already exists you get `409 Conflict`, and you use PUT to replace it. The largest upload is 10 GiB. For big files or unreliable networks, resumable uploads let you continue after a break (see [File Storage API](03-file-storage-api-rest-upload-download.md)).
+
+By default CallFS tells you the file is saved only after it is on disk. A client can ask for a faster answer on a single request with the `X-CallFS-Write-Ack` header (`disk` or `memory`); see [Storage](../docs_markdown/05-storage.md) for the trade-off.
+
 ### Download a file
 
-A GET request to any file path streams the content back. CallFS sets the `Content-Length` header so clients can display download progress:
+A GET request to any file path streams the content back. CallFS sets `Content-Length`, an `ETag`, and `Accept-Ranges: bytes`, so clients can show progress, resume, and fetch partial ranges:
 
 ```bash
-curl -H "Authorization: Bearer YOUR_API_KEY" \
+curl -H "Authorization: Bearer $CALLFS_API_KEY" \
+  http://localhost:8443/v1/files/projects/readme.txt \
+  -o readme-copy.txt
+```
+
+To fetch only the first kilobyte, send a `Range` header; the server answers `206 Partial Content`:
+
+```bash
+curl -H "Authorization: Bearer $CALLFS_API_KEY" \
+  -H "Range: bytes=0-1023" \
   http://localhost:8443/v1/files/projects/readme.txt
 ```
 
-To save the downloaded content to a local file, add `-o output.txt` to the command. For large files, `curl` will display transfer progress automatically when writing to a file.
-
 ### List directory contents
 
-Use the `/v1/directories/` prefix to list a directory. The response is JSON and includes each entry's name, type, size, and modification time:
+Use the `/v1/directories/` prefix to list a directory. The response is JSON with each entry's name, path, type, size, mode, owner and modification time:
 
 ```bash
-curl -H "Authorization: Bearer YOUR_API_KEY" \
+curl -H "Authorization: Bearer $CALLFS_API_KEY" \
   http://localhost:8443/v1/directories/projects/
 ```
 
@@ -174,69 +227,104 @@ Example response:
 
 ```json
 {
-  "path": "projects/",
+  "path": "/projects",
   "type": "directory",
   "recursive": false,
   "count": 1,
   "items": [
     {
       "name": "readme.txt",
-      "path": "projects/readme.txt",
+      "path": "/projects/readme.txt",
       "type": "file",
       "size": 1024,
       "mode": "0644",
-      "owner": "",
+      "owner": "admin",
       "mtime": "2026-04-11T10:00:00Z"
     }
   ]
 }
 ```
 
-To list recursively, append `?recursive=true` to the URL.
+Add `?recursive=true` (and optionally `&max_depth=3`) to list the whole tree. A listing returns at most 10,000 entries; when it is cut short the response carries `"truncated": true`.
+
+For big directories, add `limit` to get pages with sorting and filtering:
+
+```bash
+curl -H "Authorization: Bearer $CALLFS_API_KEY" \
+  "http://localhost:8443/v1/directories/projects/?limit=50&sort=mtime&order=desc&type=file&q=readme"
+```
+
+`limit` is 1 to 1000, `sort` is `name`, `size`, `mtime` or `type`, `order` is `asc` or `desc`, `type` is `file` or `directory`, `q` filters by name, and `include_hidden=false` hides names that start with a dot. When more entries remain, the response has a `next_cursor` that you pass back as `cursor`.
 
 ### Read file metadata
 
-A HEAD request returns file metadata in response headers without transferring the body. This is useful for checking whether a file exists and what its current size is before deciding to download it:
+A HEAD request returns file metadata in response headers without transferring the body. It is a cheap way to check whether a file exists and how big it is:
 
 ```bash
 curl -I \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer $CALLFS_API_KEY" \
   http://localhost:8443/v1/files/projects/readme.txt
 ```
 
-CallFS returns the following custom headers:
+CallFS returns these headers:
 
 | Header | Description |
 |---|---|
 | `X-CallFS-Size` | File size in bytes |
-| `X-CallFS-Mode` | File permission mode string |
-| `X-CallFS-Owner` | Owner identifier |
-| `X-CallFS-MTime` | Last modification timestamp |
-| `X-CallFS-Type` | Resource type (`file` or `directory`) |
+| `X-CallFS-Mode` | Permission mode string, for example `0644` |
+| `X-CallFS-Owner` | The user name that owns the file |
+| `X-CallFS-MTime` | Last modification time |
+| `X-CallFS-Type` | `file` or `directory` |
+| `X-CallFS-Instance-ID` | The server that holds the file |
+| `ETag` | Content tag for conditional requests |
 
 ### Update a file
 
-Replace an existing file's content with a PUT request:
+Replace an existing file's content with a PUT request. PUT also creates the file when it does not exist:
 
 ```bash
-curl -X PUT \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+curl -i -X PUT \
+  -H "Authorization: Bearer $CALLFS_API_KEY" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @readme-v2.txt \
   http://localhost:8443/v1/files/projects/readme.txt
 ```
 
-PUT is idempotent: running it multiple times with the same content produces the same result.
+The answer is `200 OK` for a replaced file and `201 Created` for a new one, with the new `ETag`. To avoid overwriting someone else's change, send `If-Match: "<etag>"` with the ETag you last saw; if the file changed, the request fails with `412 Precondition Failed`. Send `If-None-Match: *` to create only when nothing exists yet.
+
+### Rename or move a file
+
+A PATCH with a JSON body renames or moves a file or a whole directory:
+
+```bash
+curl -X PATCH \
+  -H "Authorization: Bearer $CALLFS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"destination": "/archive/readme.txt", "create_parents": true}' \
+  http://localhost:8443/v1/files/projects/readme.txt
+```
+
+Use `{"name": "new-name.txt"}` instead to rename in place. Send exactly one of `name` or `destination`. Add `"overwrite": true` to replace an existing target. The answer is `200 OK` with `{"path": "<new path>"}`.
 
 ### Delete a file
 
 ```bash
 curl -X DELETE \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer $CALLFS_API_KEY" \
   http://localhost:8443/v1/files/projects/readme.txt
 ```
 
-A successful delete returns HTTP 204 No Content. Both the file data and its metadata record are removed. Attempting to delete a path that does not exist returns HTTP 404.
+A successful delete returns `204 No Content`, and the file's data and metadata are removed for good. Deleting a path that does not exist returns `404`. Deleting a directory that still has content returns `409`; add `?recursive=true` to remove the directory with everything in it, or `?dry_run=true` to see what would be removed first.
+
+If you want a delete you can undo, use the web console's "Move to trash" action (or a `trash` operation in a batch request). Trashed items stay for 30 days by default (`trash.retention`) and can be restored from the Trash page.
+
+---
+
+## Using the Web Console Instead
+
+Everything above is also available in a browser. With a build that includes the console, open `http://localhost:8443/ui/` and paste your API key into the "Access key" field. The Files page lets you browse folders, upload files or whole folders, create folders, rename, move, download, create one-time download links and move items to trash. Users listed in `admin_users` also see Cluster, Insights, Activity and Settings pages for health, charts, logs and configuration.
+
+If you started with the prebuilt binary, which has no console, nothing changes for the API. Switch to the Docker image or a `make build` binary when you want the console. See [Web console](../docs_markdown/08-web-console.md) for every page.
 
 ---
 
@@ -245,18 +333,25 @@ A successful delete returns HTTP 204 No Content. Both the file data and its meta
 For a production Linux file server, you want CallFS to start automatically on boot and restart on failure. Create a systemd unit file:
 
 ```bash
-sudo tee /etc/systemd/system/callfs.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/callfs.service > /dev/null <<'EOF'
 [Unit]
 Description=CallFS REST API File Server
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+User=callfs
+Group=callfs
+WorkingDirectory=/var/lib/callfs
 ExecStart=/usr/local/bin/callfs server --config /etc/callfs/config.yaml
-Restart=on-failure
+Restart=always
 RestartSec=5s
-StandardOutput=journal
-StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/callfs
 SyslogIdentifier=callfs
 
 [Install]
@@ -264,17 +359,11 @@ WantedBy=multi-user.target
 EOF
 ```
 
-Enable and start the service:
+Use `Restart=always`, not `on-failure`. When an administrator restarts CallFS from the console, the process exits with code 75 and relies on systemd to start it again. Stop the foreground server from the previous step, then enable and start the service:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable callfs
-sudo systemctl start callfs
-```
-
-Check that it is running:
-
-```bash
+sudo systemctl enable --now callfs
 sudo systemctl status callfs
 ```
 
@@ -284,25 +373,26 @@ View logs at any time with:
 sudo journalctl -u callfs -f
 ```
 
+Stopping the service (`SIGTERM`) lets CallFS finish open requests for up to 30 seconds before it exits.
+
 ---
 
 ## Enabling HTTPS
 
-The HTTP configuration above is convenient for a local network or a trusted internal environment. For a publicly accessible file server on Linux, enable TLS by providing a certificate and key.
-
-If you have a certificate (for example from Let's Encrypt), update the `server` block in your configuration:
+The HTTP configuration above is convenient for a local network or a trusted internal environment. For a publicly reachable file server, enable TLS by providing a certificate and key. If you have a certificate (for example from Let's Encrypt), update the `server` block:
 
 ```yaml
 server:
   listen_addr: ":8443"
   protocol: "https"
+  external_url: "https://files.example.com"
   cert_file: "/etc/callfs/server.crt"
   key_file: "/etc/callfs/server.key"
-  read_timeout: 30s
-  write_timeout: 60s
 ```
 
-Then update any `curl` commands to use `https://` instead of `http://`. If you are using a self-signed certificate during testing, add the `-k` flag to `curl` to skip certificate verification — do not do this in production.
+CallFS refuses to start with `protocol: https` unless both files are set. The `callfs` user must be able to read them. Then use `https://` in your `curl` commands. For a self-signed test certificate, add `-k` to `curl` only while testing; never skip certificate verification in production.
+
+If a reverse proxy in front of CallFS ends TLS, keep `protocol: http` on the private side and list the proxy's address in `server.trusted_proxies` (for example `["10.0.0.0/24"]`) so CallFS logs and rate-limits the real client address from `X-Forwarded-For`.
 
 Restart the service after any configuration change:
 
@@ -316,10 +406,10 @@ sudo systemctl restart callfs
 
 This tutorial covered a minimal single-node setup. CallFS supports considerably more:
 
-- **Monitoring** — a Prometheus-compatible metrics endpoint on a configurable port for tracking request rates, latency, and storage utilization.
-- **Clustering** — multi-node deployments with Raft-based metadata consensus and peer-aware request routing.
-- **S3 backend** — store files in any S3-compatible object store instead of local disk, with optional server-side encryption.
-- **Erasure coding** — distribute file shards across nodes for fault tolerance with configurable data and parity shard counts.
-- **Single-use download links** — generate time-limited, unauthenticated download URLs for sharing files without exposing API keys.
+- **Monitoring**: a Prometheus metrics endpoint on its own port, `/health/ready`, and Insights and Activity pages in the console for charts, logs and audit records. See [Monitoring and metrics](../docs_markdown/06-monitoring-metrics.md).
+- **Clustering**: multi-node deployments on an embedded NATS server for metadata, locks and node messaging, with requests routed to the node that holds a file. See [Clustering](../docs_markdown/07-clustering.md).
+- **S3 backend**: store files in any S3-compatible object store instead of local disk, with optional server-side encryption. See [Storage](../docs_markdown/05-storage.md).
+- **Erasure coding**: split files into data and parity pieces spread across servers for fault tolerance.
+- **One-time download links**: generate expiring, single-use download URLs for sharing a file without exposing an API key. See [Secure file sharing](02-secure-file-sharing-business.md).
 
-Full documentation is available in the [CallFS repository](https://github.com/ebogdum/callfs) under the `docs/` directory.
+Full documentation is in the [CallFS repository](https://github.com/ebogdum/callfs) under `docs_markdown/`: [Installation](../docs_markdown/01-installation.md), [Configuration](../docs_markdown/02-configuration.md), [API reference](../docs_markdown/03-api-reference.md), [Authentication and security](../docs_markdown/04-authentication-security.md), [Troubleshooting](../docs_markdown/09-troubleshooting.md).

@@ -1,425 +1,416 @@
 # Monitoring CallFS with Prometheus and Grafana
 
-CallFS ships with first-class Prometheus support built into the binary — no plugins, no sidecars, no extra processes required. Every significant operation the server performs is tracked: HTTP requests, backend storage calls, metadata database queries, file operations, distributed locks, and single-use link lifecycles. This guide walks through enabling metric collection, understanding what each metric tells you, writing useful PromQL queries, and building Grafana dashboards that give your team real operational visibility into a running CallFS deployment.
+CallFS has Prometheus support built into the binary: no plugins, no sidecars, no extra processes. Every significant operation is counted or timed: HTTP requests, storage calls, file index queries, file operations, edit locks, download links, backup copies, background jobs and, in a cluster, the embedded NATS service. This guide for CallFS 2.0.0 shows how to turn metrics on, what each metric tells you, which PromQL queries are useful, how to build Grafana panels, and which alert rules to start with.
 
 ---
 
 ## Why Instrument a File Server
 
-A file server that only logs errors is a file server you react to after something breaks. Prometheus metrics let you track trends — rising p99 latency before it becomes an outage, a spike in error rate correlated with a backend change, or growing lock contention that explains why client uploads are slowing. The `prometheus monitoring setup` described below is designed to answer the questions an SRE actually has: is the server healthy right now, is it trending in the wrong direction, and where exactly is the bottleneck?
+A file server that only logs errors is a file server you react to after something breaks. Metrics let you see trends: p99 latency that rises before an outage, an error rate that jumps after a storage change, lock waits that explain why uploads slow down. The setup below answers the three questions an operator asks: is the server healthy now, is it trending the wrong way, and where is the bottleneck?
+
+CallFS also has a built-in view of the same numbers. The web console (**Insights** and **Home**) charts them without Prometheus; see [Web console](../docs_markdown/08-web-console.md). Use Prometheus and Grafana when you want longer history, several servers on one dashboard, or alerts that reach your pager.
 
 ---
 
 ## Enabling Metrics
 
-CallFS supports two modes for exposing its `/metrics` endpoint. Choose the one that fits your network topology and security model.
+CallFS serves the Prometheus text format at `/metrics` in two places. Choose the one that fits your network.
 
-### Option 1: Dedicated Metrics Port (Recommended)
+### Option 1: Dedicated metrics port (recommended)
 
-Add a `metrics` block to your `config.yaml`:
+The metrics port is on by default:
 
 ```yaml
 metrics:
-  listen_addr: ":9090"
+  listen_addr: "10.0.0.5:9090"
 ```
 
-With this configuration, CallFS binds a separate HTTP listener on port 9090 that serves only the Prometheus metrics endpoint — no authentication required. This is the standard approach for `prometheus monitoring setup` in a private network: your Prometheus scraper reaches the metrics port directly without needing API credentials, while the main API port (`:8443` by default) remains protected.
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `metrics.listen_addr` | `:9090` | Address of the metrics listener. An empty value turns it off. Needs a restart. |
+| `metrics.profiling` | `false` | Also serves Go profiling pages on this port. Keep it off unless you are debugging. |
 
-This is the preferred approach when your Prometheus instance runs inside the same network segment or Kubernetes cluster as CallFS and the metrics port is not reachable from the public internet.
-
-### Option 2: Metrics via Main Port with Authentication
-
-If your deployment does not allow an additional open port, the `/metrics` endpoint is also available through the main server port. In this case you must supply a valid API key:
+This listener serves only metrics, and it has no sign-in. Anyone who can reach the port can read every metric, so bind it to a private address (`127.0.0.1:9090` or a private interface) or firewall it. If you set a non-loopback address, the health finding `metrics.public_port` appears as a reminder. Environment variable: `CALLFS_METRICS__LISTEN_ADDR`.
 
 ```bash
-curl -H "Authorization: Bearer YOUR_API_KEY" http://localhost:8443/metrics
+curl -s http://10.0.0.5:9090/metrics | head
 ```
 
-This returns the standard Prometheus text exposition format. Configure your Prometheus scraper to include the Authorization header (shown in the scrape config section below).
+### Option 2: Metrics on the main port, with a key
+
+If you cannot open another port, `/metrics` is also on the main HTTPS port. It needs an access key (or a console session):
+
+```bash
+curl -s -H "Authorization: Bearer your-api-key" \
+  https://files.example.com:8443/metrics | head
+```
 
 ---
 
 ## Available Metrics
 
-CallFS registers the following metrics at startup. All are exported in the standard Prometheus text format.
+Every metric starts with `callfs_`. Go runtime and process metrics (`go_*`, `process_*`) are exposed as well. The full reference with every label value is in [Monitoring](../docs_markdown/06-monitoring-metrics.md#metric-reference). The ones you will use most:
 
-### HTTP Layer
+### HTTP layer
 
-**`callfs_http_requests_total`** — Counter, labels: `method`, `path`, `status_code`
+| Metric | Type | Labels | Notes |
+|--------|------|--------|-------|
+| `callfs_http_requests_total` | counter | `method`, `path`, `status_code` | `path` is the route pattern such as `/v1/files/*` or `/v1/links/generate`, never the real file path. Requests that match no route use `unmatched`. |
+| `callfs_http_request_duration_seconds` | histogram | `method`, `path` | Default Prometheus buckets (5 ms to 10 s). Live streams and WebSocket upgrades are not timed. Uploads and downloads that take more than 10 seconds land in the last bucket. |
+| `callfs_errors_total` | counter | `component`, `error_type` | Every response with status 400 or above. `component` is the first part of the route (`files`, `links`, `admin`, `download`, `trash`, `uploads`, and so on). `error_type` names the status: `bad_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`, `gone`, `rate_limited`, `internal`, `bad_gateway` and more. |
+| `callfs_rate_limit_rejections_total` | counter | `endpoint` | Requests rejected by a rate limit: `download`, `link_generate` or `session`. |
+| `callfs_auth_failures_total` | counter | `reason` | Failed authentications: `missing_key`, `wrong_key`, `expired_session`, `csrf`, `blocked`, `bad_delegation`. |
+| `callfs_transfers_active` | gauge | `kind` | Transfers running now: `upload`, `download` or `websocket`. |
 
-The total number of HTTP requests served, broken down by HTTP method, request path, and response status code. This is your primary signal for request volume and error rate. A sustained rise in `status_code="500"` demands immediate investigation.
+### Files and storage
 
-**`callfs_http_request_duration_seconds`** — Histogram, labels: `method`, `path`
+| Metric | Type | Labels | Notes |
+|--------|------|--------|-------|
+| `callfs_file_operations_total` | counter | `operation`, `backend_type` | `operation` is `create`, `read`, `update`, `delete` or `rename`. `backend_type` is `localfs`, `s3`, `internal_proxy` or `erasure`. |
+| `callfs_backend_ops_total` | counter | `backend_type`, `operation` | Calls to a storage backend (`open`, `create`, `update`, `delete`, `move`, `stat`, and others). |
+| `callfs_backend_op_duration_seconds` | histogram | `backend_type`, `operation` | Time of each storage call. Shows the difference between local disk and S3. |
+| `callfs_backend_op_failures_total` | counter | `backend_type`, `operation` | Storage calls that returned an error. |
+| `callfs_usage_bytes`, `callfs_usage_files` | gauge | `storage` | Bytes and files per storage. Refreshed every 10 minutes. |
+| `callfs_replication_total` | counter | `result` | Backup copy attempts: `succeeded`, `failed`, `dropped` or `skipped`. |
+| `callfs_erasure_pieces_repaired_total` | counter | none | Pieces of erasure-coded files rebuilt by repairs. |
 
-End-to-end HTTP request latency using Prometheus default buckets. Use this for latency percentile analysis across different endpoints. Upload (`PUT`) and download (`GET`) latencies will naturally differ and should be tracked separately.
+### File index and cache
 
-### Backend Storage
+| Metric | Type | Labels | Notes |
+|--------|------|--------|-------|
+| `callfs_metadata_db_queries_total` | counter | `operation` | Calls to the file index. `operation` includes `get`, `create`, `update`, `delete`, `rename`, `list_children`, `list_descendants`, `search_descendants` and `list_by_prefix`. |
+| `callfs_metadata_db_query_duration_seconds` | histogram | `operation` | Time of each file index call. |
+| `callfs_cache_lookups_total` | counter | `result` | `hit` or `miss`. |
+| `callfs_cache_evictions_total`, `callfs_cache_entries` | counter, gauge | none | Cache churn and size. |
 
-**`callfs_backend_op_duration_seconds`** — Histogram, labels: `backend_type`, `operation`
+### Locks, links, jobs
 
-Latency for each backend operation type. This is where you will see the difference between local disk I/O and object storage round-trip times. If `callfs_http_request_duration_seconds` spikes but `callfs_backend_op_duration_seconds` does not, the bottleneck is elsewhere (metadata, locking).
+| Metric | Type | Labels | Notes |
+|--------|------|--------|-------|
+| `callfs_lock_operations_total` | counter | `operation`, `status` | `acquire` ends as `acquired`, `timeout`, `cancelled` or `error`. `release` is `ok` or `error`. |
+| `callfs_lock_operation_duration_seconds` | histogram | `operation` | For `acquire` this includes waiting for another holder. |
+| `callfs_active_locks` | gauge | none | Locks held now. |
+| `callfs_single_use_link_generations_total` | counter | none | Download links created. |
+| `callfs_single_use_link_consumptions_total` | counter | `status` | Open attempts: `success`, `expired`, `invalid`, `not_found` or `error`. |
+| `callfs_single_use_links_active` | gauge | none | Links that can still be opened. |
+| `callfs_jobs_total` | counter | `kind`, `result` | Finished background jobs: `succeeded`, `partial`, `failed` or `cancelled`. |
 
-### File Operations
+### Cluster (embedded NATS)
 
-**`callfs_file_operations_total`** — Counter, labels: `operation`, `backend_type`
+| Metric | Type | Notes |
+|--------|------|-------|
+| `callfs_nats_connected` | gauge | 1 when the embedded NATS service is running. |
+| `callfs_nats_routes` | gauge | Connected links to the other nodes. A healthy three-node cluster shows 2 on every node. |
+| `callfs_nats_slow_consumers` | counter | Clients disconnected for being too slow. |
+| `callfs_nats_in_msgs`, `callfs_nats_out_bytes` | counter | Messages received and bytes sent. |
+| `callfs_nats_js_api_errors` | counter | Stream API requests that returned an error. |
+| `callfs_nats_stream_messages`, `callfs_nats_stream_bytes` | gauge (label `stream`) | Size of each shared stream. |
 
-Counts completed file-level operations — `create`, `read`, `update`, and `delete` — attributed to the backend that handled them. This gives you the business-level view of what the server is actually doing with files, independent of raw HTTP mechanics.
-
-### Distributed Locking
-
-### Single-Use Links
-
-**`callfs_single_use_link_generations_total`** — Counter
-
-Total single-use download links generated. Track this to understand how heavily the link-sharing feature is used.
-
-**`callfs_single_use_link_consumptions_total`** — Counter, labels: `status`
-
-Total link consumption attempts, labeled by outcome: `success`, `expired`, `invalid`, or `not_found`. A rising `expired` rate suggests clients are receiving links but not using them within the configured TTL. A rising `invalid` rate may indicate a misconfigured client or an active token-probing attempt.
-
-### Errors
-
+The `callfs_raft_*` metrics of earlier releases no longer exist. Raft cluster mode was removed in 2.0.0; configs that use it are rejected at startup. Use `metadata_store.type: nats` and `dlm.type: nats`, and watch the `callfs_nats_*` series instead. In the console, **Cluster, Replication** shows the health of the shared file index, and the health findings `nats.not_connected`, `nats.no_quorum`, `nats.replica_offline`, `nats.log_lag`, `nats.snapshot_stale` and `nats.plain_transport` warn about the same problems.
 
 ---
 
 ## Prometheus Scrape Configuration
 
-### Scraping the Dedicated Metrics Port
+### Scraping the dedicated metrics port
 
 ```yaml
 scrape_configs:
   - job_name: callfs
-    static_configs:
-      - targets:
-          - callfs-host-1:9090
-          - callfs-host-2:9090
-          - callfs-host-3:9090
     scrape_interval: 15s
     scrape_timeout: 10s
+    static_configs:
+      - targets:
+          - node-1.example.com:9090
+          - node-2.example.com:9090
+          - node-3.example.com:9090
 ```
 
-Replace `callfs-host-N` with the hostname or IP of each CallFS node. In a Kubernetes deployment, use a ServiceMonitor (Prometheus Operator) or a pod annotation scrape configuration instead.
+Replace the targets with each CallFS node. Prometheus adds the `instance` label from the target address, so you can compare nodes. In Kubernetes, use a ServiceMonitor or pod annotations instead.
 
-### Scraping via the Main Port with Authentication
+### Scraping the main port with a key
 
 ```yaml
 scrape_configs:
   - job_name: callfs
-    static_configs:
-      - targets:
-          - callfs-host-1:8443
     scheme: https
+    metrics_path: /metrics
+    scrape_interval: 15s
     tls_config:
-      insecure_skip_verify: false
       ca_file: /etc/prometheus/certs/callfs-ca.crt
     authorization:
       type: Bearer
-      credentials: YOUR_API_KEY
-    scrape_interval: 15s
+      credentials_file: /etc/prometheus/callfs-key
+    static_configs:
+      - targets:
+          - node-1.example.com:8443
 ```
 
-Use `scheme: http` if the main server is running without TLS. Omit `tls_config` in that case.
+Put the key in `/etc/prometheus/callfs-key` (mode `600`) so it does not appear in the config file. Use `scheme: http` and drop `tls_config` if the server runs without TLS.
+
+### Check that it works
+
+In the Prometheus UI, open **Status, Targets**: each node must show `UP`. Then run `callfs_http_requests_total` in the query box.
 
 ---
 
 ## Useful PromQL Queries
 
-### Request Rate
+### Request rate
 
-Total HTTP request rate across all methods and paths over a five-minute window:
+Requests per second by route:
 
 ```promql
-rate(callfs_http_requests_total[5m])
+sum by (path) (rate(callfs_http_requests_total[5m]))
 ```
 
-Broken down by status code to separate successful requests from errors:
+By status code, to separate success from errors:
 
 ```promql
 sum by (status_code) (rate(callfs_http_requests_total[5m]))
 ```
 
-### Error Rate
+### Error rate
 
-Overall error rate from all subsystems:
-
-```promql
-sum(rate(callfs_errors_total[5m]))
-```
-
-Error rate broken down by component to identify which subsystem is misbehaving:
+Share of requests that failed on the server side (5xx):
 
 ```promql
-sum by (component) (rate(callfs_errors_total[5m]))
+sum(rate(callfs_http_requests_total{status_code=~"5.."}[5m]))
+/
+sum(rate(callfs_http_requests_total[5m]))
 ```
 
-### P99 Latency
-
-99th-percentile HTTP request latency across all endpoints:
+All error responses (4xx and 5xx) by part of the API and kind:
 
 ```promql
-histogram_quantile(
-  0.99,
-  rate(callfs_http_request_duration_seconds_bucket[5m])
-)
+sum by (component, error_type) (rate(callfs_errors_total[5m]))
 ```
 
-P99 latency for upload operations specifically:
+4xx responses are usually clients (wrong key, missing file), so alert on 5xx and use this query to investigate.
+
+### Latency
+
+p99 over all routes:
+
+```promql
+histogram_quantile(0.99, sum by (le) (rate(callfs_http_request_duration_seconds_bucket[5m])))
+```
+
+p99 of file uploads (the `PUT` route for files):
 
 ```promql
 histogram_quantile(
   0.99,
   sum by (le) (
-    rate(callfs_http_request_duration_seconds_bucket{method="PUT"}[5m])
+    rate(callfs_http_request_duration_seconds_bucket{method="PUT",path="/v1/files/*"}[5m])
   )
 )
 ```
 
-### File Operations by Type
-
-Rate of each file operation type over the last five minutes:
+### File operations by type
 
 ```promql
 sum by (operation) (rate(callfs_file_operations_total[5m]))
 ```
 
-### Backend Latency by Storage Type
+### Storage latency and failures
 
-P95 latency per backend and operation:
+p95 per backend and operation:
 
 ```promql
 histogram_quantile(
   0.95,
-  sum by (backend_type, operation, le) (
-    rate(callfs_backend_op_duration_seconds_bucket[5m])
-  )
+  sum by (backend_type, operation, le) (rate(callfs_backend_op_duration_seconds_bucket[5m]))
 )
 ```
 
-### Lock Contention
-
-Lock acquire failure rate — a non-zero value sustained over time warrants investigation:
+Failures per backend:
 
 ```promql
-rate(callfs_lock_operations_total{operation="acquire",status="failure"}[5m])
+sum by (backend_type, operation) (rate(callfs_backend_op_failures_total[5m]))
+```
+
+### Locks
+
+Acquire attempts that did not succeed (timeouts and errors):
+
+```promql
+sum by (status) (rate(callfs_lock_operations_total{operation="acquire",status=~"timeout|error"}[5m]))
+```
+
+### Cache hit ratio
+
+```promql
+sum(rate(callfs_cache_lookups_total{result="hit"}[5m]))
+/
+sum(rate(callfs_cache_lookups_total[5m]))
+```
+
+### Rate limits and sign-in failures
+
+```promql
+sum by (endpoint) (rate(callfs_rate_limit_rejections_total[5m]))
+sum by (reason) (rate(callfs_auth_failures_total[5m]))
+```
+
+### Storage use and backup copies
+
+```promql
+callfs_usage_bytes
+sum by (result) (increase(callfs_replication_total[1h]))
+```
+
+### Download links
+
+```promql
+sum by (status) (rate(callfs_single_use_link_consumptions_total[1h]))
+callfs_single_use_links_active
+```
+
+### Cluster
+
+```promql
+callfs_nats_routes
+callfs_nats_connected
 ```
 
 ---
 
 ## Grafana Dashboard Panels
 
-The following panels form a practical `grafana dashboard` for day-to-day CallFS operations. Import them into a dashboard with a `job` variable set to `callfs`.
+Add Prometheus as a data source, create a dashboard, and add an `instance` variable with the query `label_values(callfs_http_requests_total, instance)`. In panel queries, use `$__rate_interval` instead of a fixed `[5m]` and filter with `instance=~"$instance"`.
 
-### Panel 1: Request Rate (Time Series)
+| Panel | Type | Query | Reading it |
+|-------|------|-------|-----------|
+| Requests by status | Time series, stacked | `sum by (status_code) (rate(callfs_http_requests_total{instance=~"$instance"}[$__rate_interval]))` | Throughput and the share of errors. Color 2xx green, 4xx orange, 5xx red. |
+| Latency p50 / p95 / p99 | Time series | `histogram_quantile(0.99, sum by (le) (rate(callfs_http_request_duration_seconds_bucket{instance=~"$instance"}[$__rate_interval])))` (repeat with 0.95 and 0.5) | A p99 far above p50 means a subset of requests, often large transfers, is slow. |
+| File operations | Time series | `sum by (operation) (rate(callfs_file_operations_total{instance=~"$instance"}[$__rate_interval]))` | Reads usually dominate. A sudden drop in everything points to a connectivity problem. |
+| Errors by part of the API | Time series | `sum by (component, error_type) (rate(callfs_errors_total{instance=~"$instance"}[$__rate_interval]))` | First place to look in an incident. |
+| Storage latency | Heatmap (format: Heatmap) | `sum by (le) (rate(callfs_backend_op_duration_seconds_bucket{instance=~"$instance"}[$__rate_interval]))` | A long tail often means a slow disk or slow S3 link. |
+| Active locks and transfers | Stat | `callfs_active_locks`, `sum by (kind) (callfs_transfers_active)` | Locks that only grow point to a stuck holder. |
+| Storage used | Stacked bars | `callfs_usage_bytes` | Where the data lives (`localfs`, `s3`, `erasure`). |
+| Cluster links | Stat | `callfs_nats_routes` | Should equal the number of other nodes. |
+| Cache hit ratio | Gauge | the cache ratio query above | Low values on a busy server mean `server.metadata_cache_size` is too small. |
 
-**PromQL:** `sum by (status_code) (rate(callfs_http_requests_total[5m]))`
-
-A stacked time series with one series per HTTP status code. At a glance this shows total throughput and the proportion of requests that are returning errors. Color the `2xx` band green, `4xx` orange, and `5xx` red. Set the Y-axis unit to `requests/s`.
-
-### Panel 2: P50 / P95 / P99 HTTP Latency (Time Series)
-
-**PromQL (three queries):**
-
-```promql
-histogram_quantile(0.50, rate(callfs_http_request_duration_seconds_bucket[5m]))
-histogram_quantile(0.95, rate(callfs_http_request_duration_seconds_bucket[5m]))
-histogram_quantile(0.99, rate(callfs_http_request_duration_seconds_bucket[5m]))
-```
-
-Three overlapping lines on the same panel. P99 diverging sharply from P50 indicates that a subset of requests — typically large uploads or cold cache reads — are experiencing extreme latency while the median looks fine. Set the Y-axis unit to `seconds` and enable a log scale if values span multiple orders of magnitude.
-
-### Panel 3: File Operations by Type (Time Series)
-
-**PromQL:** `sum by (operation) (rate(callfs_file_operations_total[5m]))`
-
-Tracks create, read, update, and delete rates. A healthy server typically shows reads dominating. An unusual spike in deletes or a sudden drop in all operations can indicate automated client behavior changes or a connectivity issue.
-
-### Panel 4: Active Locks (Stat or Time Series)
-
-**PromQL:** `callfs_active_locks`
-
-A single stat panel showing the current lock gauge value is useful for at-a-glance health. Add a time series panel next to it to show how the value evolves over time. Alert thresholds: yellow above a baseline appropriate for your workload, red if the value grows monotonically across multiple scrape intervals.
-
-### Panel 5: Error Rate by Component (Time Series)
-
-**PromQL:** `sum by (component) (rate(callfs_errors_total[5m]))`
-
-One series per component (`backend`, `metadata`, `lock_manager`, etc.). This panel is the first place to look during an incident — it immediately narrows down whether the problem is in storage, metadata, or the locking subsystem.
-
-### Panel 6: Backend Operation Latency Heatmap (Heatmap)
-
-**PromQL:** `sum by (le) (rate(callfs_backend_op_duration_seconds_bucket[5m]))`
-
-A Grafana heatmap visualization using the histogram bucket data. This shows where latency is distributed, not just the percentiles. Useful for detecting bimodal distributions — for example, most requests completing in under 50ms but a long tail of requests taking several seconds, which often indicates intermittent network issues to object storage.
+Keep the console in mind too: **Insights** shows request, error, latency and storage charts from the same data with no setup (history length is `ui.metrics_retention`, default 24 hours).
 
 ---
 
 ## Alerting Rules
 
-Alerting on the right signals prevents alert fatigue while still catching real problems early. The rules below cover the most critical failure modes for a `file server monitoring` setup.
-
-### High HTTP Error Rate
-
-Fire when more than 5% of requests over the last five minutes are returning server errors:
-
-```yaml
-- alert: CallFSHighErrorRate
-  expr: |
-    (
-      sum(rate(callfs_http_requests_total{status_code=~"5.."}[5m]))
-      /
-      sum(rate(callfs_http_requests_total[5m]))
-    ) > 0.05
-  for: 2m
-  labels:
-    severity: critical
-  annotations:
-    summary: "CallFS HTTP error rate above 5%"
-    description: >
-      The ratio of 5xx responses to total requests has exceeded 5% for
-      more than two minutes. Current value: {{ $value | humanizePercentage }}.
-```
-
-### High P99 Latency
-
-Fire when p99 request latency exceeds two seconds:
-
-```yaml
-- alert: CallFSHighLatency
-  expr: |
-    histogram_quantile(
-      0.99,
-      rate(callfs_http_request_duration_seconds_bucket[5m])
-    ) > 2.0
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "CallFS p99 latency above 2 seconds"
-    description: >
-      The 99th-percentile HTTP request duration has been above 2 seconds
-      for more than five minutes. Investigate backend and metadata latency.
-```
-
-### Backend Operation Errors
-
-Fire when any backend is returning errors at a sustained rate:
-
-```yaml
-- alert: CallFSBackendErrors
-  expr: |
-    sum by (backend_type) (rate(callfs_errors_total{component="backend"}[5m])) > 0.1
-  for: 3m
-  labels:
-    severity: warning
-  annotations:
-    summary: "CallFS backend errors on {{ $labels.backend_type }}"
-    description: >
-      The {{ $labels.backend_type }} backend has been producing errors
-      at more than 0.1/s for three minutes. Check storage connectivity.
-```
-
-### Lock Contention
-
-Fire when lock acquisitions are frequently failing:
-
-```yaml
-- alert: CallFSLockContention
-  expr: |
-    rate(callfs_lock_operations_total{operation="acquire",status="failure"}[5m]) > 0.5
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "CallFS lock acquisition failures"
-    description: >
-      Lock acquisition is failing at more than 0.5/s. This indicates
-      write contention. Check for clients holding locks longer than expected.
-```
-
-### Example: Complete Alerting Rules File
+These rules cover the most important failure modes. Save them in a rules file loaded by Prometheus.
 
 ```yaml
 groups:
   - name: callfs
     interval: 30s
     rules:
-      - alert: CallFSHighErrorRate
-        expr: |
-          (
-            sum(rate(callfs_http_requests_total{status_code=~"5.."}[5m]))
-            /
-            sum(rate(callfs_http_requests_total[5m]))
-          ) > 0.05
+      - alert: CallFSDown
+        expr: up{job="callfs"} == 0
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "CallFS HTTP error rate above 5%"
-          description: >
-            5xx response ratio has exceeded 5% for more than two minutes.
-            Current value: {{ $value | humanizePercentage }}.
+          summary: "CallFS {{ $labels.instance }} cannot be scraped"
+
+      - alert: CallFSHighErrorRate
+        expr: |
+          sum(rate(callfs_http_requests_total{status_code=~"5.."}[5m]))
+          /
+          sum(rate(callfs_http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 5% of CallFS requests fail with a 5xx"
 
       - alert: CallFSHighLatency
         expr: |
-          histogram_quantile(
-            0.99,
-            rate(callfs_http_request_duration_seconds_bucket[5m])
-          ) > 2.0
+          histogram_quantile(0.99,
+            sum by (le, instance) (rate(callfs_http_request_duration_seconds_bucket{path!~"/v1/files/\\*|/download/.*"}[5m]))
+          ) > 2
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "CallFS p99 latency above 2 seconds"
-          description: >
-            P99 HTTP request latency has been above 2 seconds for five minutes.
+          summary: "p99 latency above 2 seconds on {{ $labels.instance }}"
 
-      - alert: CallFSBackendErrors
-        expr: |
-          sum by (backend_type) (
-            rate(callfs_errors_total{component="backend"}[5m])
-          ) > 0.1
+      - alert: CallFSBackendFailures
+        expr: sum by (backend_type, instance) (rate(callfs_backend_op_failures_total[5m])) > 0.1
         for: 3m
         labels:
           severity: warning
         annotations:
-          summary: "CallFS backend errors on {{ $labels.backend_type }}"
-          description: >
-            The {{ $labels.backend_type }} backend is producing errors
-            at more than 0.1/s. Check storage connectivity and permissions.
+          summary: "{{ $labels.backend_type }} storage is failing on {{ $labels.instance }}"
 
-      - alert: CallFSLockContention
-        expr: |
-          rate(
-            callfs_lock_operations_total{operation="acquire",status="failure"}[5m]
-          ) > 0.5
+      - alert: CallFSLockTimeouts
+        expr: sum(rate(callfs_lock_operations_total{operation="acquire",status=~"timeout|error"}[5m])) > 0.5
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "CallFS lock acquisition failures"
-          description: >
-            Lock acquisitions are failing at more than 0.5/s, indicating
-            write contention. Review client lock usage patterns.
+          summary: "Lock acquisitions are timing out or failing"
 
-      - alert: CallFSActiveLockGrowth
-        expr: |
-          deriv(callfs_active_locks[10m]) > 0.5
-        for: 10m
+      - alert: CallFSBackupCopiesFailing
+        expr: increase(callfs_replication_total{result=~"failed|dropped"}[1h]) > 0
+        for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "CallFS active locks growing steadily"
-          description: >
-            The active lock count has been growing at more than 0.5/min
-            for ten minutes, which may indicate a lock leak.
+          summary: "Backup copies are failing on {{ $labels.instance }}"
+
+      - alert: CallFSAuthFailureSpike
+        expr: sum(rate(callfs_auth_failures_total[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many failed sign-in attempts"
+
+      - alert: CallFSClusterLinkLost
+        expr: callfs_nats_routes < 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} has lost a cluster link"
+
+      - alert: CallFSNatsDown
+        expr: callfs_nats_connected == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The embedded NATS service is not running on {{ $labels.instance }}"
 ```
+
+Notes on the rules:
+
+- `CallFSHighLatency` leaves out the file transfer routes, because a large upload or download legitimately takes many seconds and falls into the last histogram bucket. Watch transfers with `callfs_transfers_active` instead.
+- `CallFSClusterLinkLost` assumes a three-node cluster, where every node should have 2 links. Change the number to the node count minus one. Leave the rule out on a single node.
+- `CallFSAuthFailureSpike` uses a rate above 5 failures per second. Raise or lower it to match your traffic. Clients that fail repeatedly are blocked and then counted as `blocked`.
+
+---
+
+## Beyond Metrics: Health Checks
+
+Prometheus tells you about trends. Two HTTP endpoints, on the main port and without a key, tell you about the current state:
+
+| Endpoint | Use it for | Answer |
+|----------|-----------|--------|
+| `GET /health` | Liveness: restart the process if it fails | `{"status":"ok"}` while the process answers |
+| `GET /health/ready` | Readiness and uptime probes (for example the Prometheus blackbox exporter) | `ok` or `degraded` with HTTP 200, `down` with HTTP 503 |
+
+`/health/ready` checks the file index, locks, local disk, S3, split storage, the certificate (a warning when it expires in under 21 days), free disk space (a warning under 10% and `down` under 1%), the backup copy and the link cleanup worker. It reflects only the node you ask. Problems with other servers are listed under `peers` in the answer and never fail readiness, so a stopped node does not turn the others `down`. Use `/health/ready` for load balancer checks and alerts; watch `callfs_nats_routes` and the `peers` list for lost nodes.
+
+`callfs healthcheck --config /etc/callfs/config.yaml` calls `/health` on the local server and exits with 0 on success, which suits a container health check.
+
+CallFS also compares its own setup against a list of known problems and shows them as **health findings** in the console and at `GET /v1/admin/findings`, for example `backup.failing` and `metrics.public_port`. The full list is in [Monitoring](../docs_markdown/06-monitoring-metrics.md#health-findings).
 
 ---
 
 ## Putting It All Together
 
-A complete `file server monitoring` setup for CallFS involves four components working together: CallFS exposing metrics on a dedicated port, Prometheus scraping those metrics every 15 seconds, alerting rules firing before users feel the impact, and Grafana dashboards giving your team the context to act quickly.
+A complete monitoring setup for CallFS has four parts: CallFS exposing metrics on a private port, Prometheus scraping every node every 15 seconds, alert rules that fire before users notice, and Grafana dashboards that show where to look. Start with the nine panels and the alert rules above. Once you know what normal looks like for your workload, adjust the thresholds to cut false alarms without missing real incidents.
 
-The metrics described in this guide cover every layer of the system: HTTP handling, file operations, backend storage, metadata queries, and distributed locking. Start with the six Grafana panels and five alerting rules above. As you learn your deployment's normal behavior, refine the alert thresholds to reduce false positives without missing real incidents.
-
-For multi-node CallFS deployments, add a `instance` label to your scrape targets and use `sum by (instance)` in your queries to track per-node health alongside cluster-wide aggregates.
+For multi-node deployments, keep the `instance` label on every query and compare nodes side by side, and add the cluster rules so a lost link is noticed within minutes. See [Setting up a CallFS cluster](06-callfs-clustering-nats.md).

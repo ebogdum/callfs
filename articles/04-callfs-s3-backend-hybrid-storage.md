@@ -1,8 +1,8 @@
 # Using S3 as a Storage Backend in CallFS
 
-CallFS ships with two storage backends out of the box: local filesystem (`localfs`) and S3-compatible object storage (`s3`). Most deployments start with local disk, which is perfectly fine for a single server. As your needs grow — offsite durability, cross-region availability, or cost-effective long-term storage — switching to an S3-compatible file storage backend, or running both simultaneously, is a first-class feature built into CallFS's core engine.
+CallFS ships with two storage backends out of the box: local filesystem (`localfs`) and S3-compatible object storage (`s3`). Most deployments start with local disk, which is perfectly fine for a single server. As your needs grow (offsite durability, files that every server must reach, cost-effective long-term storage), switching to an S3-compatible backend, or running both at once, is a first-class feature of CallFS.
 
-This guide walks through every configuration option for the S3 backend, covers when to choose S3 over local disk, explains the hybrid storage model, and finishes with a quick smoke test to verify your setup.
+This guide walks through every S3 setting, covers when to choose S3 over local disk, explains the hybrid storage model and the backup copy feature, and finishes with a quick smoke test to verify your setup. The same settings are available in the web console under Settings, "Storage".
 
 ---
 
@@ -13,94 +13,119 @@ Before touching any config, it helps to be deliberate about which backend fits y
 **Local filesystem is the right choice when:**
 
 - You need the lowest possible read latency. Serving files off a locally attached NVMe drive will always beat a round-trip to an object store.
-- Your workload is write-heavy and latency-sensitive. Local writes are synchronous and bounded; S3 uploads add network overhead.
+- Your workload is write-heavy and latency-sensitive.
 - You are running a single-node instance and durability is handled at the infrastructure level (RAID, snapshot-based backups, etc.).
 - You want operational simplicity with no external dependencies for file data.
 
 **S3 is the right choice when:**
 
 - You need files to survive a complete server loss without a separate backup pipeline.
-- You are storing large files that would saturate local disk capacity.
-- Multiple CallFS instances need to read the same files without cross-server proxying.
+- You are storing large amounts of data that would fill local disk.
+- Several CallFS servers must read the same files without forwarding requests to the server that holds them. A file on local disk belongs to one server, and other servers fetch it from there; a file in S3 is reachable from every server directly.
 - You have compliance requirements that mandate encryption at rest managed by your cloud provider's key infrastructure (SSE-KMS).
-- You want to decouple file data from compute, so instances can be replaced or scaled without migrating data.
+- You want to decouple file data from compute, so servers can be replaced or scaled without migrating data.
 
-The two options are not mutually exclusive. The hybrid model described later in this guide lets you write to both simultaneously, giving you local read performance with S3 durability as a safety net.
+The two options are not mutually exclusive. You can configure both and choose where each file goes, or keep local disk as the primary storage and have CallFS keep a backup copy in S3.
 
 ---
 
 ## S3 Backend Configuration
 
-The `backend` section of your `config.yaml` controls which storage backend CallFS uses by default and how it connects to S3.
+CallFS turns S3 on whenever `backend.s3_bucket_name` is set. Which storage new files go to is a separate choice, `backend.default_backend`.
 
 ```yaml
 backend:
   default_backend: "s3"
-  s3_access_key: "YOUR_ACCESS_KEY"
-  s3_secret_key: "YOUR_SECRET_KEY"
+  s3_access_key: "REPLACE_WITH_ACCESS_KEY"
+  s3_secret_key: "REPLACE_WITH_SECRET_KEY"
   s3_region: "us-east-1"
   s3_bucket_name: "my-callfs-bucket"
-  s3_endpoint: ""  # leave empty for AWS, or set for S3-compatible services
-  s3_server_side_encryption: "AES256"  # AES256 | aws:kms | ""
+  s3_server_side_encryption: "AES256"
   s3_acl: "private"
 ```
 
-**Field reference:**
+**Field reference** (all of these need a restart to change):
 
-| Field | Description |
-|---|---|
-| `default_backend` | Sets whether new files go to `localfs` or `s3`. Existing files are always served from the backend recorded in their metadata. |
-| `s3_access_key` | AWS access key ID or equivalent credential for S3-compatible services. |
-| `s3_secret_key` | AWS secret access key or equivalent credential. |
-| `s3_region` | AWS region for the bucket. Ignored by most S3-compatible services but still required to be set. |
-| `s3_bucket_name` | The bucket CallFS will read from and write to. The bucket must exist before starting CallFS — the adapter calls `HeadBucket` at startup and fails fast if the bucket is unreachable. |
-| `s3_endpoint` | Leave empty to use native AWS endpoints. Set to a URL for any S3-compatible service. |
-| `s3_server_side_encryption` | See the encryption section below. |
-| `s3_acl` | Object-level ACL applied on upload. `private` is the default and the recommended value for most deployments. |
+| Key | Default | Allowed | What it does |
+|---|---|---|---|
+| `backend.default_backend` | `localfs` | `localfs`, `s3` | Where new files go. Existing files are always read from the storage recorded for them. |
+| `backend.s3_bucket_name` | empty | text | The bucket to use. Empty turns S3 off. The bucket must exist: CallFS checks it at startup (15-second limit) and stops with `failed to access S3 bucket` if it cannot reach it. |
+| `backend.s3_access_key` | empty | text | Access key ID. |
+| `backend.s3_secret_key` | empty | text | Secret that pairs with the access key ID. |
+| `backend.s3_region` | `us-east-1` | text | Region of the bucket. Most S3-compatible services ignore it, but keep a value set. |
+| `backend.s3_endpoint` | empty | URL | Address of an S3-compatible service. Empty means Amazon S3. |
+| `backend.s3_allow_insecure` | `false` | `true`, `false` | Allows a plain `http://` endpoint. Without it, such an endpoint stops CallFS at startup. |
+| `backend.s3_server_side_encryption` | `AES256` | `AES256`, `aws:kms`, empty | How the bucket encrypts stored files. |
+| `backend.s3_kms_key_id` | empty | text | Key to use with `aws:kms`. |
+| `backend.s3_acl` | `private` | an S3 canned ACL, or empty | Access that new objects get. Empty sends no ACL. |
+
+If `default_backend` is `s3` but no bucket is set, uploads fail with `backend not enabled`.
 
 ### Environment Variable Overrides
 
-Every configuration field can be set via environment variable, which is preferable for secrets in production. The naming convention is `CALLFS_` prefix followed by the key path with dots replaced by double underscores:
+Every configuration field can be set via environment variable, which is preferable for secrets in production. The name is the prefix `CALLFS_`, then the key path in upper case with `__` between levels:
 
 ```sh
-export CALLFS_BACKEND__S3_ACCESS_KEY="YOUR_ACCESS_KEY"
-export CALLFS_BACKEND__S3_SECRET_KEY="YOUR_SECRET_KEY"
+export CALLFS_BACKEND__S3_ACCESS_KEY="REPLACE_WITH_ACCESS_KEY"
+export CALLFS_BACKEND__S3_SECRET_KEY="REPLACE_WITH_SECRET_KEY"
 export CALLFS_BACKEND__S3_BUCKET_NAME="my-callfs-bucket"
 ```
 
-Environment variables take highest priority and override anything in `config.yaml`.
+Environment variables take priority over `config.yaml`. In the console, the access key and secret are never displayed after they are saved.
 
 ---
 
 ## Using a Custom S3 Endpoint
 
-Any service that speaks the S3 API can be used as CallFS's file storage backend. When you set `s3_endpoint`, CallFS automatically enables path-style addressing, which is required by most self-hosted S3-compatible services.
+Any service that speaks the S3 API can be used as CallFS's storage backend: MinIO, Ceph, Cloudflare R2, DigitalOcean Spaces and others. When you set `s3_endpoint`, CallFS addresses the bucket in the URL path (`https://endpoint/bucket/key`), which is what self-hosted services expect.
 
 ```yaml
 backend:
   default_backend: "s3"
-  s3_access_key: "YOUR_ACCESS_KEY"
-  s3_secret_key: "YOUR_SECRET_KEY"
+  s3_access_key: "REPLACE_WITH_ACCESS_KEY"
+  s3_secret_key: "REPLACE_WITH_SECRET_KEY"
   s3_region: "us-east-1"
   s3_bucket_name: "my-callfs-bucket"
-  s3_endpoint: "http://s3.internal:9000"
-  s3_server_side_encryption: ""  # disable for most S3-compatible services
+  s3_endpoint: "https://s3.example.com:9000"
+  s3_server_side_encryption: ""
   s3_acl: "private"
 ```
 
-**What changes when `s3_endpoint` is set:**
+Notes for S3-compatible services:
 
-- Path-style addressing is forced (`S3ForcePathStyle: true`). Virtual-hosted-style URLs (`bucket.endpoint.com`) are not used.
-- If the endpoint URL starts with `http://`, SSL is disabled automatically. HTTPS endpoints keep SSL enabled.
-- MD5 content validation is disabled, which is necessary for compatibility with many S3-compatible services that do not implement that specific validation behavior.
-
-If your endpoint requires HTTPS but uses a self-signed certificate, you will need to ensure the certificate is trusted by the system running CallFS, or place a reverse proxy with a valid certificate in front of your object store.
+- Set `s3_server_side_encryption` to an empty string for servers that do not support encryption headers, such as a basic MinIO.
+- Some services reject any ACL. If uploads fail with an ACL error, set `s3_acl` to an empty string.
+- An endpoint that starts with `http://` is refused unless `s3_allow_insecure: true` is set. With it, CallFS logs a warning on every start because file data and credentials then travel unencrypted. Use it only on a private network.
+- If your endpoint uses HTTPS with a self-signed certificate, make sure the certificate is trusted by the operating system of the machine running CallFS, or put a proxy with a valid certificate in front of the object store.
 
 ---
 
-## Hybrid Storage with HA Replication
+## Hybrid Storage: Both Backends at Once
 
-The most resilient configuration runs local filesystem as the primary backend and replicates every write to S3 asynchronously — or synchronously, if you need the guarantee. This is controlled through the `ha` section of the configuration.
+Set both `localfs_root_path` and the S3 settings, and CallFS can hold files in both. Each file remembers where it lives:
+
+```yaml
+backend:
+  default_backend: "localfs"
+  localfs_root_path: "/var/lib/callfs/data"
+  s3_bucket_name: "my-callfs-archive"
+  s3_region: "us-east-1"
+  s3_access_key: "REPLACE_WITH_ACCESS_KEY"
+  s3_secret_key: "REPLACE_WITH_SECRET_KEY"
+```
+
+- Uploads with `POST` and `PUT` go to `default_backend`.
+- Resumable uploads can pick a storage per file: `{"path": "/archive/2025.tar", "size": 1073741824, "storage": "s3"}` on `POST /v1/uploads`.
+- Moving an existing file to the other storage (or to another server with `instance`) is an admin operation: `PATCH` with a `backend` or `instance` field moves the file for an admin, and returns `403` for ordinary users. In the console, admins use the move-to-another-server action on the Files page. Folders cannot be moved this way; move their files one by one.
+- Downloads read from the storage recorded for the file, whichever it is. In listings and search, the `storage` field (and the `storage=s3` search filter) tells you where each file is. The Files page of the console shows it per item.
+
+The console's Cluster page has a Storage section that lists each storage, marks the default for new files, shows disk use and when the local disk will fill, and has a "Check storage" button. The check writes, reads and deletes a small probe file in each storage and reports the result. The same check is `POST /v1/admin/backends/<name>/probe`.
+
+---
+
+## Backup Copy: Local Primary, S3 Replica
+
+The most resilient configuration keeps local disk as the primary storage and writes a second copy of every file to S3. This is controlled by the `ha` section:
 
 ```yaml
 backend:
@@ -108,8 +133,8 @@ backend:
   localfs_root_path: "/var/lib/callfs/data"
   s3_bucket_name: "callfs-backup"
   s3_region: "us-east-1"
-  s3_access_key: "KEY"
-  s3_secret_key: "SECRET"
+  s3_access_key: "REPLACE_WITH_ACCESS_KEY"
+  s3_secret_key: "REPLACE_WITH_SECRET_KEY"
 
 ha:
   replication_enabled: true
@@ -117,41 +142,48 @@ ha:
   require_replica_success: true
 ```
 
-With `replication_enabled: true` and `replica_backend: "s3"`, every file write (both creates and updates) is followed by a replication step that copies the file to the S3 bucket. Deletes are also propagated — when a file is removed from local disk, CallFS attempts to remove the corresponding object from S3.
+| Key | Default | What it does |
+|---|---|---|
+| `ha.replication_enabled` | `false` | Turns the backup copy on. |
+| `ha.replica_backend` | empty | `localfs` or `s3`. Required when replication is on; startup fails with `ha.replica_backend must be one of: localfs, s3` otherwise. A file whose primary storage is already the replica backend is not copied. |
+| `ha.require_replica_success` | `false` | Whether a failed backup copy fails the upload. |
 
-The `require_replica_success` flag controls the failure mode:
+Both new files and updates are copied, and deleting a file also removes its copy. The two modes differ in when the copy happens:
 
-- **`true`**: The upload request fails if the S3 replication step fails. The client receives an error and the write is rolled back conceptually — the file exists on local disk but the upload is considered failed. Use this when you need a hard guarantee that every accepted write is durably backed up.
-- **`false`**: S3 replication failures are logged as warnings but do not fail the request. The file is written to local disk and the client receives a success response. Use this when you prefer availability over strict durability.
+- **`require_replica_success: true`**: the file is written to the primary and to the replica at the same time. If the replica write fails, the upload fails, nothing is kept, and the client gets an error. If the last step of making the copy fails after the file was saved, the file stays saved on the primary and the request still returns an error; send the upload again with `PUT`. A delete also fails if the copy cannot be removed. Use this when every accepted file must have a backup. Uploads fail while the backup storage is down.
+- **`require_replica_success: false`**: the upload succeeds as soon as the primary write is done, and the copy is made in the background. A failure is logged and counted, and does not affect the client. When clustering is on, each copy is a durable task that is retried several times with growing delays (`nats.streams.tasks_max_deliver` and `tasks_backoff`); tasks that still fail are kept for review. A copy that cannot be queued is counted as dropped, so the file stays without a copy until you retry. A copy for a file that was deleted or changed since it was queued is counted as skipped. Use this when availability matters more than a guaranteed second copy.
+
+Reads always come from the file's primary storage. The copy is for recovery, not a fallback: if you want S3 as the read source, set `default_backend: "s3"` instead.
+
+Watch the copies in Prometheus with `callfs_replication_total{result="succeeded"|"failed"|"dropped"|"skipped"}`. In the console, Cluster, "Backup" shows how many copies were made in the last 24 hours with the counts of ok, skipped and failed, lists each failed copy with its error, and has a "Retry failed copies" button (`GET /v1/admin/replication` and `POST /v1/admin/replication/retry` in the API).
 
 ---
 
 ## How It Works
 
-Understanding the internal flow helps you reason about edge cases and failure modes.
-
 **On upload (POST or PUT):**
 
-1. CallFS acquires a distributed lock for the file path to prevent concurrent writes.
-2. The file content is written to the primary backend (local disk, in the hybrid setup).
-3. File metadata (path, size, owner, backend type, timestamps) is persisted to the configured metadata store.
-4. If replication is enabled, the engine reads the file back from the primary backend and streams it to the replica backend (S3).
-5. If `require_replica_success` is `true` and step 4 fails, the error is returned to the client.
-6. The distributed lock is released and parent directory caches are invalidated.
+1. CallFS locks the file path so two writers cannot collide.
+2. The file is written to a temporary name on the chosen storage, then moved into place.
+3. File metadata (path, size, owner, storage, timestamps, ETag) is saved to the metadata store.
+4. If a backup copy is on, it is made as described above.
+5. The lock is released and the client receives `201 Created` or `200 OK` with the `ETag`.
+
+Local disk writes are confirmed to the client according to `backend.localfs_ack` (`disk` by default: after the data is on disk). With `performance.mode: strict`, CallFS also reads every saved file back from the storage and checks it before it answers, which adds a read from S3 to each upload. See [Storage](../docs_markdown/05-storage.md).
 
 **On download (GET):**
 
-1. CallFS looks up the file's metadata from the metadata store (with an in-memory cache layer, TTL 5 minutes).
-2. The `BackendType` field in the metadata record determines which backend to read from. A file written with `default_backend: "localfs"` will always be read from local disk, even when S3 replication is configured.
-3. The file content is streamed from the backend directly to the HTTP response.
+1. CallFS looks up the file's metadata.
+2. The storage recorded in the metadata decides where the bytes come from.
+3. The file is streamed to the client. Range requests read only the requested bytes from S3.
 
-This design means downloads always read from the primary backend — there is no fallback read from S3 if the local file is missing. The S3 replica is a durability copy for disaster recovery, not a read fallback. If you need S3 as the read source, set `default_backend: "s3"` rather than using the replication feature.
+**What you will see in the bucket.** The object key is the CallFS path without the leading slash: `/test/hello.txt` is stored as `test/hello.txt`. CallFS also uses a few reserved names in the bucket that you should leave alone: `.callfs-staging/` for uploads in progress, `.callfs/trash/` for items in trash, `.callfs/shards/` (the `erasure.shard_path` setting) for erasure-coded pieces, and `.callfs-probe/` for storage checks. Leftover `.callfs-staging` objects from stopped uploads can be listed and removed in the console under Cluster, "Hygiene".
 
 ---
 
 ## Server-Side Encryption Options
 
-The `s3_server_side_encryption` field accepts three values:
+The `s3_server_side_encryption` field accepts three values.
 
 ### AES256 (S3-Managed Keys)
 
@@ -159,7 +191,7 @@ The `s3_server_side_encryption` field accepts three values:
 s3_server_side_encryption: "AES256"
 ```
 
-S3 manages the encryption keys. Every object is encrypted at rest using AES-256. This is the default and requires no additional configuration. It satisfies most compliance requirements without any AWS KMS dependency.
+S3 manages the encryption keys and encrypts every object at rest. This is the default and requires nothing else.
 
 ### aws:kms (KMS-Managed Keys)
 
@@ -168,7 +200,7 @@ s3_server_side_encryption: "aws:kms"
 s3_kms_key_id: "arn:aws:kms:us-east-1:123456789012:key/your-key-id"
 ```
 
-AWS Key Management Service manages the encryption keys. This gives you key rotation control, cross-account access policies, and audit trails via CloudTrail. If `s3_kms_key_id` is left empty while using `aws:kms`, AWS uses the default S3 KMS key for your account.
+AWS Key Management Service manages the keys, which gives you key rotation control, cross-account policies and an audit trail. If `s3_kms_key_id` is empty, AWS uses the default S3 key for your account.
 
 ### Disabled
 
@@ -176,64 +208,75 @@ AWS Key Management Service manages the encryption keys. This gives you key rotat
 s3_server_side_encryption: ""
 ```
 
-No server-side encryption is applied. Use this for S3-compatible services that do not support SSE, or when you are handling encryption at the infrastructure layer (encrypted volumes, etc.).
+No encryption header is sent. Use this for S3-compatible services that do not support it, or when encryption is handled at another layer.
 
 ---
 
 ## Testing the Setup
 
-Once your configuration is in place, use `curl` to verify that uploads flow to both local disk and S3.
+Once your configuration is in place, check the file first and start the server:
+
+```bash
+callfs config validate --config /etc/callfs/config.yaml
+callfs server --config /etc/callfs/config.yaml
+```
+
+In the log you should see `Initializing S3 backend`. Then use `curl` to verify that uploads reach S3.
 
 **Step 1: Upload a test file**
 
 ```sh
 curl -X POST \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: text/plain" \
   --data-binary "hello from callfs" \
-  https://your-callfs-host:8443/v1/files/test/hello.txt
+  https://files.example.com/v1/files/test/hello.txt
 ```
 
-A `201 Created` response means the file was written to the primary backend and, if `require_replica_success: true`, confirmed in S3.
+Create the `test/` folder first with `curl -X POST -H "Authorization: Bearer your-api-key" https://files.example.com/v1/files/test/`. A `201 Created` response means the file was written to the default storage and, with `require_replica_success: true`, also to the replica.
 
 **Step 2: Read it back through CallFS**
 
 ```sh
-curl -H "Authorization: Bearer YOUR_API_KEY" \
-  https://your-callfs-host:8443/v1/files/test/hello.txt
+curl -H "Authorization: Bearer your-api-key" \
+  https://files.example.com/v1/files/test/hello.txt
 ```
 
-You should receive the file content.
+You should receive the file content. `curl -I` on the same URL shows `X-CallFS-Size` and the `ETag`.
 
 **Step 3: Verify the object in S3**
-
-Use the AWS CLI or your S3-compatible service's console to check that the object exists:
 
 ```sh
 aws s3 ls s3://my-callfs-bucket/test/
 ```
 
-You should see `hello.txt` listed. The S3 key mirrors the CallFS path with the leading slash stripped — `/test/hello.txt` becomes `test/hello.txt` in the bucket.
+You should see `hello.txt` listed. For a custom endpoint, add `--endpoint-url https://s3.example.com:9000`.
 
-**Step 4: Check local disk (hybrid setup only)**
+**Step 4: Check the other copy (backup setup only)**
 
-If you are running the hybrid configuration, the file should also be present at the `localfs_root_path`:
+With local disk as the primary and S3 as the replica, the file also exists under the data directory:
 
 ```sh
 ls -la /var/lib/callfs/data/test/
 ```
 
-Both copies are independent. If you delete the file through CallFS, both the local copy and the S3 object are removed.
+With `require_replica_success: false`, allow a moment for the background copy.
+
+**Step 5: Look at it in the console**
+
+Open `https://files.example.com/ui/`, sign in, and go to Cluster, "Storage": the S3 card shows the bucket, region, endpoint and encryption, and "Check storage" confirms CallFS can write to the bucket. Files shows `test/hello.txt` with its storage.
+
+If you delete the file through CallFS, the primary object and the backup copy are both removed. Removing the file this way is permanent; the console's "Move to trash" keeps it recoverable for the `trash.retention` period (30 days by default).
 
 ---
 
 ## Summary
 
-CallFS's S3 backend support is built on the AWS SDK and works with any S3-compatible file storage backend. The key configuration decisions are:
+CallFS's S3 support works with Amazon S3 and any S3-compatible service. The key decisions are:
 
-- Set `default_backend: "s3"` for pure S3 storage, or keep `localfs` and enable HA replication for hybrid storage.
-- Leave `s3_endpoint` empty for native AWS, or point it at your internal S3-compatible service for self-hosted deployments.
-- Choose `AES256` for zero-configuration encryption, `aws:kms` when you need key management control, or an empty string to disable SSE.
-- Set `require_replica_success: true` in the `ha` block when durability guarantees matter more than upload availability.
+- Set `backend.s3_bucket_name` to turn S3 on, and `default_backend: "s3"` for pure S3 storage, or keep `localfs` as the default and choose S3 per file.
+- Leave `s3_endpoint` empty for Amazon S3, or point it at your own service; plain `http://` endpoints need `s3_allow_insecure: true`.
+- Choose `AES256` for zero-configuration encryption, `aws:kms` when you need key control, or an empty string to disable it.
+- Use `ha.replication_enabled` with `replica_backend: "s3"` for a backup copy, and set `require_replica_success: true` when a guaranteed second copy matters more than upload availability.
 
-For most production workloads that need both performance and durability, the hybrid model — local primary with S3 replica and `require_replica_success: true` — is the recommended starting point.
+For most production workloads that need both performance and durability, local primary storage with an S3 backup copy and `require_replica_success: true` is a solid starting point. See [Storage](../docs_markdown/05-storage.md) for the full reference, [Configuration](../docs_markdown/02-configuration.md) for every setting, and [Clustering](../docs_markdown/07-clustering.md) for running several servers on shared S3 storage.

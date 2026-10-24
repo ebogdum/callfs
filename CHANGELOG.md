@@ -6,10 +6,14 @@
 - Raft is removed. Clustering, metadata, locks and node messaging now run on an embedded NATS server that works standalone or as a cluster. Configs with `metadata_store.type: raft` or `dlm.type: raft` are rejected at startup.
 - The `callfs cluster join` and `callfs cluster remove` commands and the `/internal/raft/*` endpoints are gone.
 - The Go module path is now `github.com/ebogdum/callfs/v2`.
+- File and folder mode bits now control access for other users (read and write bits); new folders default to `0777`, files to `0644`. Owners and admins are not affected.
+- `/health` returns only `{status}`; `/health/ready` reports only this node, with peers listed for information.
+- The `callfs_raft_*` metrics are removed; `callfs_nats_*` metrics are added.
 
 ### **New Features**
 - Web console for files, sharing, users, cluster nodes, health findings, activity and settings, with control of every node from one place.
 - `performance.mode` (`fast` or `strict`). Both acknowledge a write only once it is durable; strict also reads back each saved file, locks every change and makes reads wait for the latest cluster state.
+- Fast overwrites on local disk (temp save) with a crash-safe restore at start. `backend.localfs_true_overwrite` and `backend.localfs_tmp_save_max_size` choose the older true overwrite, the `X-CallFS-True-Overwrite` header picks it per request, and `callfs_overwrite_restores_total` counts restores.
 - Write acknowledgement levels (`backend.localfs_ack`, `X-CallFS-Write-Ack`) and a group-commit flusher with configurable workers, memory budget and delay.
 - Admin API, trash, resumable uploads, search, stat and batch endpoints.
 - Lock waits with owner tokens and lease renewal, bounded by `dlm.wait_timeout`.
@@ -19,11 +23,23 @@
 - `DELETE /v1/files/<dir>?recursive=true` removes a directory tree.
 - Configurable rate limits (`server.rate_limit`) and metadata cache TTL (`server.metadata_cache_ttl`).
 - Docker image ships a health check and runs as a non-root user.
+- NATS clustering options: TLS on routes and clients with a private CA, `nkey` and `creds` auth, rolling secret changes (`nats.auth.previous_secret`), external NATS servers, monitoring endpoint, server tags and unique-tag placement.
+- The file index log is snapshotted and compacted (`nats.metadata.snapshot_*`, `retain_*`); nodes restore from the newest snapshot at start.
+- Cluster console pages: Members (add member with a generated config, remove offline members), Replication (log, copies, snapshots, move leader), Servers with disk free.
+- Node presence with leader/follower/offline roles; background jobs that must run once per cluster hold a lease and "Run now" is forwarded.
+- Background copies are durable tasks with retries and a failed-tasks list that admins can retry or drop (`/v1/admin/tasks/dead`).
+- Fair lock queue (`nats.locks.queue_stale`), cluster-wide rate limits (`nats.counters`), node-to-node file transfer over NATS (`nats.bytes: chunked`), cluster-wide log view (`nats.streams.logs_level`).
+- Automatic erasure coding by size (`erasure.min_file_size`) and a configurable pieces folder (`erasure.shard_path`).
+- `backend.internal_proxy_ca_file` to trust a private CA for HTTPS between servers.
+- Sign-out revokes the session across the cluster; the console idle sign-out follows `ui.idle_timeout`.
+- Console: right-click file menu, drag and drop of whole folders, cut and paste to move, upload conflict choices, resume of interrupted uploads, upload verification, trash restore choices, editable shortcuts.
+- Search `locked` filter, jobs `state` filter, per-user link stats with last cleanup details, configurable per-user link limit.
 
 ### **Performance**
 - Creates no longer take locks when the metadata store checks the namespace itself; overwrites lock only the file's own path.
 - Metadata writes are batched into one replicated message, and file syncs are batched per flush.
 - Reads use zero-copy transfers and a cached directory handle.
+- Single node, same machine, SQLite index, 1 KB files, against 1.6.0: new files with 64 clients 159/s to 773/s; overwrites with 64 clients 154/s (56 failed) to 778/s (0 failed) with the temp save, 108/s with a true overwrite; one client overwriting one file 108/s on 1.6.0, 65/s with the temp save, 33/s with a true overwrite; 16 KB downloads with 64 clients 21,646/s to 23,834/s.
 
 ### **Bug Fixes**
 - Single lock namespace (`path:<path>`) for path locks.

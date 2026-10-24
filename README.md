@@ -1,415 +1,278 @@
-# CallFS - Distributed REST API Filesystem in Go
+# CallFS
 
-**Open-source, high-performance file storage server with S3, local disk, and multi-node clustering over a simple REST API.**
-
-CallFS turns any combination of local disks and S3-compatible object stores into a single, horizontally-scalable filesystem accessible via HTTP. Upload, download, list, delete, and share files across a cluster of nodes with automatic routing, erasure coding, and owner-based access control -- all through a clean REST API.
-
-[![Go Report Card](https://goreportcard.com/badge/github.com/ebogdum/callfs)](https://goreportcard.com/report/github.com/ebogdum/callfs)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ebogdum/callfs/v2)](https://goreportcard.com/report/github.com/ebogdum/callfs/v2)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/ebogdum/callfs)](https://go.dev/)
 
----
+CallFS is a file server with a REST API and a built-in web console. It stores files on local disks, S3-compatible object stores, or both, and presents them as one filesystem over HTTP. You can run it as a single binary on one machine, or join several nodes into a cluster that needs no external coordination service: clustering runs on an embedded NATS server. Files are protected with ownership rules, optional erasure coding and replication, and can be shared through expiring single-use links.
 
-## Why CallFS?
+![CallFS console](docs/images/console/home-dark.png)
 
-Most file storage solutions force you to choose: local NAS simplicity, or cloud object-store scale. CallFS bridges the gap.
+## What's new in 2.0
 
-- **Replace fragile NFS mounts** with a REST API that works over any network
-- **Add S3 as a storage tier** without rewriting your application
-- **Scale horizontally** by adding nodes -- CallFS routes reads and writes to the right server automatically
-- **Protect data with Reed-Solomon erasure coding** that distributes shards across nodes
-- **Generate secure, expiring download links** for sharing files without exposing your API keys
-- **Drop-in Docker deployment** or a single static binary for bare metal
+### A web console
 
-If you're building a file management service, media pipeline, backup system, or any application that needs reliable distributed file storage over HTTP, CallFS gives you a production-ready foundation.
+CallFS now ships with a full web console at `/ui/`. Browse, upload (including whole folders by drag and drop), move, share and restore files. Watch every server in the cluster from one place, manage users and keys, change settings, follow logs and audit events, and act on health findings. See the [web console guide](docs_markdown/08-web-console.md) and the [screenshots](#screenshots) below.
 
----
+### Much faster writes
+
+Writes were reworked end to end: locks are taken only where they are needed, saves are flushed to disk in batches instead of one at a time, the file index commits many changes in one step, and overwrites save the new copy first and swap it in with two renames. Uploads and overwrites are now about five times faster under load, with far lower tail latency and no failed requests.
+
+Both versions were run on the same machine with the same single-node setup: local disk storage, SQLite file index, default write safety (each save is on disk before it is confirmed), plain HTTP, keep-alive connections, 1 KB files, a fresh server for every test.
+
+| Test | 1.6.0 | 2.0.0 | Change |
+|---|---|---|---|
+| Upload new files, 64 clients | 159 files/s, p99 1.02 s, 44 failed | 773 files/s, p99 343 ms, 0 failed | 4.9× faster |
+| Overwrite files, 64 clients | 154 saves/s, p99 1.24 s, 56 failed | 778 saves/s, p99 328 ms, 0 failed | 5.1× faster |
+| Download a 16 KB file, 64 clients | 21,646 req/s | 23,834 req/s | 10% faster |
+| Overwrite one file, 1 client | 108 saves/s (p50 6 ms) | 65 saves/s (p50 10 ms) | slower, see below |
+
+A single client overwriting one file in a loop cannot share disk flushes with anyone, so each save waits for its own. 2.0 is slower there because it also flushes the folder after the swap, so a confirmed overwrite survives a power cut; 1.6.0 flushed only the file contents and could lose a confirmed overwrite. To replace files the older way instead, set `backend.localfs_true_overwrite: true` or send `X-CallFS-True-Overwrite: true`; it is slower (108 saves/s with 64 clients). See [Storage](docs_markdown/05-storage.md#overwrites).
 
 ## Features
 
-### Storage & Data
-- **Multi-backend storage** -- local filesystem, Amazon S3, MinIO, and any S3-compatible object store
-- **Reed-Solomon erasure coding** -- configurable data/parity shards distributed across nodes for fault tolerance
-- **Streaming I/O** -- file transfers stream to and from the backend; erasure-coded uploads are buffered in memory (up to 1 GiB)
-- **HA replication** -- optional synchronous or async replication between backends (configure via `ha` config section)
+### Files API
+- Upload, download, overwrite, rename, move and delete files and folders under `/v1/files/{path}`.
+- Range downloads, `HEAD` for metadata, and a WebSocket transfer mode for large files.
+- Directory listing with sorting, filtering, paging, hidden-file control and recursive listing with a depth limit.
+- Search across your files by name, size, date, owner, storage, server, split state and lock state, plus bulk listing and bulk delete by prefix.
+- Resumable multi-part uploads.
+- Batch operations that run as background jobs you can follow, cancel and retry.
+- Trash with restore, permanent delete and a configurable retention period.
+- Per-user storage usage report.
+- Folder and file mode bits control access for other users: the "other" read bit allows reading a file or listing a folder, the "other" write bit allows changing a file or creating items in a folder. Deleting stays with the owner. New folders start at `0777`, new files at `0644`.
 
-### Distributed Architecture
-- **Horizontal scaling** -- add nodes and CallFS routes operations to the correct server
-- **Cross-server file operations** -- create, update, delete, and move files across the cluster transparently
-- **Raft consensus metadata** -- strongly consistent metadata coordination across nodes
-- **Distributed locking** -- Redis-backed or local lock managers prevent concurrent write conflicts
+### Sharing and links
+- Single-use download links with an expiry you choose.
+- List, inspect and revoke the links you created; see link statistics (admins see the whole cluster, other users see their own links, including the last cleanup result).
+- A per-user limit on active links (`server.rate_limit.max_active_links_per_user`, default 1000).
+- Links open a confirmation step before the download starts, and are rate limited.
 
-### Security & Access Control
-- **API key authentication** -- static bearer tokens with constant-time comparison
-- **Owner-based permissions** -- app-level user ownership on every file and directory
-- **Single-use download links** -- time-limited, HMAC-signed tokens for secure file sharing
-- **Rate limiting** -- configurable per-endpoint rate limits via `server.rate_limit` (defaults: link generation 100 req/s, downloads 10 req/s)
-- **TLS / HTTPS / HTTP/3 (QUIC)** support out of the box
+### Storage backends
+- Local disk and any S3-compatible store (Amazon S3, MinIO and others), with server-side encryption and ACL settings for S3.
+- Choose the default backend, and move files between backends and servers.
+- Metadata index in PostgreSQL, SQLite, Redis or NATS.
 
-### Operations & Observability
-- **Prometheus metrics** -- request latency histograms, operation counters, backend durations
-- **Structured logging** -- JSON or console output with configurable log levels
-- **Health endpoint** -- `/health` for load balancer and Kubernetes readiness probes
-- **WebSocket file transfers** -- bidirectional streaming for large uploads and downloads
+### Erasure coding
+- Split files into data and parity shards so they survive the loss of nodes or disks.
+- Set shard counts globally or per upload, split every upload at or above `erasure.min_file_size` automatically (opt out with `X-CallFS-Erasure: false`), and choose the folder for pieces with `erasure.shard_path`.
+- Verify, repair and plan erasure-coded files from the API and the console.
 
-### Metadata Backends
-Choose the metadata store that fits your deployment:
+### Replication
+- Copy every file to a second backend, optionally requiring the copy to succeed before a write is acknowledged.
+- Copies run as durable background tasks with retries; failed ones are listed and you can retry them.
 
-| Backend | Best for |
-|---------|----------|
-| **PostgreSQL** | Production clusters, ACID guarantees |
-| **SQLite** | Single-node, edge, or embedded deployments |
-| **Redis** | Low-latency metadata with existing Redis infrastructure |
-| **Raft** | Fully self-contained clusters with no external dependencies |
+### Clustering on embedded NATS
+- Nodes find each other through peer endpoints and form a cluster with no external services.
+- Metadata replication, distributed locks and node messaging all run on the embedded NATS server.
+- The file index log is snapshotted and compacted on a schedule, and nodes restore from the newest snapshot at start.
+- TLS for client and cluster traffic with mutual verification, key-based sign-in between nodes and rolling secret changes.
+- Fair first-come lock queue, cluster-wide request limits and shared logs so the console shows every node.
+- File bytes between nodes travel over HTTP or in chunks over NATS (`nats.bytes`).
+- Every node announces itself; `/v1/nodes` shows its role, version and uptime, and background jobs that must run once per cluster run on one node.
+- Any node serves any file: requests are routed to the node that holds the data.
+- Manage every node from one console: members (add, make leader, remove an offline member), replication, snapshots and servers.
+- Connect to your own NATS servers instead with `nats.mode: external`.
+- Admin cluster API for state, snapshots, leadership transfer, member removal and join configs.
+- Raft cluster mode was removed in 2.0.0; configs that use it are rejected at startup. Use `metadata_store.type: nats` and `dlm.type: nats`.
 
----
+### Performance modes and write safety
+- `performance.mode: fast` (default) or `strict`. Both only acknowledge a write once it is durable. Strict also reads back every saved file and checks it, locks every change, and makes every read wait for the latest cluster state.
+- Choose how local writes are acknowledged with `backend.localfs_ack` (`memory` or `disk`, default `disk`), how they are synced with `backend.localfs_sync` (`full`, `barrier` or `none`, default `full`), and override the acknowledgement per request with the `X-CallFS-Write-Ack` header.
+- Tune background flushing with `backend.flush_workers`, `backend.flush_max_pending_bytes` and `backend.flush_max_delay`.
 
-## Quick Start
+### Web console
+- Served from the same port at `/ui/`; sign in with an API key.
+- Overview with health checks, findings and key numbers.
+- Files: browse with a right-click menu, drag and drop of files and whole folders, cut and paste, rename, move (also between storages and servers for admins), mode input as boxes, numbers or letters, preview, inspector, search, flat list, trash with restore choices, and transfers with conflict choices, resume after reload and checksum verification.
+- Sharing: create, inspect and revoke single-use links.
+- Cluster: topology, members (add, make leader, remove offline), replication and snapshots, servers, storage, durability, backup copy, hygiene, edit locks, index cache and request limits.
+- Insights (dashboards, explore, storage, metrics) and Activity (events, audit, jobs, logs, sign-ins).
+- Settings for every option in plain language, users and keys, config file export and appearance; change runtime settings live and restart from the console.
+- Command palette, editable keyboard shortcuts, light and dark themes, printable report and a wall display.
 
-### Prerequisites
+### Monitoring and health findings
+- Prometheus metrics on the API port and on a separate metrics port.
+- `/health` and `/health/ready` probes (readiness reflects this node only; peer problems are listed but never fail it) and a `callfs healthcheck` command for container health checks.
+- A findings list that flags problems such as unencrypted connections, default or short secrets, expiring certificates, a nearly full disk, split files that need repair, failing backup copies and failed sign-ins. You can mute or ignore findings.
+- Live logs, audit trail, event stream and metric charts in the console.
 
-- **Go 1.25+** (or use a [prebuilt binary](builds/) or Docker)
-- A metadata store: PostgreSQL, SQLite, Redis, or Raft (built-in)
-- Optionally: Redis for distributed locking, S3 credentials for object storage
+### Security
+- API keys bound to named users; every file has an owner and access follows ownership.
+- Admin users listed in `auth.admin_users` manage users, keys, settings and the cluster.
+- Console sessions with expiry, idle timeout and CSRF protection; signing out ends the session on the server and across the cluster.
+- TLS, HTTP/3 (QUIC), configurable rate limits and trusted-proxy handling.
+- HMAC-signed single-use links; startup rejects sample or weak secrets.
+- Encrypted, authenticated traffic between cluster nodes, with an extra CA setting (`backend.internal_proxy_ca_file`) for checking other servers' certificates.
+
+## Screenshots
+
+![Files](docs/images/console/files.png)
+Browse, upload, rename, move, share and delete files.
+
+![Transfers](docs/images/console/files-transfers.png)
+Uploads and downloads with progress, conflict choices and resume.
+
+![Sharing](docs/images/console/sharing.png)
+Create single-use links and see which ones are active, used or expired.
+
+![Cluster](docs/images/console/cluster.png)
+Cluster health and what needs attention, at a glance.
+
+![Cluster members](docs/images/console/cluster-nodes.png)
+Every member with its state, how far behind it is, and the Add member form.
+
+![Replication](docs/images/console/cluster-replication.png)
+The file index log, the copies on each server, snapshots, and a button to move the leader.
+
+![Insights](docs/images/console/insights.png)
+Traffic, errors, latency and storage trends.
+
+![Settings](docs/images/console/settings-group.png)
+Every setting in plain language, with a marker for those that need a restart.
+
+![Cluster and locks settings](docs/images/console/settings-coordination.png)
+Every NATS and edit lock setting in one place.
+
+![Activity](docs/images/console/activity.png)
+Recent events, jobs, sign-ins and the audit trail.
+
+## Quick start
 
 ### Install
 
-```bash
-# From source
-go build -o callfs ./cmd/main.go
+Binary: download the build for your platform (Linux, macOS or Windows) and make it executable, or build from source:
 
-# Or use Docker
+```bash
+make web-install build-ui build
+```
+
+This produces `./callfs` with the console included. Use `make build-noui` for a binary without the console. See [Installation](docs_markdown/01-installation.md).
+
+Docker:
+
+```bash
 docker build -t callfs .
 ```
 
 ### Configure
 
-Copy the example config and edit it:
-
-```bash
-cp config.yaml.example config.yaml
-```
-
-Minimal `config.yaml` for local development:
+Create `config.yaml`:
 
 ```yaml
 server:
   listen_addr: ":8443"
   protocol: "http"
-  external_url: "http://localhost:8443"  # Used for single-use link URLs
+  external_url: "http://localhost:8443"
 
 auth:
-  api_key_users:                                           # user ID -> key; identity is stable
-    alice: "my-secret-api-key-at-least-16-chars"
-  internal_proxy_secret: "my-internal-proxy-secret-16ch"   # Must not use default value
-  single_use_link_secret: "my-link-secret-at-least-16ch!"  # Must not use default value
+  api_key_users:
+    alice: "your-api-key-at-least-16-chars"
+  admin_users: ["alice"]
+  internal_proxy_secret: "replace-with-openssl-rand-hex-32"
+  single_use_link_secret: "replace-with-another-random-value"
 
 backend:
-  localfs_root_path: "./data"
+  localfs_root_path: "/var/lib/callfs"
 
 metadata_store:
   type: "sqlite"
-  sqlite_path: "./callfs.sqlite3"
+  sqlite_path: "/var/lib/callfs/callfs.sqlite3"
 
 dlm:
   type: "local"
-
-log:
-  level: "info"    # debug, info, warn, error
-  format: "console" # json or console
 
 instance_discovery:
   instance_id: "node-1"
 ```
 
-> **Note:** All API keys must be at least 16 characters. Placeholder sample values are rejected at startup, so generate `internal_proxy_secret` and `single_use_link_secret` with `openssl rand -hex 32`. Run `callfs config validate` to check your configuration before starting the server.
+API keys must be at least 16 characters. Generate the two secrets with `openssl rand -hex 32`; sample values are rejected at startup. Check the file before you start:
 
-### Run
+```bash
+./callfs config validate --config config.yaml
+```
+
+Every setting can also be set by environment variable with the `CALLFS_` prefix and a double underscore for nesting, for example `CALLFS_SERVER__LISTEN_ADDR=:8443`.
+
+### Start
 
 ```bash
 ./callfs server --config config.yaml
 ```
 
-### Try It
+With Docker:
 
 ```bash
-# Validate your config
-./callfs config validate --config config.yaml
+docker run -d --name callfs -p 8443:8443 \
+  -v /path/to/config.yaml:/config.yaml:ro \
+  -v callfs-data:/var/lib/callfs \
+  callfs server --config /config.yaml
+```
 
-# Upload a file
+Open `http://localhost:8443/ui/` and sign in with your API key.
+
+### First upload and download
+
+```bash
 curl -X POST http://localhost:8443/v1/files/hello.txt \
-  -H "Authorization: Bearer my-secret-api-key-at-least-16-chars" \
+  -H "Authorization: Bearer your-api-key-at-least-16-chars" \
   -H "Content-Type: application/octet-stream" \
   -d "Hello, CallFS!"
 
-# Download it
 curl http://localhost:8443/v1/files/hello.txt \
-  -H "Authorization: Bearer my-secret-api-key-at-least-16-chars"
+  -H "Authorization: Bearer your-api-key-at-least-16-chars"
+```
 
-# List the root directory
-curl http://localhost:8443/v1/directories/ \
-  -H "Authorization: Bearer my-secret-api-key-at-least-16-chars"
+Create a one-hour single-use link:
 
-# Rename it (in place — name only)
-curl -X PATCH http://localhost:8443/v1/files/hello.txt \
-  -H "Authorization: Bearer my-secret-api-key-at-least-16-chars" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "greeting.txt"}'
-
-# Move it to another folder (creating the folder if needed)
-curl -X PATCH http://localhost:8443/v1/files/greeting.txt \
-  -H "Authorization: Bearer my-secret-api-key-at-least-16-chars" \
-  -H "Content-Type: application/json" \
-  -d '{"destination": "/archive/greeting.txt", "create_parents": true}'
-
-# Create a single-use download link (expires in 1 hour)
+```bash
 curl -X POST http://localhost:8443/v1/links/generate \
-  -H "Authorization: Bearer my-secret-api-key-at-least-16-chars" \
+  -H "Authorization: Bearer your-api-key-at-least-16-chars" \
   -H "Content-Type: application/json" \
-  -d '{"path": "/archive/greeting.txt", "expiry_seconds": 3600}'
-
-# Delete the file
-curl -X DELETE http://localhost:8443/v1/files/archive/greeting.txt \
-  -H "Authorization: Bearer my-secret-api-key-at-least-16-chars"
+  -d '{"path": "/hello.txt", "expiry_seconds": 3600}'
 ```
 
----
+## Cluster quick start
 
-## API Reference
-
-All endpoints are prefixed with `/v1` and require `Authorization: Bearer <api-key>` unless noted.
-
-### Files & Directories
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/v1/files/{path}` | Download a file |
-| `HEAD` | `/v1/files/{path}` | Get file metadata headers |
-| `POST` | `/v1/files/{path}` | Create a file or directory |
-| `PUT` | `/v1/files/{path}` | Update (overwrite) a file |
-| `PATCH` | `/v1/files/{path}` | Rename or move a file or directory |
-| `DELETE` | `/v1/files/{path}` | Delete a file or directory |
-| `GET` | `/v1/files/ws/{path}?mode=download\|upload` | WebSocket file transfer (64KB chunks, 100MB upload limit) |
-
-### Rename & Move
-
-`PATCH /v1/files/{path}` performs two distinct operations, selected by the request body. Exactly one of `name` or `destination` must be present. Both a file and a directory (with its whole subtree) can be renamed or moved.
-
-**Rename** — change the name only, keeping the same folder, backend, and instance:
-
-```bash
-curl -X PATCH http://localhost:8443/v1/files/reports/q1.txt \
-  -H "Authorization: Bearer <key>" -H "Content-Type: application/json" \
-  -d '{"name": "q1-final.txt"}'           # -> /reports/q1-final.txt
-```
-
-**Move** — relocate to a different folder and, optionally, a different backend or instance:
-
-```bash
-curl -X PATCH http://localhost:8443/v1/files/reports/q1-final.txt \
-  -H "Authorization: Bearer <key>" -H "Content-Type: application/json" \
-  -d '{"destination": "/archive/2026/q1.txt", "create_parents": true}'
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `name` | string | — | New name (single path segment, no `/`). Renames in place. |
-| `destination` | string | — | Absolute target path. Moves the resource. |
-| `backend` | string | source's | Target backend (`localfs`, `s3`). Moves the bytes to that backend. |
-| `instance` | string | source's | Target instance ID. Moves the bytes to that node. |
-| `overwrite` | bool | `false` | Replace an existing destination (also `?overwrite=true`). |
-| `create_parents` | bool | `false` | Create missing destination parent folders. |
-
-Both rename and move update the metadata store **and** relocate the underlying bytes together (bytes first, then metadata; the source is preserved if the byte move fails). Same-instance localfs renames are atomic. Authorization requires ownership of the source and write access to the destination's parent.
-
-**Responses:** `200 OK` (body `{"path":"/new/path"}`); `400` invalid request (bad name, both/neither of `name`/`destination`, moving a directory into itself, missing parent without `create_parents`); `403` not owner / no write on destination parent; `404` source missing; `409` destination exists and `overwrite=false`.
-
-Moving a file to or from the `erasure` backend, or a directory across backends or instances, returns `400`.
-
-### Directories
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/v1/directories/{path}` | List directory contents (JSON) |
-| `GET` | `/v1/directories/{path}?recursive=true` | Recursive listing |
-| `GET` | `/v1/directories/{path}?recursive=true&max_depth=N` | Depth-limited recursive listing |
-
-### Erasure Shards
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/v1/shards/{path}/{index}` | Download individual erasure-coded shard |
-
-### Single-Use Links
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `POST` | `/v1/links/generate` | Required | Generate a time-limited download token |
-| `GET` | `/download/{token}` | None | Download a file via single-use token (rate-limited: 10 req/s) |
-
-### Erasure-Coded Uploads
-
-Erasure coding parameters can be set via headers or query parameters (headers take precedence):
-
-```bash
-# Upload with erasure coding via query parameters
-curl -X POST "http://localhost:8443/v1/files/important.dat?erasure=true&data_shards=4&parity_shards=2" \
-  -H "Authorization: Bearer <key>" \
-  --data-binary @important.dat
-
-# Or via headers
-curl -X POST http://localhost:8443/v1/files/important.dat \
-  -H "Authorization: Bearer <key>" \
-  -H "X-CallFS-Erasure: true" \
-  -H "X-CallFS-Erasure-Data-Shards: 4" \
-  -H "X-CallFS-Erasure-Parity-Shards: 2" \
-  --data-binary @important.dat
-```
-
-### System
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `GET` | `/health` | None | Health check (returns `{"status":"ok"}`) |
-| `GET` | `/metrics` | Required | Prometheus metrics (also available on separate metrics port via config) |
-
----
-
-## Architecture
-
-```
-                     +-------------------+
-                     |   HTTP/HTTPS/H3   |
-                     |    API Server     |
-                     +--------+----------+
-                              |
-                     +--------v----------+
-                     |    Core Engine    |
-                     |  (routing, locks, |
-                     |   cache, authz)   |
-                     +--------+----------+
-                              |
-          +-------------------+-------------------+
-          |                   |                   |
-  +-------v-------+  +-------v-------+  +--------v--------+
-  |   Local FS    |  |   Amazon S3   |  | Internal Proxy  |
-  |   Backend     |  |   Backend     |  | (peer routing)  |
-  +---------------+  +---------------+  +-----------------+
-                              |
-                     +--------v----------+
-                     |  Metadata Store   |
-                     | (Postgres/SQLite/ |
-                     |  Redis/Raft)      |
-                     +-------------------+
-```
-
-### How Cross-Server Routing Works
-
-When a client sends a request to any node in the cluster:
-
-1. The node checks its metadata store for the file's location
-2. If the file lives on another node, the request is transparently proxied via the Internal Proxy backend
-3. The response is streamed back to the client as if the file were local
-4. For writes, distributed locks prevent conflicting concurrent modifications
-
----
-
-## Clustering & Erasure Coding
-
-### Multi-Node Cluster
+Give each node its own `instance_id`, list the others under `instance_discovery.peer_endpoints`, and turn on NATS:
 
 ```yaml
-# Node 1 config
 instance_discovery:
   instance_id: "node-1"
   peer_endpoints:
-    node-2: "https://10.0.0.2:8443"
-    node-3: "https://10.0.0.3:8443"
+    node-2: "https://node-2.example.com:8443"
+    node-3: "https://node-3.example.com:8443"
 
-# Enable erasure coding
-erasure:
-  enabled: true
-  data_shards: 4
-  parity_shards: 2
-```
-
-With 4 data + 2 parity shards, CallFS can reconstruct any file even if 2 nodes go down, provided each node holds at most one shard. That requires six nodes: round-robin placement on a three-node cluster gives each node two shards, so losing two nodes removes four of the six shards and leaves only two of the four needed.
-
-### Raft Consensus (No External Dependencies)
-
-For clusters that don't want to run PostgreSQL or Redis, use the built-in Raft metadata store:
-
-```yaml
 metadata_store:
-  type: "raft"
+  type: "nats"
 
-raft:
+dlm:
+  type: "nats"
+
+nats:
   enabled: true
-  node_id: "node-1"
-  bind_addr: "10.0.0.1:7000"
-  data_dir: "./raft-data"
-  bootstrap: true  # Only on the first node
 ```
 
----
-
-## CLI
-
-```
-callfs server              Start the API server
-  --config, -c <path>      Path to config file
-
-callfs config validate     Validate configuration
-  --config, -c <path>      Path to config file
-
-callfs cluster join        Join a Raft cluster
-  --leader <url>           Leader API URL (required)
-  --node-id <id>           This node's ID
-  --raft-addr <addr>       This node's Raft address
-  --api-endpoint <url>     This node's API endpoint
-  --internal-secret <s>    Shared internal proxy secret
-```
-
-All configuration options can also be set via environment variables with the `CALLFS_` prefix (e.g., `CALLFS_SERVER__LISTEN_ADDR=:8443`).
-
----
+Use the same `auth.internal_proxy_secret` on every node. Non-loopback cluster traffic needs TLS certificates. The full walkthrough, including routes, TLS and node management, is in [Clustering](docs_markdown/07-clustering.md).
 
 ## Documentation
 
-| Guide | Description |
-|-------|-------------|
-| [Installation](docs_markdown/01-installation.md) | Binary, Docker, and source installation |
-| [Configuration](docs_markdown/02-configuration.md) | Full config reference with examples |
-| [API Reference](docs_markdown/03-api-reference.md) | Complete endpoint documentation |
-| [Authentication & Security](docs_markdown/04-authentication-security.md) | API keys, permissions, TLS setup |
-| [Backend Configuration](docs_markdown/05-backend-configuration.md) | LocalFS, S3, MinIO setup |
-| [Monitoring & Metrics](docs_markdown/06-monitoring-metrics.md) | Prometheus, Grafana, alerting |
-| [Clustering & Distribution](docs_markdown/07-clustering-distribution.md) | Multi-node setup, Raft, HA |
-| [Developer Guide](docs_markdown/08-developer-guide.md) | Contributing, architecture deep-dive |
-| [Troubleshooting](docs_markdown/09-troubleshooting.md) | Common issues and solutions |
-| [Cross-Server Operations](docs_markdown/10-enhanced-cross-server.md) | Proxy routing, conflict resolution |
+| Guide | What it covers |
+|-------|----------------|
+| [Installation](docs_markdown/01-installation.md) | Binary, Docker, source build, first run, CLI |
+| [Configuration](docs_markdown/02-configuration.md) | Every setting, environment variables, validation |
+| [API reference](docs_markdown/03-api-reference.md) | Files, directories, links, uploads, search, trash, batch, health |
+| [Authentication and security](docs_markdown/04-authentication-security.md) | API keys, users, sessions, TLS, rate limits |
+| [Storage](docs_markdown/05-storage.md) | Local disk, S3, erasure coding, replication, trash, write safety |
+| [Monitoring and metrics](docs_markdown/06-monitoring-metrics.md) | Prometheus, health checks, findings, logs, audit |
+| [Clustering](docs_markdown/07-clustering.md) | NATS cluster, nodes, cross-server operations, locks |
+| [Web console](docs_markdown/08-web-console.md) | Every console page |
+| [Troubleshooting](docs_markdown/09-troubleshooting.md) | Problems and fixes |
+| [Admin API](docs_markdown/10-admin-api.md) | `/v1/admin` and node gateway |
+| [Articles](articles/) | Step-by-step guides: file server setup, secure sharing, S3 hybrid storage, erasure coding, NATS clustering, backups, expiring links, Raspberry Pi, Grafana monitoring |
 
----
+## Contributing, security, license
 
-## Comparison
-
-| Feature | CallFS | MinIO | SeaweedFS | Ceph RGW |
-|---------|--------|-------|-----------|----------|
-| Non-S3 REST API | Native | Limited | Partial (filer) | No |
-| Single binary | Yes | Yes | No (master+volume+filer) | No |
-| Local + S3 hybrid | Yes | No | Partial | No |
-| Erasure coding | Yes | Yes | Yes | Yes |
-| Owner-based access | Yes | No | No | POSIX via CephFS |
-| Single-use links | Built-in | Presigned URLs | No | Presigned URLs |
-| Raft metadata | Built-in | Built-in | Built-in | No (uses MON/Paxos) |
-| Operational complexity | Low | Low | Medium | High |
-
----
-
-## Contributing
-
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-MIT License. See [LICENSE](LICENSE).
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [License](LICENSE) (MIT)
