@@ -50,11 +50,7 @@ func TestExplicitUserIDsSurviveKeyRemoval(t *testing.T) {
 	}
 }
 
-// TestPositionalIdentityShiftsOnRemoval documents the legacy behavior that
-// api_key_users exists to avoid. It is kept deliberately: the positional form
-// still works unchanged for existing deployments, and this test pins that
-// contract so the hazard cannot be reintroduced silently under a new name.
-func TestPositionalIdentityShiftsOnRemoval(t *testing.T) {
+func TestRemovingEarlierKeyKeepsLaterUserID(t *testing.T) {
 	ctx := context.Background()
 
 	before := NewAPIKeyAuthenticator([]string{"key-alice", "key-bob"}, nil, "")
@@ -62,20 +58,14 @@ func TestPositionalIdentityShiftsOnRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate bob: %v", err)
 	}
-	if bobBefore != "api-user-1" {
-		t.Fatalf("bob = %q, want \"api-user-1\"", bobBefore)
-	}
 
 	after := NewAPIKeyAuthenticator([]string{"key-bob"}, nil, "")
 	bobAfter, err := after.Authenticate(ctx, "key-bob")
 	if err != nil {
 		t.Fatalf("authenticate bob after removal: %v", err)
 	}
-	if bobAfter != "api-user-0" {
-		t.Fatalf("bob = %q, want \"api-user-0\"", bobAfter)
-	}
-	if bobBefore == bobAfter {
-		t.Error("expected positional identity to shift; the hazard this documents no longer reproduces")
+	if bobBefore != bobAfter {
+		t.Fatalf("bob changed from %q to %q after removing an earlier key", bobBefore, bobAfter)
 	}
 }
 
@@ -91,7 +81,7 @@ func TestExplicitUsersCoexistWithPositionalKeys(t *testing.T) {
 	)
 
 	cases := map[string]string{
-		"legacy-key-at-least-16-chars": "api-user-0",
+		"legacy-key-at-least-16-chars": positionalUserID("legacy-key-at-least-16-chars"),
 		"alice-key-at-least-16-chars":  "alice",
 		"internal-secret-16-chars":     "internal-proxy",
 	}

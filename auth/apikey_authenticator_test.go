@@ -14,16 +14,16 @@ func TestAuthenticateValidKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if user != "api-user-0" {
-		t.Errorf("expected api-user-0, got: %s", user)
+	if want := positionalUserID("secret-key-1"); user != want {
+		t.Errorf("expected %s, got: %s", want, user)
 	}
 
 	user, err = a.Authenticate(ctx, "secret-key-2")
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if user != "api-user-1" {
-		t.Errorf("expected api-user-1, got: %s", user)
+	if want := positionalUserID("secret-key-2"); user != want {
+		t.Errorf("expected %s, got: %s", want, user)
 	}
 }
 
@@ -68,8 +68,8 @@ func TestAuthenticateBearerPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success with Bearer prefix, got: %v", err)
 	}
-	if user != "api-user-0" {
-		t.Errorf("expected api-user-0, got: %s", user)
+	if want := positionalUserID("my-key"); user != want {
+		t.Errorf("expected %s, got: %s", want, user)
 	}
 }
 
@@ -82,7 +82,21 @@ func TestAuthenticateEmptyKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if user != "api-user-0" {
-		t.Errorf("expected api-user-0 (empty strings skipped), got: %s", user)
+	if want := positionalUserID("valid-key"); user != want {
+		t.Errorf("expected %s (empty strings skipped), got: %s", want, user)
+	}
+}
+
+func TestLegacyAliases(t *testing.T) {
+	a := NewAPIKeyAuthenticator([]string{"key-a", "key-b"}, map[string]string{"alice": "alice-key"}, "")
+
+	if got := a.LegacyAliases(positionalUserID("key-a")); 1 != len(got) || "api-user-0" != got[0] {
+		t.Errorf("LegacyAliases(key-a) = %v, want [api-user-0]", got)
+	}
+	if got := a.LegacyAliases(positionalUserID("key-b")); 1 != len(got) || "api-user-1" != got[0] {
+		t.Errorf("LegacyAliases(key-b) = %v, want [api-user-1]", got)
+	}
+	if got := a.LegacyAliases("alice"); 0 != len(got) {
+		t.Errorf("LegacyAliases(alice) = %v, want none", got)
 	}
 }

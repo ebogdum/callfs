@@ -5,6 +5,8 @@ package auth
 import (
 	"context"
 	"errors"
+
+	"github.com/ebogdum/callfs/metadata"
 )
 
 // PermissionType represents different permission types for authorization
@@ -33,4 +35,9 @@ type Authenticator interface {
 type Authorizer interface {
 	// Authorize checks if a user has the specified permission for a path
 	Authorize(ctx context.Context, userID string, path string, perm PermissionType) error
+
+	// AuthorizeWithMetadata performs the same check as Authorize using
+	// metadata the caller already fetched for path; md nil means path does
+	// not exist.
+	AuthorizeWithMetadata(ctx context.Context, userID string, path string, md *metadata.Metadata, perm PermissionType) error
 }
