@@ -6,9 +6,6 @@ source "${SCRIPT_DIR}/../lib.sh"
 
 section "Environment Variable Overrides"
 
-# This test uses docker run to start callfs with env var overrides.
-# If running inside a container without docker CLI, skip gracefully.
-
 if ! command -v docker &>/dev/null; then
   echo "SKIP: requires docker CLI (not available inside test container)"
   print_summary
@@ -24,7 +21,6 @@ if ! docker image inspect "$CONFIG_TEST_IMAGE" &>/dev/null; then
   exit $?
 fi
 
-# Base config for env override tests
 BASE_CONFIG=$(cat <<'YAMLEOF'
 server:
   listen_addr: ":8443"
@@ -35,72 +31,53 @@ auth:
 storage:
   backend: "sqlite"
   sqlite:
-    dsn: "/tmp/envtest.db"
+    dsn: "/var/lib/callfs/envtest.db"
 log:
   level: "info"
 YAMLEOF
 )
 
-# --- Listen address override ---
+start_env_container() {
+  local name="$1"
+  shift
+  local cfg rc=0
+  cfg=$(mktemp)
+  printf '%s\n' "$BASE_CONFIG" > "$cfg"
+  docker create --name "$name" --network "$DOCKER_NETWORK" "$@" "$CONFIG_TEST_IMAGE" server -c /config.yaml >/dev/null &&
+    docker cp "$cfg" "$name:/config.yaml" &&
+    docker start "$name" >/dev/null || rc=$?
+  rm -f "$cfg"
+  return $rc
+}
+
+wait_for_health() {
+  local name="$1" port="$2" i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if curl -fsS "http://${name}:${port}/health" 2>/dev/null | grep -q "ok"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
 
 test_name "CALLFS_SERVER__LISTEN_ADDR overrides listen port"
 CONTAINER_NAME="callfs-env-test-port-$$"
-# Start container with overridden port
-docker run -d --rm \
-  --name "$CONTAINER_NAME" \
-  --network "$DOCKER_NETWORK" \
-  -e "CALLFS_SERVER__LISTEN_ADDR=:9999" \
-  "$CONFIG_TEST_IMAGE" sh -c "cat > /tmp/config.yaml && callfs serve -c /tmp/config.yaml" <<< "$BASE_CONFIG" >/dev/null 2>&1 || true
-
-# Give the server time to start
-sleep 3
-
-# Check health on overridden port
-HEALTH_OK=false
-for i in 1 2 3 4 5; do
-  if docker exec "$CONTAINER_NAME" wget -qO- "http://localhost:9999/health" 2>/dev/null | grep -q "ok"; then
-    HEALTH_OK=true
-    break
-  fi
-  sleep 1
-done
-
-docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-
-if [ "$HEALTH_OK" = "true" ]; then
+if start_env_container "$CONTAINER_NAME" -e "CALLFS_SERVER__LISTEN_ADDR=:9999" && wait_for_health "$CONTAINER_NAME" 9999; then
   pass
 else
   fail "server did not start on overridden port 9999"
 fi
-
-# --- Log level override ---
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
 test_name "CALLFS_LOG__LEVEL=error allows server to start"
 CONTAINER_NAME="callfs-env-test-log-$$"
-docker run -d --rm \
-  --name "$CONTAINER_NAME" \
-  --network "$DOCKER_NETWORK" \
-  -e "CALLFS_LOG__LEVEL=error" \
-  "$CONFIG_TEST_IMAGE" sh -c "cat > /tmp/config.yaml && callfs serve -c /tmp/config.yaml" <<< "$BASE_CONFIG" >/dev/null 2>&1 || true
-
-sleep 3
-
-HEALTH_OK=false
-for i in 1 2 3 4 5; do
-  if docker exec "$CONTAINER_NAME" wget -qO- "http://localhost:8443/health" 2>/dev/null | grep -q "ok"; then
-    HEALTH_OK=true
-    break
-  fi
-  sleep 1
-done
-
-docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-
-if [ "$HEALTH_OK" = "true" ]; then
+if start_env_container "$CONTAINER_NAME" -e "CALLFS_LOG__LEVEL=error" && wait_for_health "$CONTAINER_NAME" 8443; then
   pass
 else
   fail "server did not start with CALLFS_LOG__LEVEL=error"
 fi
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
 print_summary
 exit $?

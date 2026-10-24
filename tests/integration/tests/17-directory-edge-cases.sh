@@ -27,12 +27,8 @@ pass
 
 test_name "DELETE non-empty directory returns error (not 204)"
 delete_file "$NODE1" "/nonempty-dir"
-# Should NOT succeed - directory has children
-if [ "$LAST_STATUS" = "204" ]; then
-  fail "expected error deleting non-empty directory, got 204"
-else
-  pass
-fi
+assert_status 409
+pass
 
 test_name "Directory still exists after failed delete"
 BODY=$(list_directory "$NODE1" "/nonempty-dir")

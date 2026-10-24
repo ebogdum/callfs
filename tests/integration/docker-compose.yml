@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17
+    image: postgres:17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe
     environment:
       POSTGRES_DB: callfs
       POSTGRES_USER: callfs
@@ -14,7 +14,7 @@ services:
       - /var/lib/postgresql/data
 
   redis:
-    image: redis:7
+    image: redis:7@sha256:44960b3100c48159a66d28c18b0588c193492e25f7551d60e51dd464fc3eca5b
     command: redis-server --appendonly no --save ""
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -25,30 +25,23 @@ services:
       - /data
 
   minio:
-    image: minio/minio:latest
+    image: cgr.dev/chainguard/minio@sha256:d88920d6a50bd0b088223b688be3b76c63e6205dbe494437f67ba1240ea12880
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin123
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 2s
-      timeout: 3s
-      retries: 15
     tmpfs:
       - /data
 
   minio-init:
-    image: minio/mc:latest
+    image: cgr.dev/chainguard/minio-client@sha256:72f9978d415ea8294d78051fb3aee2fd258d449237633f77f100b5367bb5225d
     depends_on:
       minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin123;
-      mc mb --ignore-existing local/callfs-test;
-      exit 0;
-      "
+        condition: service_started
+    environment:
+      MC_HOST_local: http://minioadmin:minioadmin123@minio:9000
+    command: ["mb", "--ignore-existing", "local/callfs-test"]
+    restart: on-failure:30
 
   node1:
     image: callfs:test
@@ -59,7 +52,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/callfs-healthcheck"]
+      test: ["CMD", "/callfs", "healthcheck", "--config", "/config.yaml"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -78,7 +71,7 @@ services:
       node1:
         condition: service_started
     healthcheck:
-      test: ["CMD", "/callfs-healthcheck"]
+      test: ["CMD", "/callfs", "healthcheck", "--config", "/config.yaml"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -97,7 +90,7 @@ services:
       node1:
         condition: service_started
     healthcheck:
-      test: ["CMD", "/callfs-healthcheck"]
+      test: ["CMD", "/callfs", "healthcheck", "--config", "/config.yaml"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -114,7 +107,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "/callfs-healthcheck"]
+      test: ["CMD", "/callfs", "healthcheck", "--config", "/config.yaml"]
       interval: 2s
       timeout: 3s
       retries: 30

@@ -37,11 +37,10 @@ S1=$(cat /tmp/c1.status 2>/dev/null || echo "000")
 S2=$(cat /tmp/c2.status 2>/dev/null || echo "000")
 S3=$(cat /tmp/c3.status 2>/dev/null || echo "000")
 
-# At least one should succeed; none should be 500
 ALL_OK=true
 for s in "$S1" "$S2" "$S3"; do
-  if [ "$s" = "500" ]; then
-    fail "got HTTP 500 during concurrent write (statuses: $S1 $S2 $S3)"
+  if [ "200" != "$s" ] && [ "201" != "$s" ]; then
+    fail "concurrent write returned HTTP $s, expected 200 or 201 (statuses: $S1 $S2 $S3)"
     ALL_OK=false
     break
   fi
@@ -62,21 +61,17 @@ case "$BODY" in
 esac
 
 test_name "All nodes return same content after concurrent writes"
-# Allow time for Raft replication, metadata cache expiry, and lock release
-sleep 5
-# Read from leader first to get the authoritative value
-BODY1=$(download_file "$NODE1" "/concurrent.txt")
-_read_status
-# Retry followers up to 3 times to allow for Raft propagation
+BODY1=""
 BODY2=""
 BODY3=""
-for attempt in 1 2 3; do
+for attempt in $(seq 1 10); do
+  BODY1=$(download_file "$NODE1" "/concurrent.txt")
   BODY2=$(download_file "$NODE2" "/concurrent.txt")
   BODY3=$(download_file "$NODE3" "/concurrent.txt")
   if [ "$BODY1" = "$BODY2" ] && [ "$BODY1" = "$BODY3" ]; then
     break
   fi
-  sleep 2
+  sleep 1
 done
 if [ "$BODY1" = "$BODY2" ] && [ "$BODY1" = "$BODY3" ]; then
   pass

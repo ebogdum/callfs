@@ -5,8 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/../lib.sh"
 
 if ! command -v websocat &>/dev/null; then
-  echo "SKIP: websocat not available"
-  exit 0
+  echo "FAIL: websocat not available" >&2
+  exit 1
 fi
 
 section "WebSocket"

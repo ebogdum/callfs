@@ -44,7 +44,7 @@ BODY=$(callfs_curl PUT "${NODE1}/v1/files/put-create.txt" \
   -d "this is a much longer content string for testing size metadata update")
 assert_status 200
 callfs_head_method "${NODE1}/v1/files/put-create.txt"
-assert_header_contains "X-CallFS-Size" "69"
+assert_header_equals "X-CallFS-Size" "69"
 pass
 
 test_name "PUT with smaller content updates size metadata"
@@ -53,7 +53,7 @@ BODY=$(callfs_curl PUT "${NODE1}/v1/files/put-create.txt" \
   -d "tiny")
 assert_status 200
 callfs_head_method "${NODE1}/v1/files/put-create.txt"
-assert_header_contains "X-CallFS-Size" "4"
+assert_header_equals "X-CallFS-Size" "4"
 pass
 
 # ---------- PUT with empty body ----------

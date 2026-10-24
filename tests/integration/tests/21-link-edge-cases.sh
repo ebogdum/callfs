@@ -13,11 +13,10 @@ BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/does-not-exist-link.txt","expiry_seconds":3600}')
 _read_status
-# Should return 404 or 500 (file not found)
-if [ "$LAST_STATUS" = "404" ] || [ "$LAST_STATUS" = "500" ]; then
+if [ "404" = "$LAST_STATUS" ]; then
   pass
 else
-  fail "expected 404 or 500 for link to non-existent file, got $LAST_STATUS"
+  fail "expected 404 for link to non-existent file, got $LAST_STATUS"
 fi
 
 # ---------- Link for directory ----------
@@ -28,7 +27,6 @@ assert_status 201
 pass
 
 test_name "Generate link for directory path"
-sleep 1
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/link-dir-test/","expiry_seconds":3600}')
@@ -45,7 +43,6 @@ fi
 test_name "Generate link with expiry_seconds=1 (minimum)"
 upload_file "$NODE1" "/link-edge.txt" "link edge content"
 assert_status 201
-sleep 1
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/link-edge.txt","expiry_seconds":1}')
@@ -53,7 +50,6 @@ assert_status 201
 pass
 
 test_name "Generate link with expiry_seconds=86400 (maximum, 24h)"
-sleep 1
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/link-edge.txt","expiry_seconds":86400}')
@@ -63,14 +59,12 @@ pass
 # ---------- Multiple links for same file ----------
 
 test_name "Generate two links for same file, both work"
-sleep 1
 BODY1=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/link-edge.txt","expiry_seconds":3600}')
 assert_status 201
 TOKEN1=$(echo "$BODY1" | jq -r '.token')
 
-sleep 1
 BODY2=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/link-edge.txt","expiry_seconds":3600}')
@@ -90,7 +84,6 @@ pass
 # ---------- Link after file is deleted ----------
 
 test_name "Generate link, delete file, download returns error"
-sleep 1
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/link-edge.txt","expiry_seconds":3600}')
@@ -111,23 +104,21 @@ fi
 
 # ---------- Link with path traversal attempt ----------
 
-test_name "Generate link with path traversal in path field returns error"
-sleep 1
+test_name "Generate link with path traversal in path field returns 400 and no token"
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/../../../etc/passwd","expiry_seconds":3600}')
 _read_status
-# Chi normalizes /../ paths, so accept any non-500 status
-if [ "$LAST_STATUS" != "500" ]; then
+TRAVERSAL_TOKEN=$(echo "$BODY" | jq -r '.token // empty')
+if [ "400" = "$LAST_STATUS" ] && [ -z "$TRAVERSAL_TOKEN" ]; then
   pass
 else
-  fail "expected non-500 for path traversal in link generation, got $LAST_STATUS"
+  fail "expected 400 with no token for path traversal in link generation, got $LAST_STATUS"
 fi
 
 # ---------- Link with malformed JSON ----------
 
 test_name "Generate link with malformed JSON returns 400"
-sleep 1
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d 'not json at all')
@@ -137,7 +128,6 @@ pass
 # ---------- Link with extra large JSON body ----------
 
 test_name "Generate link with oversized JSON body returns 400"
-sleep 1
 BIG_PATH=$(printf 'a%.0s' $(seq 1 5000))
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
@@ -151,7 +141,6 @@ test_name "Generate link on NODE1, download from NODE2"
 upload_file "$NODE1" "/cross-link.txt" "cross link content"
 assert_status 201
 
-sleep 1
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/cross-link.txt","expiry_seconds":3600}')
@@ -169,7 +158,6 @@ test_name "Download link includes Content-Disposition header with filename"
 upload_file "$NODE1" "/link-disposition.txt" "disposition test content"
 assert_status 201
 
-sleep 1
 BODY=$(callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/link-disposition.txt","expiry_seconds":3600}')

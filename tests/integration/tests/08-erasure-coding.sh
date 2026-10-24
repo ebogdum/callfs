@@ -52,8 +52,15 @@ _read_status
 assert_status "201"
 pass
 
+test_name "GET ?manifest=true for header-created erasure file returns 200"
+HEADER_BODY=$(callfs_curl GET "${NODE1}/v1/files/erasure-header-test.bin?manifest=true")
+_read_status
+assert_status "200"
+assert_body_contains "$HEADER_BODY" "shards"
+pass
+
 test_name "Manifest shard count equals data_shards + parity_shards"
-SHARD_COUNT=$(echo "$BODY" | jq '.shards | length' 2>/dev/null) || SHARD_COUNT="0"
+SHARD_COUNT=$(echo "$HEADER_BODY" | jq '.shards | length' 2>/dev/null) || SHARD_COUNT="0"
 if [ "$SHARD_COUNT" -eq 3 ]; then
   pass
 else
@@ -65,7 +72,7 @@ ALL_OK=true
 # Each shard has its own endpoint (may be on different nodes).
 # Access each shard via its specific endpoint URL from the manifest.
 for i in 0 1 2; do
-  SHARD_URL=$(echo "$BODY" | jq -r ".shards[$i].endpoint" 2>/dev/null) || SHARD_URL=""
+  SHARD_URL=$(echo "$HEADER_BODY" | jq -r ".shards[$i].endpoint" 2>/dev/null) || SHARD_URL=""
   if [ -z "$SHARD_URL" ] || [ "$SHARD_URL" = "null" ]; then
     fail "shard ${i} endpoint missing in manifest"
     ALL_OK=false

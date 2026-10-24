@@ -52,7 +52,7 @@ pass
 
 test_name "Content-Length matches file size"
 callfs_head_method "${NODE1}/v1/files/headers-test.txt"
-assert_header_contains "X-CallFS-Size" "19"
+assert_header_equals "Content-Length" "19"
 pass
 
 test_name "GET file returns Content-Type header"

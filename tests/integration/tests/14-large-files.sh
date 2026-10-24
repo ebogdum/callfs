@@ -18,7 +18,7 @@ pass
 test_name "HEAD /large-5m.bin shows correct size (5242880)"
 callfs_head_method "${NODE1}/v1/files/large-5m.bin"
 assert_status 200
-assert_header_contains "X-CallFS-Size" "5242880"
+assert_header_equals "X-CallFS-Size" "5242880"
 pass
 
 test_name "Download 5MB file and SHA-256 match"

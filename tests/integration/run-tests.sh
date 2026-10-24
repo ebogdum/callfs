@@ -53,19 +53,31 @@ echo "==> Starting infrastructure (postgres, redis)..."
 cd "${SCRIPT_DIR}"
 docker compose up -d postgres redis
 echo "==> Waiting for postgres and redis..."
-docker compose exec -T postgres sh -c 'until pg_isready -U callfs -d callfs; do sleep 1; done' 2>/dev/null
-docker compose exec -T redis sh -c 'until redis-cli ping 2>/dev/null | grep -q PONG; do sleep 1; done' 2>/dev/null
+docker compose exec -T postgres sh -c 'i=0; until pg_isready -U callfs -d callfs; do i=$((i+1)); [ "$i" -ge 60 ] && exit 1; sleep 1; done' 2>/dev/null || { echo "ERROR: postgres not ready after 60s"; exit 1; }
+docker compose exec -T redis sh -c 'i=0; until redis-cli ping 2>/dev/null | grep -q PONG; do i=$((i+1)); [ "$i" -ge 60 ] && exit 1; sleep 1; done' 2>/dev/null || { echo "ERROR: redis not ready after 60s"; exit 1; }
 echo "==> Infrastructure ready"
 
 # ---------- Start 3-node Raft cluster ----------
 echo "==> Starting 3-node CallFS cluster..."
 docker compose up -d node1 node2 node3
 
+wait_for_raft_leader() {
+  local url="$1"
+  local deadline=$((SECONDS + 60))
+  until docker run --rm --network callfs-test-network alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 -sf "${url}/health" 2>/dev/null | grep -Eq '"leader_id":"[^"]+"'; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "ERROR: ${url} has no raft leader after 60s"
+      return 1
+    fi
+    sleep 2
+  done
+}
+
 echo "==> Waiting for nodes to become healthy..."
 for node in node1 node2 node3; do
   elapsed=0
   while [ $elapsed -lt 90 ]; do
-    if docker compose exec -T "$node" /callfs-healthcheck 2>/dev/null; then
+    if docker compose exec -T "$node" /callfs healthcheck --config /config.yaml 2>/dev/null; then
       echo "  ${node}: ready"
       break
     fi
@@ -81,30 +93,36 @@ done
 
 # Give raft time to elect leader on node1, create root dir, and take snapshot
 echo "==> Waiting for Raft leader election and initial snapshot..."
-sleep 10
+wait_for_raft_leader "http://node1:8443" || exit 1
 
 # Join node2 and node3 to the Raft cluster via the internal API.
 # After joining, the leader's snapshot will be installed on followers.
 INTERNAL_SECRET="test-internal-secret-0123456789"
+join_raft_node() {
+  node_name="$1"
+  node_json="$2"
+  join_body=$(docker run --rm --network callfs-test-network alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 \
+    curl -s -X POST \
+      -H "Authorization: Bearer ${INTERNAL_SECRET}" \
+      -H "Content-Type: application/json" \
+      -d "${node_json}" \
+      http://node1:8443/v1/internal/raft/join) || { echo "ERROR: ${node_name} join request failed"; exit 1; }
+  case "${join_body}" in
+    *'"status":"joined"'*|*already_member*) echo "  ${node_name}: joined" ;;
+    *) echo "ERROR: ${node_name} join failed: ${join_body}"; exit 1 ;;
+  esac
+}
+
 echo "==> Joining node2 to Raft cluster..."
-docker run --rm --network callfs-test-network alpine/curl:latest \
-  curl -sf -X POST \
-    -H "Authorization: Bearer ${INTERNAL_SECRET}" \
-    -H "Content-Type: application/json" \
-    -d '{"node_id":"node-2","raft_addr":"node2:7000","api_endpoint":"http://node2:8443"}' \
-    http://node1:8443/v1/internal/raft/join 2>/dev/null && echo "  node2: joined" || echo "  node2: join failed (may already be member)"
+join_raft_node node2 '{"node_id":"node-2","raft_addr":"node2:7000","api_endpoint":"http://node2:8443"}'
 
 echo "==> Joining node3 to Raft cluster..."
-docker run --rm --network callfs-test-network alpine/curl:latest \
-  curl -sf -X POST \
-    -H "Authorization: Bearer ${INTERNAL_SECRET}" \
-    -H "Content-Type: application/json" \
-    -d '{"node_id":"node-3","raft_addr":"node3:7000","api_endpoint":"http://node3:8443"}' \
-    http://node1:8443/v1/internal/raft/join 2>/dev/null && echo "  node3: joined" || echo "  node3: join failed (may already be member)"
+join_raft_node node3 '{"node_id":"node-3","raft_addr":"node3:7000","api_endpoint":"http://node3:8443"}'
 
 # Wait for followers to install snapshot and stabilize
 echo "==> Waiting for Raft cluster to stabilize..."
-sleep 10
+wait_for_raft_leader "http://node2:8443" || exit 1
+wait_for_raft_leader "http://node3:8443" || exit 1
 echo "==> Cluster ready"
 
 # ---------- Counters ----------
@@ -127,9 +145,9 @@ run_test_external() {
     --network callfs-test-network \
     -v "${SCRIPT_DIR}/lib.sh:/tests/lib.sh:ro" \
     -v "${test_file}:/tests/tests/test.sh:ro" \
-    alpine/curl:latest \
+    alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 \
     sh -c '
-      apk add --no-cache bash jq coreutils >/dev/null 2>&1
+      apk add --no-cache bash=5.3.9-r1 jq=1.8.2-r0 coreutils=9.11-r0 >/dev/null 2>&1
       bash /tests/tests/test.sh
     '; then
     TOTAL_PASS=$((TOTAL_PASS + 1))
@@ -221,7 +239,7 @@ if [ -z "$FILTER" ] || echo "13-metadata-backends" | grep -q "$FILTER"; then
     elapsed=0
     ready=false
     while [ $elapsed -lt 60 ]; do
-      if docker exec callfs-meta-test /callfs-healthcheck 2>/dev/null; then
+      if docker exec callfs-meta-test /callfs healthcheck --config /config.yaml 2>/dev/null; then
         ready=true
         break
       fi
@@ -245,9 +263,9 @@ if [ -z "$FILTER" ] || echo "13-metadata-backends" | grep -q "$FILTER"; then
       --network callfs-test-network \
       -v "${SCRIPT_DIR}/lib.sh:/tests/lib.sh:ro" \
       -v "${SCRIPT_DIR}/tests/13-metadata-backends.sh:/tests/tests/test.sh:ro" \
-      alpine/curl:latest \
+      alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 \
       sh -c '
-        apk add --no-cache bash jq coreutils >/dev/null 2>&1
+        apk add --no-cache bash=5.3.9-r1 jq=1.8.2-r0 coreutils=9.11-r0 >/dev/null 2>&1
         bash /tests/tests/test.sh
       '; then
       TOTAL_PASS=$((TOTAL_PASS + 1))
@@ -295,14 +313,17 @@ if [ "$SKIP_S3" = false ] && { [ -z "$FILTER" ] || echo "27-s3-backend" | grep -
     FAILED_SUITES="${FAILED_SUITES} 27-s3-backend"
   else
     echo "==> Initializing MinIO bucket..."
-    docker compose up minio-init 2>/dev/null || true
+    if ! docker compose up --exit-code-from minio-init minio-init; then
+      echo "ERROR: MinIO bucket init failed"
+      exit 1
+    fi
 
     echo "==> Starting S3-backend node..."
     docker compose up -d node-s3
 
     elapsed=0
     while [ $elapsed -lt 60 ]; do
-      if docker compose exec -T node-s3 /callfs-healthcheck 2>/dev/null; then
+      if docker compose exec -T node-s3 /callfs healthcheck --config /config.yaml 2>/dev/null; then
         echo "  node-s3: ready"
         break
       fi
@@ -321,9 +342,9 @@ if [ "$SKIP_S3" = false ] && { [ -z "$FILTER" ] || echo "27-s3-backend" | grep -
         --network callfs-test-network \
         -v "${SCRIPT_DIR}/lib.sh:/tests/lib.sh:ro" \
         -v "${SCRIPT_DIR}/tests/27-s3-backend.sh:/tests/tests/test.sh:ro" \
-        alpine/curl:latest \
+        alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 \
         sh -c '
-          apk add --no-cache bash jq coreutils >/dev/null 2>&1
+          apk add --no-cache bash=5.3.9-r1 jq=1.8.2-r0 coreutils=9.11-r0 >/dev/null 2>&1
           bash /tests/tests/test.sh
         '; then
         TOTAL_PASS=$((TOTAL_PASS + 1))
@@ -351,6 +372,11 @@ if [ "$SKIP_CONFIG" = false ] && { [ -z "$FILTER" ] || echo "29-config-validatio
 
   CONFIG_PASS=0
   CONFIG_FAIL=0
+
+  if ! docker image inspect callfs:test >/dev/null 2>&1; then
+    echo "  FAIL: image callfs:test not found"
+    CONFIG_FAIL=$((CONFIG_FAIL + 1))
+  fi
 
   # Test 1: Valid YAML config
   echo "  Test: callfs config validate with valid YAML..."
@@ -380,45 +406,37 @@ if [ "$SKIP_CONFIG" = false ] && { [ -z "$FILTER" ] || echo "29-config-validatio
     CONFIG_FAIL=$((CONFIG_FAIL + 1))
   fi
 
-  # Test 3: Short API key
-  echo "  Test: callfs config validate with short API key..."
-  if docker run --rm \
+  expect_config_rejection() {
+    local label="$1" expected="$2"
+    shift 2
+    local output status=0
+    echo "  Test: ${label}..."
+    output=$(docker run --rm "$@" 2>&1) || status=$?
+    if [ 0 -ne "$status" ] && grep -Fq -- "$expected" <<<"$output"; then
+      echo "  PASS: ${label}"
+      CONFIG_PASS=$((CONFIG_PASS + 1))
+    else
+      echo "  FAIL: ${label}: exit ${status}, expected error text: ${expected}"
+      echo "$output" | tail -5
+      CONFIG_FAIL=$((CONFIG_FAIL + 1))
+    fi
+  }
+
+  expect_config_rejection "short API key rejected" "each key must be at least 16 characters" \
     -v "${SCRIPT_DIR}/configs/node-invalid-short-key.yaml:/config.yaml:ro" \
     --tmpfs /data \
     callfs:test \
-    config validate --config /config.yaml 2>&1; then
-    echo "  FAIL: short API key should fail validation"
-    CONFIG_FAIL=$((CONFIG_FAIL + 1))
-  else
-    echo "  PASS: short API key rejected"
-    CONFIG_PASS=$((CONFIG_PASS + 1))
-  fi
+    config validate --config /config.yaml
 
-  # Test 4: No API keys
-  echo "  Test: callfs config validate with no API keys..."
-  if docker run --rm \
+  expect_config_rejection "empty API keys rejected" "auth.api_keys or auth.api_key_users must contain at least one key" \
     -v "${SCRIPT_DIR}/configs/node-invalid-no-keys.yaml:/config.yaml:ro" \
     --tmpfs /data \
     callfs:test \
-    config validate --config /config.yaml 2>&1; then
-    echo "  FAIL: empty API keys should fail validation"
-    CONFIG_FAIL=$((CONFIG_FAIL + 1))
-  else
-    echo "  PASS: empty API keys rejected"
-    CONFIG_PASS=$((CONFIG_PASS + 1))
-  fi
+    config validate --config /config.yaml
 
-  # Test 5: Nonexistent config file
-  echo "  Test: callfs config validate with nonexistent file..."
-  if docker run --rm \
+  expect_config_rejection "nonexistent config file rejected" "specified config file /nonexistent.yaml not found" \
     callfs:test \
-    config validate --config /nonexistent.yaml 2>&1; then
-    echo "  FAIL: nonexistent config file should fail"
-    CONFIG_FAIL=$((CONFIG_FAIL + 1))
-  else
-    echo "  PASS: nonexistent config file rejected"
-    CONFIG_PASS=$((CONFIG_PASS + 1))
-  fi
+    config validate --config /nonexistent.yaml
 
   echo ""
   echo "  Config validation: ${CONFIG_PASS} passed, ${CONFIG_FAIL} failed"
@@ -461,7 +479,7 @@ if [ "$SKIP_ENV" = false ] && { [ -z "$FILTER" ] || echo "30-env-var-overrides" 
   elapsed=0
   ready=false
   while [ $elapsed -lt 30 ]; do
-    if docker run --rm --network callfs-test-network alpine/curl:latest \
+    if docker run --rm --network callfs-test-network alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 \
       curl -sf --max-time 2 http://callfs-env-test:9999/health >/dev/null 2>&1; then
       ready=true
       break
@@ -493,7 +511,7 @@ if [ "$SKIP_ENV" = false ] && { [ -z "$FILTER" ] || echo "30-env-var-overrides" 
   elapsed=0
   ready=false
   while [ $elapsed -lt 30 ]; do
-    if docker exec callfs-env-test /callfs-healthcheck 2>/dev/null; then
+    if docker exec callfs-env-test /callfs healthcheck --config /config.yaml 2>/dev/null; then
       ready=true
       break
     fi
@@ -501,9 +519,13 @@ if [ "$SKIP_ENV" = false ] && { [ -z "$FILTER" ] || echo "30-env-var-overrides" 
     elapsed=$((elapsed + 2))
   done
 
-  if [ "$ready" = true ]; then
+  if [ "$ready" = true ] && ! docker logs callfs-env-test 2>&1 | grep -Eq '"level":"(debug|info)"'; then
     echo "  PASS: server starts with log level override"
     ENV_PASS=$((ENV_PASS + 1))
+  elif [ "$ready" = true ]; then
+    echo "  FAIL: log level override ignored (debug/info lines present)"
+    docker logs callfs-env-test 2>&1 | tail -10
+    ENV_FAIL=$((ENV_FAIL + 1))
   else
     echo "  FAIL: server failed to start with log level override"
     docker logs callfs-env-test 2>&1 | tail -10

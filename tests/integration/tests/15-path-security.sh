@@ -12,9 +12,7 @@ section "Path Security"
 
 test_name "GET /../../../etc/passwd is blocked (Chi normalizes, returns 404 not file content)"
 BODY=$(callfs_curl GET "${NODE1}/v1/files/../../../etc/passwd")
-_read_status
-# Chi normalizes to /etc/passwd which doesn't exist -> 404
-# The key assertion: the response must NOT contain /etc/passwd content
+assert_status "404"
 if echo "$BODY" | grep -q "root:"; then
   fail "SECURITY: /etc/passwd content leaked!"
 else
@@ -24,7 +22,7 @@ fi
 test_name "GET /..%2F..%2Fetc%2Fpasswd returns non-200 (traversal blocked)"
 BODY=$(callfs_curl GET "${NODE1}/v1/files/..%2F..%2Fetc%2Fpasswd")
 _read_status
-if [ "$LAST_STATUS" = "200" ] && echo "$BODY" | grep -q "root:"; then
+if [ "$LAST_STATUS" = "200" ] || echo "$BODY" | grep -q "root:"; then
   fail "SECURITY: URL-encoded traversal leaked /etc/passwd"
 else
   pass

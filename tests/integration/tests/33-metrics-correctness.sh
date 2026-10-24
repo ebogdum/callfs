@@ -63,17 +63,19 @@ else
 fi
 
 sleep 1
-test_name "callfs_single_use_link_generations_total present after generating link"
+test_name "callfs_single_use_link_generations_total increments after generating link"
+links_before=$(awk '/^callfs_single_use_link_generations_total /{print $2}' "${_TMPDIR}/metrics.txt")
 callfs_curl POST "${NODE1}/v1/links/generate" \
   -H "Content-Type: application/json" \
   -d '{"path":"/metrics-corr-test.txt","expiry_seconds":3600}' >/dev/null
 _read_status
 assert_status "201"
 curl -s -H "Authorization: Bearer ${API_KEY}" "${NODE1}/metrics" > "${_TMPDIR}/metrics2.txt" 2>/dev/null
-if grep -q 'callfs_single_use_link_generations_total' "${_TMPDIR}/metrics2.txt"; then
+links_after=$(awk '/^callfs_single_use_link_generations_total /{print $2}' "${_TMPDIR}/metrics2.txt")
+if [ -n "${links_after}" ] && awk -v a="${links_before:-0}" -v b="${links_after}" 'BEGIN{exit !(b > a)}'; then
   pass
 else
-  fail "callfs_single_use_link_generations_total not found"
+  fail "callfs_single_use_link_generations_total did not increase (before=${links_before:-0} after=${links_after:-missing})"
 fi
 
 test_name "Cleanup metrics correctness test files"

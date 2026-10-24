@@ -17,7 +17,7 @@ pass
 test_name "HEAD /test.txt verifies size and mode"
 callfs_head_method "${NODE1}/v1/files/test.txt"
 assert_status "200"
-assert_header_contains "X-CallFS-Size" "14"
+assert_header_equals "X-CallFS-Size" "14"
 assert_header_contains "X-CallFS-Mode" "0644"
 pass
 
@@ -55,7 +55,7 @@ pass
 test_name "HEAD /test.txt shows new size after update"
 callfs_head_method "${NODE1}/v1/files/test.txt"
 assert_status "200"
-assert_header_contains "X-CallFS-Size" "15"
+assert_header_equals "X-CallFS-Size" "15"
 pass
 
 # --- Delete ---
@@ -102,7 +102,7 @@ pass
 test_name "HEAD /zero.txt shows size 0"
 callfs_head_method "${NODE1}/v1/files/zero.txt"
 assert_status "200"
-assert_header_contains "X-CallFS-Size" "0"
+assert_header_equals "X-CallFS-Size" "0"
 pass
 
 test_name "GET /zero.txt returns empty body"
@@ -125,7 +125,7 @@ _read_status
 assert_status "201"
 callfs_head_method "${NODE1}/v1/files/large.bin"
 assert_status "200"
-assert_header_contains "X-CallFS-Size" "1048576"
+assert_header_equals "X-CallFS-Size" "1048576"
 download_file_to_file "$NODE1" "/large.bin" "$DOWNLOAD_FILE"
 _read_status
 assert_status "200"

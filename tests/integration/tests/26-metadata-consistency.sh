@@ -37,7 +37,7 @@ upload_file "$NODE1" "/meta-size.txt" "exactly 26 characters long"
 assert_status 201
 callfs_head_method "${NODE1}/v1/files/meta-size.txt"
 assert_status 200
-assert_header_contains "X-CallFS-Size" "26"
+assert_header_equals "X-CallFS-Size" "26"
 pass
 
 test_name "Size updates after PUT with different content"
@@ -46,7 +46,7 @@ BODY=$(callfs_curl PUT "${NODE1}/v1/files/meta-size.txt" \
   -d "short")
 assert_status 200
 callfs_head_method "${NODE1}/v1/files/meta-size.txt"
-assert_header_contains "X-CallFS-Size" "5"
+assert_header_equals "X-CallFS-Size" "5"
 pass
 
 # ---------- Mode metadata ----------
@@ -72,15 +72,18 @@ upload_file "$NODE1" "/meta-cluster.txt" "cluster consistency test"
 assert_status 201
 
 callfs_head_method "${NODE1}/v1/files/meta-cluster.txt"
+assert_status 200
 SIZE1=$(echo "$LAST_HEADERS" | grep -i "X-CallFS-Size" | head -1 | sed 's/^[^:]*: *//' | tr -d '\r')
 
 callfs_head_method "${NODE2}/v1/files/meta-cluster.txt"
+assert_status 200
 SIZE2=$(echo "$LAST_HEADERS" | grep -i "X-CallFS-Size" | head -1 | sed 's/^[^:]*: *//' | tr -d '\r')
 
 callfs_head_method "${NODE3}/v1/files/meta-cluster.txt"
+assert_status 200
 SIZE3=$(echo "$LAST_HEADERS" | grep -i "X-CallFS-Size" | head -1 | sed 's/^[^:]*: *//' | tr -d '\r')
 
-if [ "$SIZE1" = "$SIZE2" ] && [ "$SIZE2" = "$SIZE3" ]; then
+if [ -n "$SIZE1" ] && [ "$SIZE1" = "$SIZE2" ] && [ "$SIZE2" = "$SIZE3" ]; then
   pass
 else
   fail "size mismatch across nodes: $SIZE1 $SIZE2 $SIZE3"
@@ -88,15 +91,18 @@ fi
 
 test_name "HEAD from all 3 nodes returns same Mode"
 callfs_head_method "${NODE1}/v1/files/meta-cluster.txt"
+assert_status 200
 MODE1=$(echo "$LAST_HEADERS" | grep -i "X-CallFS-Mode" | head -1 | sed 's/^[^:]*: *//' | tr -d '\r')
 
 callfs_head_method "${NODE2}/v1/files/meta-cluster.txt"
+assert_status 200
 MODE2=$(echo "$LAST_HEADERS" | grep -i "X-CallFS-Mode" | head -1 | sed 's/^[^:]*: *//' | tr -d '\r')
 
 callfs_head_method "${NODE3}/v1/files/meta-cluster.txt"
+assert_status 200
 MODE3=$(echo "$LAST_HEADERS" | grep -i "X-CallFS-Mode" | head -1 | sed 's/^[^:]*: *//' | tr -d '\r')
 
-if [ "$MODE1" = "$MODE2" ] && [ "$MODE2" = "$MODE3" ]; then
+if [ -n "$MODE1" ] && [ "$MODE1" = "$MODE2" ] && [ "$MODE2" = "$MODE3" ]; then
   pass
 else
   fail "mode mismatch across nodes: $MODE1 $MODE2 $MODE3"

@@ -27,7 +27,7 @@ pass
 test_name "HEAD shows correct size after chunked upload"
 callfs_head_method "${NODE1}/v1/files/chunked-test.bin"
 assert_status "200"
-assert_header_contains "X-CallFS-Size" "4096"
+assert_header_equals "X-CallFS-Size" "4096"
 pass
 
 test_name "GET download after chunked upload SHA-256 matches"

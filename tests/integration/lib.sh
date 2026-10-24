@@ -137,6 +137,7 @@ callfs_head() {
     "$@" \
     "$url" 2>/dev/null || true
   _read_headers
+  echo "$LAST_STATUS" > "$_STATUS_FILE"
 }
 
 # HEAD request (actual HTTP HEAD method). Headers and status saved to file.
@@ -425,6 +426,45 @@ wait_ready() {
   return 1
 }
 
+wait_raft_leader() {
+  local url="$1"
+  local max_wait="${2:-30}"
+  local elapsed=0
+  while [ $elapsed -lt "$max_wait" ]; do
+    if curl -sf --max-time 2 "${url}/health" 2>/dev/null | grep -Eq '"leader_id":"[^"]+"'; then
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  echo "ERROR: ${url} has no raft leader after ${max_wait}s"
+  return 1
+}
+
+wait_until() {
+  local timeout="$1"
+  shift
+  local deadline=$((SECONDS + timeout))
+  until "$@" >/dev/null 2>&1; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+listing_contains() {
+  list_directory "$1" "$2" | grep -q -- "$3"
+}
+
+listing_lacks() {
+  ! list_directory "$1" "$2" | grep -q -- "$3"
+}
+
+file_body_equals() {
+  [ "$(download_file "$1" "$2")" = "$3" ]
+}
+
 wait_all_nodes() {
   echo "Waiting for nodes to become ready..."
   wait_ready "$NODE1" 90
@@ -433,9 +473,8 @@ wait_all_nodes() {
   echo "  node2: ready"
   wait_ready "$NODE3" 90
   echo "  node3: ready"
-  # Give raft a moment to elect leader
-  sleep 3
-  echo "  raft: leader election window passed"
+  wait_raft_leader "$NODE1" 30 || return 1
+  echo "  raft: leader elected"
 }
 
 # ---------- Cleanup ----------

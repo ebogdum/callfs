@@ -98,15 +98,9 @@ CS_TOKEN=$(echo "$BODY" | jq -r '.token')
 sleep 1
 BODY=$(callfs_curl_noauth GET "${NODE3}/download/${CS_TOKEN}")
 _read_status
-# Cross-server download may fail if token isn't replicated yet
-if [ "$LAST_STATUS" = "200" ]; then
-  assert_body_equals "$BODY" "link content"
-  pass
-elif [ "$LAST_STATUS" = "500" ]; then
-  pass
-else
-  fail "expected 200 or 500 for cross-server link download, got $LAST_STATUS"
-fi
+assert_status "200"
+assert_body_equals "$BODY" "link content"
+pass
 
 # Cleanup
 delete_file "$NODE1" "/link-test.txt" >/dev/null 2>&1 || true

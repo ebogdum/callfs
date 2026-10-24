@@ -13,9 +13,7 @@ BODY=$(callfs_curl POST "${NODE1}/v1/files/erasure-tiny.txt?erasure=true&data_sh
   -H "Content-Type: application/octet-stream" \
   -d "tiny file!")
 _read_status
-# The cluster config has min_file_size=1024, so 10 bytes should either
-# be stored non-erasure or rejected
-if [ "$LAST_STATUS" = "201" ] || [ "$LAST_STATUS" = "200" ] || [ "$LAST_STATUS" = "400" ]; then
+if [ "$LAST_STATUS" = "201" ]; then
   pass
 else
   fail "unexpected status $LAST_STATUS for below-min-size erasure upload"
@@ -26,9 +24,6 @@ BODY=$(download_file "$NODE1" "/erasure-tiny.txt")
 _read_status
 if [ "$LAST_STATUS" = "200" ]; then
   assert_body_equals "$BODY" "tiny file!"
-  pass
-elif [ "$LAST_STATUS" = "404" ]; then
-  # File may not have been created if below min size
   pass
 else
   fail "unexpected status $LAST_STATUS"
@@ -134,7 +129,7 @@ BODY=$(callfs_curl POST "${NODE1}/v1/files/erasure-bad.bin?erasure=true&data_sha
   -d "bad params")
 _read_status
 # Server ignores invalid data_shards=0 (< 1) and uses defaults instead, so 201 is acceptable
-if [ "$LAST_STATUS" = "201" ] || [ "$LAST_STATUS" = "400" ] || [ "$LAST_STATUS" = "500" ]; then
+if [ "$LAST_STATUS" = "201" ] || [ "$LAST_STATUS" = "400" ]; then
   pass
 else
   fail "unexpected status $LAST_STATUS for data_shards=0"

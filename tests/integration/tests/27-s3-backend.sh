@@ -92,7 +92,7 @@ _read_status
 assert_status "201"
 callfs_head_method "${NODE_S3}/v1/files/s3-bin-5m.bin"
 assert_status "200"
-assert_header_contains "X-CallFS-Size" "5242880"
+assert_header_equals "X-CallFS-Size" "5242880"
 download_file_to_file "$NODE_S3" "/s3-bin-5m.bin" "$S3_DOWN_5M"
 _read_status
 assert_status "200"
@@ -162,7 +162,7 @@ pass
 test_name "Zero-byte file on S3 backend: HEAD shows size 0"
 callfs_head_method "${NODE_S3}/v1/files/s3-zero.txt"
 assert_status "200"
-assert_header_contains "X-CallFS-Size" "0"
+assert_header_equals "X-CallFS-Size" "0"
 pass
 
 test_name "Zero-byte file on S3 backend: GET returns empty body"
