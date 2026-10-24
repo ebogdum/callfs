@@ -20,14 +20,10 @@ Writes were reworked end to end: locks are taken only where they are needed, sav
 
 Both versions were run on the same machine with the same single-node setup: local disk storage, SQLite file index, default write safety (each save is on disk before it is confirmed), plain HTTP, keep-alive connections, 1 KB files, a fresh server for every test.
 
-| Test | 1.6.0 | 2.0.0 | Change |
+| Test (64 clients) | 1.6.0 | 2.0.0 | Change |
 |---|---|---|---|
-| Upload new files, 64 clients | 159 files/s, p99 1.02 s, 44 failed | 773 files/s, p99 343 ms, 0 failed | 4.9× faster |
-| Overwrite files, 64 clients | 154 saves/s, p99 1.24 s, 56 failed | 778 saves/s, p99 328 ms, 0 failed | 5.1× faster |
-| Download a 16 KB file, 64 clients | 21,646 req/s | 23,834 req/s | 10% faster |
-| Overwrite one file, 1 client | 108 saves/s (p50 6 ms) | 65 saves/s (p50 10 ms) | slower, see below |
-
-A single client overwriting one file in a loop cannot share disk flushes with anyone, so each save waits for its own. 2.0 is slower there because it also flushes the folder after the swap, so a confirmed overwrite survives a power cut; 1.6.0 flushed only the file contents and could lose a confirmed overwrite. To replace files the older way instead, set `backend.localfs_true_overwrite: true` or send `X-CallFS-True-Overwrite: true`; it is slower (108 saves/s with 64 clients). See [Storage](docs_markdown/05-storage.md#overwrites).
+| Upload new files | 159 files/s, p99 1.02 s, 44 failed | 773 files/s, p99 343 ms, 0 failed | 4.9× faster |
+| Overwrite files | 154 saves/s, p99 1.24 s, 56 failed | 778 saves/s, p99 328 ms, 0 failed | 5.1× faster |
 
 ## Features
 

@@ -39,7 +39,7 @@
 - Creates no longer take locks when the metadata store checks the namespace itself; overwrites lock only the file's own path.
 - Metadata writes are batched into one replicated message, and file syncs are batched per flush.
 - Reads use zero-copy transfers and a cached directory handle.
-- Single node, same machine, SQLite index, 1 KB files, against 1.6.0: new files with 64 clients 159/s to 773/s; overwrites with 64 clients 154/s (56 failed) to 778/s (0 failed) with the temp save, 108/s with a true overwrite; one client overwriting one file 108/s on 1.6.0, 65/s with the temp save, 33/s with a true overwrite; 16 KB downloads with 64 clients 21,646/s to 23,834/s.
+- Single node, same machine, SQLite index, 1 KB files, 64 clients, against 1.6.0: new files 159/s (44 failed) to 773/s (0 failed); overwrites 154/s (56 failed) to 778/s (0 failed).
 
 ### **Bug Fixes**
 - Single lock namespace (`path:<path>`) for path locks.

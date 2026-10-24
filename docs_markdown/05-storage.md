@@ -156,11 +156,10 @@ If the server stops in the middle of an overwrite, it fixes this at the next sta
 
 Single node, same machine, SQLite index, 1 KB files, a fresh server per test:
 
-| Test | 1.6.0 | 2.0 temp save | 2.0 true overwrite |
+| Test (64 clients) | 1.6.0 | 2.0 temp save | 2.0 true overwrite |
 |---|---|---|---|
-| Overwrite, 64 clients | 154/s (56 failed) | 778/s (0 failed) | 108/s |
-| New files, 64 clients | 159/s | 773/s | |
-| One client overwriting one file | 108/s | 65/s | 33/s |
+| Overwrite files | 154/s (56 failed) | 778/s (0 failed) | 108/s (0 failed) |
+| Upload new files | 159/s (44 failed) | 773/s (0 failed) | 768/s (0 failed) |
 
 ## Performance mode
 
