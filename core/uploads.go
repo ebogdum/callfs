@@ -105,6 +105,7 @@ type UploadRequest struct {
 	Mode      string
 	Storage   string
 	Erasure   *erasure.StoreOptions
+	NoErasure bool
 }
 
 type UploadPart struct {
@@ -194,6 +195,10 @@ func (u *Uploads) Create(ctx context.Context, userID string, req UploadRequest) 
 		if !req.Overwrite && "" == req.IfMatch {
 			return UploadSession{}, ErrUploadExists
 		}
+	}
+
+	if nil == req.Erasure && !req.NoErasure && nil == existing && u.autoSplit(req.Size) {
+		req.Erasure = &erasure.StoreOptions{}
 	}
 
 	id, err := newUploadID()
@@ -527,7 +532,7 @@ func (u *Uploads) cleanupEntry(id string, now time.Time) (bool, error) {
 	case nil != err:
 		return false, err
 	}
-	if UploadCompleting == session.State || !now.After(session.ExpiresAt) {
+	if !now.After(session.ExpiresAt) {
 		return false, nil
 	}
 	if err := os.RemoveAll(u.sessionDir(id)); nil != err {
@@ -580,6 +585,15 @@ func (u *Uploads) save(session UploadSession) error {
 		return fmt.Errorf("failed to replace upload record: %w", err)
 	}
 	return nil
+}
+
+func (u *Uploads) autoSplit(size int64) bool {
+	source, ok := u.engine.(interface{ GetErasureManager() *erasure.Manager })
+	if !ok || 0 >= size || MaxSplitUploadBytes < size {
+		return false
+	}
+	em := source.GetErasureManager()
+	return nil != em && em.AutoSplit(size)
 }
 
 func (u *Uploads) sessionDir(id string) string {

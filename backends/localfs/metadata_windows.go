@@ -15,7 +15,7 @@ func extractPlatformMetadata(info os.FileInfo) (mode string, atime, ctime time.T
 	ctime = info.ModTime()
 
 	if info.IsDir() {
-		mode = "0755"
+		mode = "0777"
 	}
 
 	return

@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/v2/backends"
+	"github.com/ebogdum/callfs/v2/backends/localfs"
 	"github.com/ebogdum/callfs/v2/backends/s3"
 	"github.com/ebogdum/callfs/v2/erasure"
 	"github.com/ebogdum/callfs/v2/metadata"
@@ -101,25 +102,6 @@ func (e *Engine) lockCreateTarget(ctx context.Context, path string, md *metadata
 	return release, nil
 }
 
-func (e *Engine) CreateFile(ctx context.Context, path string, reader io.Reader, size int64, md *metadata.Metadata) error {
-	release, err := e.lockCreateOnly(ctx, path, md)
-	if err != nil {
-		return err
-	}
-	defer release()
-
-	_, err = e.metadataStore.Get(ctx, path)
-	switch {
-	case err == nil:
-		return metadata.ErrAlreadyExists
-	case !errors.Is(err, metadata.ErrNotFound):
-		return fmt.Errorf("failed to get existing metadata: %w", err)
-	}
-
-	_, err = e.createLocked(ctx, path, reader, size, md)
-	return err
-}
-
 func (e *Engine) PutFile(ctx context.Context, path string, reader io.Reader, size int64, md *metadata.Metadata, ifMatch string, ifNoneMatch bool) (*metadata.Metadata, bool, error) {
 	release, err := e.lockCreateTarget(ctx, path, md)
 	if nil != err {
@@ -147,22 +129,6 @@ func (e *Engine) PutFile(ctx context.Context, path string, reader io.Reader, siz
 
 	committed, err := e.updateLocked(ctx, path, reader, size, existingMd)
 	return committed, false, err
-}
-
-func (e *Engine) UpdateFile(ctx context.Context, path string, reader io.Reader, size int64, md *metadata.Metadata) error {
-	release, err := e.lockPaths(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to acquire lock: %w", err)
-	}
-	defer release()
-
-	existingMd, err := e.metadataStore.Get(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to get existing metadata: %w", err)
-	}
-
-	_, err = e.updateLocked(ctx, path, reader, size, existingMd)
-	return err
 }
 
 func withBackendMode(ctx context.Context, backendType, mode string) context.Context {
@@ -277,6 +243,12 @@ func (e *Engine) updateLocked(ctx context.Context, path string, reader io.Reader
 		return &newMd, nil
 	}
 
+	if storage == e.localFSBackend && nil != e.asideWriter && !e.strict &&
+		!backends.UseTrueOverwrite(ctx, e.trueOverwrite, e.tmpSaveMaxSize, size) &&
+		e.asideWriter.SupportsOverwriteAside(relativePath, existingMd.ETag) {
+		return e.overwriteAside(ctx, backendCtx, path, relativePath, reader, size, existingMd, &newMd)
+	}
+
 	stagingRelativePath, err := newStagingRelativePath()
 	if nil != err {
 		return nil, err
@@ -325,6 +297,20 @@ func (e *Engine) updateLocked(ctx context.Context, path string, reader io.Reader
 	if err := storage.Move(backendCtx, stagingRelativePath, relativePath); nil != err {
 		metrics.BackendOpFailuresTotal.WithLabelValues(newMd.BackendType, "update").Inc()
 		err = restore(fmt.Errorf("failed to commit file in backend: %w", err))
+		if nil != stage {
+			resync := replicaJob{
+				path:           path,
+				primaryBackend: existingMd.BackendType,
+				mode:           existingMd.Mode,
+				replicaBackend: stage.backendType,
+				source:         storage,
+				relativePath:   relativePath,
+				size:           existingMd.Size,
+			}
+			if resyncErr := e.replicateObject(resync); nil != resyncErr {
+				err = errors.Join(err, fmt.Errorf("failed to restore replica: %w", resyncErr))
+			}
+		}
 		e.discardBackendObject(backendCtx, storage, path, stagingRelativePath)
 		e.invalidateFileCache(path)
 		return nil, err
@@ -334,6 +320,69 @@ func (e *Engine) updateLocked(ctx context.Context, path string, reader io.Reader
 	e.invalidateFileCache(path)
 
 	return &newMd, nil
+}
+
+func (e *Engine) overwriteAside(ctx, backendCtx context.Context, path, relativePath string, reader io.Reader, size int64, existingMd, newMd *metadata.Metadata) (*metadata.Metadata, error) {
+	var overwrite *localfs.Overwrite
+	counter := &countingReader{reader: reader}
+	content, etagOf := hashingReader(counter)
+	stage, err := e.writeWithReplica(ctx, path, newMd.BackendType, relativePath, size, content, func(body io.Reader) error {
+		written, writeErr := e.asideWriter.WriteOverwrite(backendCtx, relativePath, body, size)
+		overwrite = written
+		return writeErr
+	})
+	if nil != err {
+		metrics.BackendOpFailuresTotal.WithLabelValues(newMd.BackendType, "update").Inc()
+		if nil != overwrite {
+			overwrite.Discard()
+		}
+		e.invalidateFileCache(path)
+		return nil, fmt.Errorf("failed to stage file in backend: %w", err)
+	}
+	newMd.Size = counter.count
+	newMd.ETag = etagOf()
+	if err := e.verifyStored(backendCtx, e.localFSBackend, overwrite.TempPath(), newMd.Size, newMd.ETag); nil != err {
+		overwrite.Discard()
+		e.discardReplicaStage(ctx, path, stage)
+		e.invalidateFileCache(path)
+		return nil, err
+	}
+
+	e.awaitOldCopyDrop(path)
+	if err := overwrite.Swap(existingMd.ETag); nil != err {
+		metrics.BackendOpFailuresTotal.WithLabelValues(newMd.BackendType, "update").Inc()
+		e.discardReplicaStage(ctx, path, stage)
+		e.invalidateFileCache(path)
+		return nil, fmt.Errorf("failed to commit file in backend: %w", err)
+	}
+
+	if err := e.metadataStore.UpdateIfMatch(ctx, newMd, existingMd.ETag); nil != err {
+		e.discardReplicaStage(ctx, path, stage)
+		e.invalidateFileCache(path)
+		return nil, e.undoOverwrite(overwrite, fmt.Errorf("failed to update metadata: %w", err))
+	}
+
+	if err := e.commitReplicaStage(ctx, path, stage); nil != err {
+		e.invalidateFileCache(path)
+		if restoreErr := e.metadataStore.UpdateIfMatch(ctx, existingMd, newMd.ETag); nil != restoreErr {
+			e.dropOldCopy(path, overwrite)
+			return nil, errors.Join(err, fmt.Errorf("failed to restore metadata: %w", restoreErr))
+		}
+		return nil, e.undoOverwrite(overwrite, err)
+	}
+
+	e.dropOldCopy(path, overwrite)
+	e.scheduleReplication(newMd, path, e.localFSBackend, relativePath)
+	e.invalidateFileCache(path)
+	return newMd, nil
+}
+
+func (e *Engine) undoOverwrite(overwrite *localfs.Overwrite, cause error) error {
+	if err := overwrite.Restore(); nil != err {
+		return errors.Join(cause, err)
+	}
+	metrics.OverwriteRestoresTotal.Inc()
+	return cause
 }
 
 func (e *Engine) DeleteFile(ctx context.Context, path string) error {
@@ -491,11 +540,6 @@ func (e *Engine) GetMetadataUncached(ctx context.Context, path string) (*metadat
 	return md, nil
 }
 
-func ETagFor(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
 var ErrVerifyMismatch = errors.New("stored file does not match the uploaded bytes")
 
 func (e *Engine) verifyStored(ctx context.Context, storage backends.Storage, relativePath string, size int64, etag string) error {
@@ -601,7 +645,7 @@ func (e *Engine) writeWithReplica(ctx context.Context, path, primaryBackend, fin
 		return nil, primaryErr
 	}
 	if nil != replicaErr {
-		metrics.ReplicationTotal.WithLabelValues("failed").Inc()
+		e.countReplication("failed")
 		return nil, fmt.Errorf("failed to replicate file to secondary backend: %w", replicaErr)
 	}
 
@@ -619,10 +663,10 @@ func (e *Engine) commitReplicaStage(ctx context.Context, path string, stage *rep
 	}
 	if err := stage.storage.Move(ctx, stage.stagingPath, stage.finalPath); nil != err {
 		e.discardBackendObject(ctx, stage.storage, path, stage.stagingPath)
-		metrics.ReplicationTotal.WithLabelValues("failed").Inc()
+		e.countReplication("failed")
 		return fmt.Errorf("failed to replicate file to secondary backend: %w", err)
 	}
-	metrics.ReplicationTotal.WithLabelValues("succeeded").Inc()
+	e.countReplication("succeeded")
 	e.logger.Debug("Replicated file to secondary backend",
 		zap.String("path", path),
 		zap.String("replica_backend", stage.backendType))
@@ -685,10 +729,14 @@ func (e *Engine) scheduleReplication(md *metadata.Metadata, path string, source 
 		relativePath:   relativePath,
 		size:           md.Size,
 	}
+	if nil != e.taskQueue {
+		e.enqueueReplica(md, path, replicaBackend)
+		return
+	}
 	select {
 	case e.replicaQueue <- job:
 	default:
-		metrics.ReplicationTotal.WithLabelValues("dropped").Inc()
+		e.countReplication("dropped")
 		e.logger.Warn("Replication queue full, file left unreplicated",
 			zap.String("path", path),
 			zap.String("replica_backend", replicaBackend))
@@ -706,23 +754,27 @@ func (e *Engine) replicaWorker() {
 	}
 }
 
-func (e *Engine) runReplicaJob(job replicaJob) {
+func (e *Engine) runReplicaJob(job replicaJob) error {
 	e.logger.Info("Replicating file to secondary backend started",
 		zap.String("path", job.path),
 		zap.String("replica_backend", job.replicaBackend),
 		zap.Int64("size", job.size))
 	if err := e.replicateObject(job); nil != err {
-		metrics.ReplicationTotal.WithLabelValues("failed").Inc()
+		e.countReplication("failed")
+		if record := e.replicationFailures.Load(); nil != record {
+			(*record)(job.path, err.Error())
+		}
 		e.logger.Warn("Replication to secondary backend failed",
 			zap.String("path", job.path),
 			zap.String("replica_backend", job.replicaBackend),
 			zap.Error(err))
-		return
+		return err
 	}
-	metrics.ReplicationTotal.WithLabelValues("succeeded").Inc()
+	e.countReplication("succeeded")
 	e.logger.Info("Replicated file to secondary backend",
 		zap.String("path", job.path),
 		zap.String("replica_backend", job.replicaBackend))
+	return nil
 }
 
 func (e *Engine) replicateObject(job replicaJob) error {

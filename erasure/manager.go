@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/ebogdum/callfs/v2/backends"
 	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/internal/peertls"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/metrics"
 )
@@ -31,7 +33,26 @@ const (
 	remoteRequestTimeout = 30 * time.Second
 	maxConcurrentRepairs = 4
 	repairTimeout        = 10 * time.Minute
+	legacyShardPath      = ".erasure"
 )
+
+func ValidateShardPath(raw string) (string, error) {
+	if "" == raw {
+		return "", errors.New("erasure shard path must not be empty")
+	}
+	if strings.HasPrefix(raw, "/") || strings.Contains(raw, "\\") {
+		return "", fmt.Errorf("erasure shard path %q must be relative", raw)
+	}
+	for _, segment := range strings.Split(raw, "/") {
+		if ".." == segment {
+			return "", fmt.Errorf("erasure shard path %q must not contain ..", raw)
+		}
+	}
+	if cleaned := path.Clean(raw); cleaned != raw || "." == cleaned {
+		return "", fmt.Errorf("erasure shard path %q must be clean", raw)
+	}
+	return raw, nil
+}
 
 type Manager struct {
 	codec         *Codec
@@ -67,6 +88,7 @@ func NewManager(
 	transport.MaxIdleConns = maxIdleConnsPerPeer * max(len(peerEndpoints), 1)
 	transport.MaxIdleConnsPerHost = maxIdleConnsPerPeer
 	transport.ResponseHeaderTimeout = remoteRequestTimeout
+	transport.TLSClientConfig = peertls.ClientConfig()
 
 	peers := make(map[string]string, len(peerEndpoints))
 	maps.Copy(peers, peerEndpoints)
@@ -87,6 +109,15 @@ func NewManager(
 		repairSlots:   make(chan struct{}, maxConcurrentRepairs),
 		healthCache:   make(map[string]FileHealth),
 	}
+}
+
+func (m *Manager) shardRoot() (string, error) {
+	return ValidateShardPath(m.config.ShardPath)
+}
+
+func (m *Manager) AutoSplit(size int64) bool {
+	threshold := m.config.MinFileSize.Int64()
+	return 0 < threshold && 0 <= size && threshold <= size
 }
 
 func (m *Manager) peerEndpoint(instanceID string) (string, bool) {
@@ -150,7 +181,7 @@ func (m *Manager) cleanupShards(shardInfos []ShardInfo) {
 			if si.InstanceID == m.instanceID {
 				_ = m.localBackend.Delete(cleanupCtx, si.Path)
 			} else {
-				shardPrefix := extractShardPrefix(si.Path)
+				shardPrefix := m.extractShardPrefix(si.Path)
 				_ = m.deleteRemoteShard(cleanupCtx, si.InstanceID, shardPrefix, si.Index)
 			}
 		}(si)
@@ -446,7 +477,7 @@ func (m *Manager) rewriteShard(ctx context.Context, si metadata.ErasureShardInfo
 	if si.InstanceID == m.instanceID {
 		return m.localBackend.Create(ctx, si.Path, bytes.NewReader(shard), int64(len(shard)))
 	}
-	return m.storeRemoteShard(ctx, si.InstanceID, extractShardPrefix(si.Path), si.Index, bytes.NewReader(shard), int64(len(shard)))
+	return m.storeRemoteShard(ctx, si.InstanceID, m.extractShardPrefix(si.Path), si.Index, bytes.NewReader(shard), int64(len(shard)))
 }
 
 func (m *Manager) GetManifest(ctx context.Context, path string) (*ChunkManifest, error) {
@@ -552,7 +583,7 @@ func (m *Manager) deleteShard(ctx context.Context, si metadata.ErasureShardInfo)
 		}
 		return nil
 	}
-	return m.deleteRemoteShard(ctx, si.InstanceID, extractShardPrefix(si.Path), si.Index)
+	return m.deleteRemoteShard(ctx, si.InstanceID, m.extractShardPrefix(si.Path), si.Index)
 }
 
 func (m *Manager) RenameFile(ctx context.Context, oldPath, newPath string) error {
@@ -642,8 +673,11 @@ func escapePathSegments(path string) string {
 	return strings.Join(segments, "/")
 }
 
-func extractShardPrefix(shardPath string) string {
-	trimmed := strings.TrimPrefix(shardPath, ".erasure/")
+func (m *Manager) extractShardPrefix(shardPath string) string {
+	trimmed := strings.TrimPrefix(shardPath, legacyShardPath+"/")
+	if root, err := m.shardRoot(); nil == err && strings.HasPrefix(shardPath, root+"/") {
+		trimmed = strings.TrimPrefix(shardPath, root+"/")
+	}
 	lastSlash := strings.LastIndex(trimmed, "/")
 	if lastSlash < 0 {
 		return trimmed

@@ -23,7 +23,7 @@ func newUITestStore(t *testing.T) *PostgresStore {
 	if "" == dsn {
 		t.Skipf("%s not set", uiTestDSNEnv)
 	}
-	store, err := NewPostgresStore(dsn, zap.NewNop())
+	store, err := NewPostgresStoreWithPool(dsn, 25, 25, 5*time.Minute, zap.NewNop())
 	if nil != err {
 		t.Fatalf("open store: %v", err)
 	}

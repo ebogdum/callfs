@@ -85,6 +85,10 @@ func (t *Trash) Logger() *zap.Logger {
 	return t.logger
 }
 
+func (t *Trash) IsAdmin(userID string) bool {
+	return t.admins.IsAdmin(userID)
+}
+
 func (t *Trash) MoveToTrash(ctx context.Context, userID, filePath string) (TrashItem, error) {
 	filePath = normalizeMovePath(filePath)
 	if "/" == filePath || isTrashPath(filePath) {

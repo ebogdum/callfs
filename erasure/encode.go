@@ -76,9 +76,13 @@ func (m *Manager) encodeAndStore(ctx context.Context, path string, src io.Reader
 	if err != nil {
 		return nil, err
 	}
+	root, err := m.shardRoot()
+	if nil != err {
+		return nil, fmt.Errorf("erasure encode failed: %w", err)
+	}
 	paths := make([]string, totalShards)
 	for idx := range paths {
-		paths[idx] = fmt.Sprintf(".erasure/%s/%d", shardPrefix, idx)
+		paths[idx] = fmt.Sprintf("%s/%s/%d", root, shardPrefix, idx)
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

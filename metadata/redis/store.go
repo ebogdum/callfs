@@ -34,10 +34,6 @@ type RedisStore struct {
 	logger *zap.Logger
 }
 
-func NewRedisStore(addr, password string, db int, prefix string, logger *zap.Logger) (*RedisStore, error) {
-	return NewRedisStoreWithOptions(addr, "", password, db, prefix, nil, logger)
-}
-
 func NewRedisStoreWithOptions(addr, username, password string, db int, prefix string, tlsConfig *tls.Config, logger *zap.Logger) (*RedisStore, error) {
 	if prefix == "" {
 		prefix = "callfs:"
@@ -709,55 +705,6 @@ func (s *RedisStore) countActiveLinkBatch(ctx context.Context, keys []string, ow
 		}
 	}
 	return matched, nil
-}
-
-func (s *RedisStore) UpdateSingleUseLink(ctx context.Context, token string, status string, usedAt *time.Time, usedByIP *string) error {
-	// Use a Lua script for atomic check-and-set to prevent double-spend
-	luaScript := `
-		local raw = redis.call("GET", KEYS[1])
-		if not raw then
-			return redis.error_reply("not_found")
-		end
-		local link = cjson.decode(raw)
-		if link.status ~= "active" then
-			return redis.error_reply("not_active")
-		end
-		link.status = ARGV[1]
-		if ARGV[2] ~= "" then
-			link.used_at = ARGV[2]
-		end
-		if ARGV[3] ~= "" then
-			link.used_by_ip = ARGV[3]
-		end
-		link.updated_at = ARGV[4]
-		redis.call("SET", KEYS[1], cjson.encode(link))
-		return "OK"
-	`
-
-	now := time.Now().UTC()
-	usedAtStr := ""
-	if usedAt != nil {
-		usedAtStr = usedAt.UTC().Format(time.RFC3339Nano)
-	}
-	usedByIPStr := ""
-	if usedByIP != nil {
-		usedByIPStr = *usedByIP
-	}
-
-	result := s.client.Eval(ctx, luaScript, []string{s.linkKey(token)},
-		status, usedAtStr, usedByIPStr, now.Format(time.RFC3339Nano))
-
-	if err := result.Err(); err != nil {
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "not_found") {
-			return metadata.ErrNotFound
-		}
-		if strings.Contains(errMsg, "not_active") {
-			return metadata.ErrNotFound // Link already consumed
-		}
-		return fmt.Errorf("failed to update single-use link: %w", err)
-	}
-	return nil
 }
 
 var consumeLinkScript = redis.NewScript(`

@@ -93,10 +93,6 @@ func filterWithinPrefix(items []*metadata.Metadata, prefix string) []*metadata.M
 	return kept
 }
 
-func (e *Engine) DeletePrefix(ctx context.Context, prefix string) (int, error) {
-	return e.DeletePrefixWithin(ctx, prefix, false)
-}
-
 func (e *Engine) DeletePrefixWithin(ctx context.Context, prefix string, boundary bool) (int, error) {
 	if "" == prefix || "/" == prefix {
 		return 0, fmt.Errorf("refusing to delete prefix %q", prefix)

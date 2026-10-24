@@ -85,7 +85,7 @@ func (e *Engine) planParentDirectories(ctx context.Context, path, backendType, o
 			Name:        filepath.Base(dirPath),
 			Path:        dirPath,
 			Type:        "directory",
-			Mode:        "0755",
+			Mode:        "0777",
 			Owner:       owner,
 			BackendType: backendType,
 			ATime:       now,

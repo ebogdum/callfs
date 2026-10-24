@@ -62,7 +62,7 @@ func createFile(t *testing.T, e *Engine, path, content string) {
 		Name: filepath.Base(path), Type: "file", Mode: "0644",
 		Owner: "u1", BackendType: "localfs",
 	}
-	if err := e.CreateFile(context.Background(), path, strings.NewReader(content), int64(len(content)), md); err != nil {
+	if _, _, err := e.PutFile(context.Background(), path, strings.NewReader(content), int64(len(content)), md, "", false); err != nil {
 		t.Fatalf("create %s: %v", path, err)
 	}
 }

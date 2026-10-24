@@ -86,7 +86,7 @@ func (s *instrumentedStore) ListDescendants(ctx context.Context, dirPath string,
 }
 
 func (s *instrumentedStore) SearchDescendants(ctx context.Context, dirPath string, maxDepth, limit int, match func(*Metadata) bool) ([]*Metadata, int, error) {
-	defer observeMetadataQuery("list_descendants", time.Now())
+	defer observeMetadataQuery("search_descendants", time.Now())
 	return SearchDescendants(ctx, s.Store, dirPath, maxDepth, limit, match)
 }
 
@@ -108,11 +108,6 @@ func (s *instrumentedStore) CreateSingleUseLink(ctx context.Context, link *Singl
 func (s *instrumentedStore) CountActiveSingleUseLinks(ctx context.Context, owner string, now time.Time) (int, error) {
 	defer observeMetadataQuery("count_active_single_use_links", time.Now())
 	return s.Store.CountActiveSingleUseLinks(ctx, owner, now)
-}
-
-func (s *instrumentedStore) UpdateSingleUseLink(ctx context.Context, token string, status string, usedAt *time.Time, usedByIP *string) error {
-	defer observeMetadataQuery("update_single_use_link", time.Now())
-	return s.Store.UpdateSingleUseLink(ctx, token, status, usedAt, usedByIP)
 }
 
 func (s *instrumentedStore) ConsumeSingleUseLink(ctx context.Context, token string, usedByIP string, now time.Time) (*SingleUseLink, bool, error) {

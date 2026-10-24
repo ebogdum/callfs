@@ -144,9 +144,6 @@ type Store interface {
 
 	CountActiveSingleUseLinks(ctx context.Context, owner string, now time.Time) (int, error)
 
-	// UpdateSingleUseLink atomically updates a single-use link status
-	UpdateSingleUseLink(ctx context.Context, token string, status string, usedAt *time.Time, usedByIP *string) error
-
 	// ConsumeSingleUseLink atomically marks an active, unexpired link as used
 	// and returns it with consumed true. When the link exists but cannot be
 	// consumed it returns the stored link with consumed false. Returns

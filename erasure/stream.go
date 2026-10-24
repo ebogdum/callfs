@@ -74,7 +74,7 @@ func (m *Manager) openShard(ctx context.Context, si metadata.ErasureShardInfo) (
 	if si.InstanceID == m.instanceID {
 		return m.localBackend.Open(ctx, si.Path)
 	}
-	return m.openRemoteShard(ctx, si.InstanceID, extractShardPrefix(si.Path), si.Index)
+	return m.openRemoteShard(ctx, si.InstanceID, m.extractShardPrefix(si.Path), si.Index)
 }
 
 func (m *Manager) openFeed(ctx context.Context, si metadata.ErasureShardInfo, shardSize int64) *shardReader {

@@ -27,11 +27,6 @@ type PostgresStore struct {
 	logger *zap.Logger
 }
 
-// NewPostgresStore creates a new PostgreSQL metadata store
-func NewPostgresStore(dsn string, logger *zap.Logger) (*PostgresStore, error) {
-	return NewPostgresStoreWithPool(dsn, 25, 25, 5*time.Minute, logger)
-}
-
 func NewPostgresStoreWithPool(dsn string, maxOpenConns, maxIdleConns int, connMaxLifetime time.Duration, logger *zap.Logger) (*PostgresStore, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {

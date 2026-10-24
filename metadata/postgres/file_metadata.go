@@ -541,7 +541,7 @@ func renameErasureRows(ctx context.Context, tx dbQuerier, oldPath, newPath strin
 		if isDir {
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE `+table+` SET file_path = $1 || substring(file_path FROM $2) WHERE file_path LIKE $3 ESCAPE '\'`,
-				newPath+"/", len(oldPath)+2, escapeLikePattern(oldPath)+"/%",
+				newPath+"/", utf8.RuneCountInString(oldPath)+2, escapeLikePattern(oldPath)+"/%",
 			); err != nil {
 				return fmt.Errorf("failed to rename %s descendants: %w", table, err)
 			}

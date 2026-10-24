@@ -70,7 +70,7 @@ func (a *S3Adapter) ListDirectoryEach(ctx context.Context, path string, fn func(
 				Path:        a.keyToPath(strings.TrimSuffix(*commonPrefix.Prefix, "/")),
 				Type:        "directory",
 				Size:        0,
-				Mode:        "0755",
+				Mode:        "0777",
 				BackendType: "s3",
 				ATime:       now,
 				MTime:       now,

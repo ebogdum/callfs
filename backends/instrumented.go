@@ -21,6 +21,10 @@ func Instrument(name string, s Storage) Storage {
 	return &instrumentedStorage{Storage: s, backendType: name}
 }
 
+func (s *instrumentedStorage) Unwrap() Storage {
+	return s.Storage
+}
+
 func (s *instrumentedStorage) observe(operation string, start time.Time) {
 	metrics.BackendOpsTotal.WithLabelValues(s.backendType, operation).Inc()
 	metrics.BackendOpDuration.WithLabelValues(s.backendType, operation).Observe(time.Since(start).Seconds())

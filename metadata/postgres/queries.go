@@ -30,12 +30,6 @@ const (
 		ORDER BY path COLLATE "C"
 		LIMIT $3`
 
-	// _SQL_UPDATE_SINGLE_USE_LINK atomically updates a single-use link status
-	_SQL_UPDATE_SINGLE_USE_LINK = `
-		UPDATE single_use_links
-		SET status = $2, used_at = $3, used_by_ip = $4
-		WHERE token = $1 AND status = 'active'`
-
 	_SQL_SELECT_SINGLE_USE_LINK_SUMMARY = `
 		SELECT id, token, file_path, owner, expires_at, status, used_at, used_by_ip, created_at, updated_at
 		FROM single_use_links`

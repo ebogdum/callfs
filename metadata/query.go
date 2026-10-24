@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,6 +16,7 @@ const (
 	SearchScanBudget = 50000
 	searchPageSize   = 500
 	searchMaxLimit   = 1000
+	dirCursorPrefix  = "dir:"
 )
 
 type LinkFilter struct {
@@ -63,12 +65,23 @@ type searchScan struct {
 	scanned     int
 	lastScanned string
 	inFiles     bool
+	skipDirs    int
+	startDirs   int
 	budgetHit   bool
 }
 
 func SearchByScan(ctx context.Context, store Store, q SearchQuery) (SearchResult, error) {
 	if err := validateSearchQuery(q); err != nil {
 		return SearchResult{}, err
+	}
+	skipDirs := 0
+	if strings.HasPrefix(q.Cursor, dirCursorPrefix) {
+		n, err := strconv.Atoi(strings.TrimPrefix(q.Cursor, dirCursorPrefix))
+		if nil != err || 0 > n {
+			return SearchResult{}, ErrInvalidQuery
+		}
+		skipDirs = n
+		q.Cursor = ""
 	}
 	scan := &searchScan{
 		store: store,
@@ -83,6 +96,8 @@ func SearchByScan(ctx context.Context, store Store, q SearchQuery) (SearchResult
 			},
 		},
 	}
+	scan.skipDirs = skipDirs
+	scan.startDirs = skipDirs
 	scope := normalizeSearchScope(q.Path)
 	if "" == q.Cursor && "file" != q.Type {
 		if err := scan.walkDirectories(ctx, scope); err != nil {
@@ -96,6 +111,9 @@ func SearchByScan(ctx context.Context, store Store, q SearchQuery) (SearchResult
 			}
 		} else {
 			scan.result.ScanTruncated = true
+			if len(scan.result.Items) == q.Limit {
+				scan.result.NextCursor = scopePrefix(scope)
+			}
 		}
 	}
 	scan.finish()
@@ -192,6 +210,10 @@ func (s *searchScan) consider(md *Metadata) error {
 		return err
 	}
 	s.countFacets(md)
+	if !s.inFiles && "directory" == md.Type && 0 < s.skipDirs {
+		s.skipDirs--
+		return nil
+	}
 	if len(s.result.Items) <= s.query.Limit {
 		s.result.Items = append(s.result.Items, md)
 	}
@@ -206,6 +228,7 @@ func (s *searchScan) finish() {
 			s.result.NextCursor = s.result.Items[limit-1].Path
 		} else {
 			s.result.ScanTruncated = true
+			s.result.NextCursor = dirCursorPrefix + strconv.Itoa(s.startDirs+limit)
 		}
 	}
 	if s.budgetHit {

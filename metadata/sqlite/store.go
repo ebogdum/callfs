@@ -281,9 +281,10 @@ func createInode(ctx context.Context, q execQuerier, md *metadata.Metadata) erro
 	}
 
 	id, err := result.LastInsertId()
-	if err == nil {
-		md.ID = id
+	if nil != err {
+		return fmt.Errorf("failed to read created metadata id: %w", err)
 	}
+	md.ID = id
 
 	return nil
 }
@@ -777,9 +778,10 @@ func (s *SQLiteStore) CreateSingleUseLink(ctx context.Context, link *metadata.Si
 		return fmt.Errorf("failed to create single-use link: %w", err)
 	}
 	id, err := result.LastInsertId()
-	if err == nil {
-		link.ID = id
+	if nil != err {
+		return fmt.Errorf("failed to read single-use link id: %w", err)
 	}
+	link.ID = id
 	return nil
 }
 
@@ -793,34 +795,6 @@ func (s *SQLiteStore) CountActiveSingleUseLinks(ctx context.Context, owner strin
 		return 0, fmt.Errorf("failed to count active single-use links: %w", err)
 	}
 	return count, nil
-}
-
-func (s *SQLiteStore) UpdateSingleUseLink(ctx context.Context, token string, status string, usedAt *time.Time, usedByIP *string) error {
-	query := `
-		UPDATE single_use_links
-		SET status = ?, used_at = ?, used_by_ip = ?, updated_at = ?
-		WHERE token = ? AND status = 'active'`
-	result, err := s.db.ExecContext(
-		ctx,
-		query,
-		status,
-		nullStringTime(usedAt),
-		nullString(usedByIP),
-		time.Now().UTC().Format(time.RFC3339Nano),
-		singleUseTokenDigest(token),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update single-use link: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return metadata.ErrNotFound
-	}
-	return nil
 }
 
 func (s *SQLiteStore) ConsumeSingleUseLink(ctx context.Context, token string, usedByIP string, now time.Time) (*metadata.SingleUseLink, bool, error) {

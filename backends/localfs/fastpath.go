@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/ebogdum/callfs/v2/internal/diskspace"
 )
 
 const (
@@ -38,11 +39,11 @@ func (c *freeSpaceCache) ensure(rootPath string, size int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if freeSpaceTTL < time.Since(c.at) || uint64(size) > c.available {
-		var stat syscall.Statfs_t
-		if err := syscall.Statfs(rootPath, &stat); nil != err {
+		usage, err := diskspace.Of(rootPath)
+		if nil != err {
 			return fmt.Errorf("failed to check free space: %w", err)
 		}
-		c.available = uint64(stat.Bavail) * uint64(stat.Bsize)
+		c.available = usage.Free
 		c.at = time.Now()
 	}
 	if uint64(size) > c.available {

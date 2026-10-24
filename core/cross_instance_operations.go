@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/ebogdum/callfs/v2/backends/internalproxy"
-	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 // UpdateFileOnInstance updates a file on a specific instance using the internal proxy
@@ -39,16 +38,6 @@ func (e *Engine) DeleteFileOnInstance(ctx context.Context, instanceID, path stri
 		e.metadataCache.Invalidate(path)
 	}
 	return err
-}
-
-// StatFileOnInstance gets file metadata from a specific instance using the internal proxy
-func (e *Engine) StatFileOnInstance(ctx context.Context, instanceID, path string) (*metadata.Metadata, error) {
-	if e.internalProxyAdapter == nil {
-		return nil, fmt.Errorf("internal proxy not configured: no peer endpoints available")
-	}
-
-	relativePath := strings.TrimPrefix(path, "/")
-	return e.internalProxyAdapter.StatOnInstance(ctx, instanceID, relativePath)
 }
 
 func (e *Engine) DeleteTreeOnInstance(ctx context.Context, instanceID, path string) error {

@@ -32,21 +32,6 @@ var ErrInsufficientStorage = errors.New("insufficient storage space")
 
 const tempFilePrefix = ".callfs-tmp-"
 
-func ensureFreeSpace(rootPath string, size int64) error {
-	if 0 >= size {
-		return nil
-	}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(rootPath, &stat); err != nil {
-		return fmt.Errorf("failed to check free space: %w", err)
-	}
-	available := uint64(stat.Bavail) * uint64(stat.Bsize)
-	if uint64(size) > available {
-		return ErrInsufficientStorage
-	}
-	return nil
-}
-
 // LocalFSAdapter implements the backends.Storage interface for local filesystem
 type LocalFSAdapter struct {
 	rootPath string
@@ -83,7 +68,7 @@ func NewLocalFSAdapter(rootPath string, opts ...Option) (*LocalFSAdapter, error)
 	adapter.root = root
 	adapter.subRoots = newSubRootCache(root)
 	adapter.syncMode = mode
-	adapter.syncer = newDirSyncer(mode, groupCommitWindow, groupCommitMaxBatch, func(dirRel string) error {
+	adapter.syncer = newDirSyncer(mode, groupCommitWindow, func(dirRel string) error {
 		return syncDirectory(root, dirRel, mode)
 	})
 	if "" == adapter.ack {
@@ -121,10 +106,10 @@ func newTempName() (string, error) {
 	return tempFilePrefix + hex.EncodeToString(buf[:]), nil
 }
 
-func (a *LocalFSAdapter) createTemp(dirRel string) (*os.File, string, error) {
+func (a *LocalFSAdapter) createTemp(dirRel string, newName func() (string, error)) (*os.File, string, error) {
 	var lastErr error
 	for range 8 {
-		name, err := newTempName()
+		name, err := newName()
 		if nil != err {
 			return nil, "", err
 		}
@@ -240,8 +225,8 @@ func (t *tempFile) discard(a *LocalFSAdapter) {
 	a.root.Remove(t.rel)
 }
 
-func (a *LocalFSAdapter) writeTemp(ctx context.Context, dirRel string, reader io.Reader, tempErrMsg string) (*tempFile, error) {
-	file, tmpRel, err := a.createTemp(dirRel)
+func (a *LocalFSAdapter) writeTemp(ctx context.Context, dirRel string, newName func() (string, error), reader io.Reader, tempErrMsg string) (*tempFile, error) {
+	file, tmpRel, err := a.createTemp(dirRel, newName)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", tempErrMsg, err)
 	}
@@ -289,7 +274,10 @@ func (a *LocalFSAdapter) settle(tmp *tempFile, dirRel string) error {
 		}
 		return <-done
 	}
-	return a.flusher.submit(&flushJob{file: tmp.file, dirRel: dirRel, path: tmp.target, size: tmp.size})
+	if err := a.flusher.submit(&flushJob{file: tmp.file, dirRel: dirRel, path: tmp.target, size: tmp.size}); nil != err {
+		return errors.Join(err, tmp.file.Close())
+	}
+	return nil
 }
 
 func (a *LocalFSAdapter) syncDirFor(ctx context.Context, dirRel string) error {
@@ -318,7 +306,7 @@ func (a *LocalFSAdapter) Create(ctx context.Context, p string, reader io.Reader,
 		return err
 	}
 
-	tmp, err := a.writeTemp(ctx, dirRel, reader, "failed to create temp file")
+	tmp, err := a.writeTemp(ctx, dirRel, newTempName, reader, "failed to create temp file")
 	if err != nil {
 		return err
 	}
@@ -366,7 +354,7 @@ func (a *LocalFSAdapter) Update(ctx context.Context, p string, reader io.Reader,
 		return err
 	}
 
-	tmp, err := a.writeTemp(ctx, dirRel, reader, "failed to create temp file for update")
+	tmp, err := a.writeTemp(ctx, dirRel, newTempName, reader, "failed to create temp file for update")
 	if err != nil {
 		return err
 	}
@@ -392,6 +380,9 @@ func (a *LocalFSAdapter) Delete(ctx context.Context, p string) error {
 
 	a.subRoots.invalidate(rel)
 	err = a.root.Remove(rel)
+	if nil != err && !os.IsNotExist(err) && !isEscape(err) && a.purgeOverwriteLeftovers(rel) {
+		err = a.root.Remove(rel)
+	}
 	a.subRoots.invalidate(rel)
 	if err != nil {
 		if isEscape(err) {
@@ -639,7 +630,7 @@ func (a *LocalFSAdapter) ListDirectoryPage(ctx context.Context, path string, off
 
 	visible := entries[:0]
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), tempFilePrefix) {
+		if !strings.HasPrefix(entry.Name(), tempFilePrefix) && !IsOverwriteName(entry.Name()) {
 			visible = append(visible, entry)
 		}
 	}

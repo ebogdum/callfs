@@ -155,19 +155,6 @@ func (c *MetadataCache) IsAbsent(path string) bool {
 	return nil == entry.Metadata
 }
 
-func (c *MetadataCache) Set(path string, md *metadata.Metadata) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.bypass || 0 >= c.ttl {
-		return
-	}
-	c.putLocked(path, &CacheEntry{
-		Metadata:  cloneMetadata(md),
-		ExpiresAt: time.Now().Add(c.ttl),
-	})
-}
-
 func (c *MetadataCache) Generation(path string) CacheGeneration {
 	c.mu.Lock()
 	defer c.mu.Unlock()

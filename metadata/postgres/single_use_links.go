@@ -137,35 +137,6 @@ func (s *PostgresStore) CountActiveSingleUseLinks(ctx context.Context, owner str
 	return count, nil
 }
 
-// UpdateSingleUseLink updates the status and usage information of a single-use link
-func (s *PostgresStore) UpdateSingleUseLink(ctx context.Context, token string, status string, usedAt *time.Time, usedByIP *string) error {
-	var usedAtArg sql.NullTime
-	var usedByIPArg sql.NullString
-
-	if usedAt != nil {
-		usedAtArg = sql.NullTime{Time: *usedAt, Valid: true}
-	}
-	if usedByIP != nil {
-		usedByIPArg = sql.NullString{String: *usedByIP, Valid: true}
-	}
-
-	result, err := s.db.ExecContext(ctx, _SQL_UPDATE_SINGLE_USE_LINK, hashSingleUseToken(token), status, usedAtArg, usedByIPArg)
-	if err != nil {
-		return fmt.Errorf("failed to update single-use link: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	if rowsAffected == 0 {
-		return metadata.ErrNotFound
-	}
-
-	return nil
-}
-
 const (
 	singleUseLinkCleanupBatchSize    = 1000
 	singleUseLinkCleanupBatchTimeout = 10 * time.Second

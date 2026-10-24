@@ -1,26 +1,15 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/ebogdum/callfs/v2/metadata"
 )
-
-func (e *Engine) GetFileRange(ctx context.Context, path string, offset, length int64) (io.ReadCloser, *metadata.Metadata, error) {
-	md, err := e.GetMetadata(ctx, path)
-	if nil != err {
-		return nil, nil, fmt.Errorf("failed to get file metadata: %w", err)
-	}
-
-	reader, err := e.OpenFileRange(ctx, md, path, offset, length)
-	if nil != err {
-		return nil, nil, err
-	}
-	return reader, md, nil
-}
 
 func (e *Engine) OpenFileRange(ctx context.Context, md *metadata.Metadata, path string, offset, length int64) (io.ReadCloser, error) {
 	if "file" != md.Type {
@@ -29,10 +18,17 @@ func (e *Engine) OpenFileRange(ctx context.Context, md *metadata.Metadata, path 
 
 	if em := e.GetErasureManager(); md.ErasureCoded && em != nil {
 		reader, err := em.OpenRangeReader(ctx, path, offset, length)
-		if nil != err {
+		if nil == err {
+			return reader, nil
+		}
+		if nil != ctx.Err() {
 			return nil, fmt.Errorf("failed to retrieve erasure-coded file range: %w", err)
 		}
-		return reader, nil
+		data, rangeErr := em.RetrieveRange(ctx, path, offset, length)
+		if nil != rangeErr {
+			return nil, fmt.Errorf("failed to retrieve erasure-coded file range: %w", errors.Join(err, rangeErr))
+		}
+		return io.NopCloser(bytes.NewReader(data)), nil
 	}
 
 	ctx, storage := e.selectBackend(ctx, md)

@@ -66,6 +66,10 @@ func Clean(path string) (string, error) {
 	return cleaned, nil
 }
 
+func escapesRoot(rel string) bool {
+	return ".." == rel || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // SafeJoin safely joins a root path with a relative path, ensuring
 // the result stays within the root directory boundary.
 // Returns an error if the path would escape the root.
@@ -88,7 +92,11 @@ func SafeJoin(root, rel string) (string, error) {
 	// Use EvalSymlinks to resolve any symbolic links and check the real path
 	var resolved string
 	if _, statErr := os.Lstat(joined); statErr == nil {
-		resolved, err = filepath.EvalSymlinks(joined)
+		var evalErr error
+		resolved, evalErr = filepath.EvalSymlinks(joined)
+		if nil != evalErr {
+			return "", metadata.ErrForbidden
+		}
 	} else {
 		err = statErr
 	}
@@ -99,7 +107,7 @@ func SafeJoin(root, rel string) (string, error) {
 			resolvedDir, dirErr := filepath.EvalSymlinks(dir)
 			if dirErr == nil {
 				relDir, relErr := filepath.Rel(cleanRoot, resolvedDir)
-				if relErr != nil || strings.HasPrefix(relDir, "..") {
+				if relErr != nil || escapesRoot(relDir) {
 					return "", metadata.ErrForbidden
 				}
 				// Reconstruct using the resolved parent to prevent TOCTOU symlink swap
@@ -108,7 +116,7 @@ func SafeJoin(root, rel string) (string, error) {
 		}
 		// Parent is root or unresolvable — validate the joined path structurally
 		relPath, relErr := filepath.Rel(cleanRoot, joined)
-		if relErr != nil || strings.HasPrefix(relPath, "..") {
+		if relErr != nil || escapesRoot(relPath) {
 			return "", metadata.ErrForbidden
 		}
 		return joined, nil
@@ -116,31 +124,11 @@ func SafeJoin(root, rel string) (string, error) {
 
 	// Symlinks fully resolved — verify the resolved path is within root
 	relPath, relErr := filepath.Rel(cleanRoot, resolved)
-	if relErr != nil || strings.HasPrefix(relPath, "..") {
+	if relErr != nil || escapesRoot(relPath) {
 		return "", metadata.ErrForbidden
 	}
 
-	// Return the resolved path to prevent TOCTOU symlink race
 	return resolved, nil
-}
-
-func SafeLinkJoin(root, rel string) (string, error) {
-	cleanRoot := filepath.Clean(root)
-	if resolvedRoot, rootErr := filepath.EvalSymlinks(cleanRoot); nil == rootErr {
-		cleanRoot = resolvedRoot
-	}
-
-	cleanRel, err := Clean(rel)
-	if nil != err {
-		return "", err
-	}
-
-	joined := filepath.Join(cleanRoot, strings.TrimPrefix(cleanRel, "/"))
-
-	if _, err := SafeJoin(root, rel); nil != err {
-		return "", err
-	}
-	return joined, nil
 }
 
 // ValidatePath performs comprehensive path validation for security.

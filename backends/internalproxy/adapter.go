@@ -21,6 +21,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/ebogdum/callfs/v2/internal/peertls"
 	"github.com/ebogdum/callfs/v2/metadata"
 )
 
@@ -49,12 +50,14 @@ type InternalProxyAdapter struct {
 	instanceMap       map[string]string // instanceID -> endpoint
 	internalAuthToken string
 	logger            *zap.Logger
+	control           Control
+	bytes             ByteTransport
 }
 
 // NewInternalProxyAdapter creates a new internal proxy adapter
 var ErrRemoteConflict = errors.New("owning server refused the change because of a conflict")
 
-func NewInternalProxyAdapter(peerEndpoints map[string]string, authToken string, skipTLSVerify bool, logger *zap.Logger) (*InternalProxyAdapter, error) {
+func NewInternalProxyAdapter(peerEndpoints map[string]string, authToken string, skipTLSVerify bool, logger *zap.Logger, opts ...Option) (*InternalProxyAdapter, error) {
 	for instanceID, endpoint := range peerEndpoints {
 		if err := validatePeerEndpoint(endpoint); nil != err {
 			return nil, fmt.Errorf("peer %s: %w", instanceID, err)
@@ -75,12 +78,16 @@ func NewInternalProxyAdapter(peerEndpoints map[string]string, authToken string, 
 		},
 	}
 
-	return &InternalProxyAdapter{
+	adapter := &InternalProxyAdapter{
 		client:            client,
 		instanceMap:       peerEndpoints,
 		internalAuthToken: authToken,
 		logger:            logger,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(adapter)
+	}
+	return adapter, nil
 }
 
 var (
@@ -117,6 +124,7 @@ func sharedTransport(skipTLSVerify bool) *http.Transport {
 	}
 	secureTransportOnce.Do(func() {
 		secureTransport = newTunedTransport()
+		secureTransport.TLSClientConfig = peertls.ClientConfig()
 	})
 	return secureTransport
 }
@@ -200,6 +208,9 @@ func (a *InternalProxyAdapter) Open(ctx context.Context, path string) (io.ReadCl
 
 // OpenFromInstance opens a file from a specific CallFS instance
 func (a *InternalProxyAdapter) OpenFromInstance(ctx context.Context, instanceID, path string) (io.ReadCloser, error) {
+	if nil != a.bytes {
+		return a.bytes.Open(ctx, instanceID, path)
+	}
 	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
 		return nil, fmt.Errorf("unknown instance ID: %s", instanceID)
@@ -248,6 +259,9 @@ func (a *InternalProxyAdapter) Create(ctx context.Context, path string, reader i
 }
 
 func (a *InternalProxyAdapter) CreateOnInstance(ctx context.Context, instanceID, path string, reader io.Reader, size int64, ifMatch string, ifNoneMatch bool) (string, error) {
+	if nil != a.bytes {
+		return a.bytes.Create(ctx, instanceID, path, reader, size, ifMatch, ifNoneMatch)
+	}
 	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
 		return "", fmt.Errorf("unknown instance ID: %s", instanceID)
@@ -298,6 +312,12 @@ func (a *InternalProxyAdapter) OpenRange(ctx context.Context, path string, offse
 	instanceID := a.getInstanceIDFromContext(ctx)
 	if instanceID == "" {
 		return nil, fmt.Errorf("internal proxy requires instance ID in context")
+	}
+	if nil != a.bytes {
+		if 0 == length {
+			return io.NopCloser(strings.NewReader("")), nil
+		}
+		return a.bytes.OpenRange(ctx, instanceID, path, offset, length)
 	}
 	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
@@ -354,6 +374,9 @@ func (a *InternalProxyAdapter) Update(ctx context.Context, path string, reader i
 
 // UpdateOnInstance updates a file on a specific CallFS instance
 func (a *InternalProxyAdapter) UpdateOnInstance(ctx context.Context, instanceID, path string, reader io.Reader, size int64, ifMatch string, ifNoneMatch bool) (string, error) {
+	if nil != a.bytes {
+		return a.bytes.Update(ctx, instanceID, path, reader, size, ifMatch, ifNoneMatch)
+	}
 	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
 		return "", fmt.Errorf("unknown instance ID: %s", instanceID)
@@ -426,6 +449,9 @@ func (a *InternalProxyAdapter) Move(ctx context.Context, oldPath, newPath string
 // CallFS instance. The body is a JSON move/rename payload; the target instance
 // performs the operation against its own backend and the shared metadata store.
 func (a *InternalProxyAdapter) MoveOnInstance(ctx context.Context, instanceID, srcPath string, body []byte) error {
+	if nil != a.control {
+		return wrapMoveError(a.control.Move(ctx, instanceID, srcPath, body))
+	}
 	ctx, cancel := context.WithTimeout(ctx, proxyRequestTimeout)
 	defer cancel()
 
@@ -498,6 +524,9 @@ func (a *InternalProxyAdapter) DeleteTreeOnInstance(ctx context.Context, instanc
 }
 
 func (a *InternalProxyAdapter) deleteOnInstance(ctx context.Context, instanceID, path string, recursive bool) error {
+	if nil != a.control {
+		return a.control.Delete(ctx, instanceID, path, recursive)
+	}
 	ctx, cancel := context.WithTimeout(ctx, proxyRequestTimeout)
 	defer cancel()
 
@@ -554,6 +583,9 @@ func (a *InternalProxyAdapter) Stat(ctx context.Context, path string) (*metadata
 
 // StatOnInstance gets file metadata from a specific CallFS instance
 func (a *InternalProxyAdapter) StatOnInstance(ctx context.Context, instanceID, path string) (*metadata.Metadata, error) {
+	if nil != a.control {
+		return a.control.Stat(ctx, instanceID, path)
+	}
 	ctx, cancel := context.WithTimeout(ctx, proxyRequestTimeout)
 	defer cancel()
 
@@ -603,7 +635,7 @@ func (a *InternalProxyAdapter) StatOnInstance(ctx context.Context, instanceID, p
 	if "" == mode {
 		mode = "0644"
 		if "directory" == typeHeader {
-			mode = "0755"
+			mode = "0777"
 		}
 	}
 	cleanPath := path
@@ -640,6 +672,9 @@ func (a *InternalProxyAdapter) ListDirectory(ctx context.Context, path string) (
 
 // ListDirectoryOnInstance lists directory contents from a specific CallFS instance
 func (a *InternalProxyAdapter) ListDirectoryOnInstance(ctx context.Context, instanceID, path string) ([]*metadata.Metadata, error) {
+	if nil != a.control {
+		return a.control.List(ctx, instanceID, path)
+	}
 	ctx, cancel := context.WithTimeout(ctx, proxyRequestTimeout)
 	defer cancel()
 
@@ -737,7 +772,7 @@ func listingEntryMetadata(path string, item proxiedFileInfo) *metadata.Metadata 
 	if mode == "" {
 		mode = "0644"
 		if item.Type == "directory" {
-			mode = "0755"
+			mode = "0777"
 		}
 	}
 
@@ -765,6 +800,9 @@ func (a *InternalProxyAdapter) CreateDirectory(ctx context.Context, path string)
 }
 
 func (a *InternalProxyAdapter) CreateDirectoryOnInstance(ctx context.Context, instanceID, path string) error {
+	if nil != a.control {
+		return a.control.Mkdir(ctx, instanceID, path)
+	}
 	endpoint, exists := a.getEndpoint(instanceID)
 	if !exists {
 		return fmt.Errorf("unknown instance ID: %s", instanceID)

@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"sort"
 
 	"go.uber.org/zap"
@@ -49,14 +48,4 @@ func (e *Engine) lockPaths(ctx context.Context, paths ...string) (func(), error)
 func (e *Engine) atomicNamespace() bool {
 	atomic, ok := e.metadataStore.(metadata.AtomicNamespace)
 	return !e.strict && ok && atomic.AtomicNamespace()
-}
-
-func (e *Engine) lockCreateOnly(ctx context.Context, path string, md *metadata.Metadata) (func(), error) {
-	if e.atomicNamespace() && "localfs" == md.BackendType {
-		if err := e.ensureParentDirectories(ctx, path, md.BackendType, md.Owner); nil != err {
-			return nil, fmt.Errorf("failed to ensure parent directories: %w", err)
-		}
-		return func() {}, nil
-	}
-	return e.lockCreateTarget(ctx, path, md)
 }

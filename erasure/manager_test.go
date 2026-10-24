@@ -46,7 +46,7 @@ func TestIdenticalFilesDoNotShareShards(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &memErasureStore{infos: map[string]*metadata.ErasureFileInfo{}}
-	cfg := &config.ErasureConfig{DataShards: 4, ParityShards: 2, ShardBackend: "localfs"}
+	cfg := &config.ErasureConfig{DataShards: 4, ParityShards: 2, ShardBackend: "localfs", ShardPath: ".callfs/shards"}
 	manager := NewManager(store, backend, cfg, "local", nil, "", zap.NewNop())
 
 	data := []byte("identical content stored under two paths")

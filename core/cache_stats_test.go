@@ -12,9 +12,9 @@ func TestCacheStatsCountHitsMissesAndEvictions(t *testing.T) {
 	cache := NewMetadataCache(time.Minute, 2)
 	defer cache.Close()
 
-	cache.Set("/a", &metadata.Metadata{Path: "/a"})
-	cache.Set("/b", &metadata.Metadata{Path: "/b"})
-	cache.Set("/c", &metadata.Metadata{Path: "/c"})
+	cache.SetIfGeneration("/a", &metadata.Metadata{Path: "/a"}, cache.Generation("/a"))
+	cache.SetIfGeneration("/b", &metadata.Metadata{Path: "/b"}, cache.Generation("/b"))
+	cache.SetIfGeneration("/c", &metadata.Metadata{Path: "/c"}, cache.Generation("/c"))
 
 	if _, ok := cache.Get("/a"); ok {
 		t.Fatal("expected /a to be evicted")
@@ -39,9 +39,9 @@ func TestCacheInvalidatePrefixReturnsRemovedCount(t *testing.T) {
 	cache := NewMetadataCache(time.Minute, 10)
 	defer cache.Close()
 
-	cache.Set("/dir/a", &metadata.Metadata{Path: "/dir/a"})
-	cache.Set("/dir/sub/b", &metadata.Metadata{Path: "/dir/sub/b"})
-	cache.Set("/other", &metadata.Metadata{Path: "/other"})
+	cache.SetIfGeneration("/dir/a", &metadata.Metadata{Path: "/dir/a"}, cache.Generation("/dir/a"))
+	cache.SetIfGeneration("/dir/sub/b", &metadata.Metadata{Path: "/dir/sub/b"}, cache.Generation("/dir/sub/b"))
+	cache.SetIfGeneration("/other", &metadata.Metadata{Path: "/other"}, cache.Generation("/other"))
 
 	if removed := cache.InvalidatePrefix("/dir"); 2 != removed {
 		t.Fatalf("got %d removed, want 2", removed)
@@ -55,7 +55,7 @@ func TestCacheClearEmptiesAndReportsCount(t *testing.T) {
 	cache := NewMetadataCache(time.Minute, 10)
 	defer cache.Close()
 
-	cache.Set("/a", &metadata.Metadata{Path: "/a"})
+	cache.SetIfGeneration("/a", &metadata.Metadata{Path: "/a"}, cache.Generation("/a"))
 	cache.SetAbsent("/b")
 
 	if removed := cache.Clear(); 2 != removed {
@@ -76,7 +76,7 @@ func TestCacheSetTTLIsSafeUnderConcurrentUse(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 200 {
-				engine.metadataCache.Set("/a", &metadata.Metadata{Path: "/a"})
+				engine.metadataCache.SetIfGeneration("/a", &metadata.Metadata{Path: "/a"}, engine.metadataCache.Generation("/a"))
 				engine.metadataCache.Get("/a")
 			}
 		}()

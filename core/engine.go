@@ -9,15 +9,18 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/v2/backends"
 	"github.com/ebogdum/callfs/v2/backends/internalproxy"
+	"github.com/ebogdum/callfs/v2/cluster"
 	"github.com/ebogdum/callfs/v2/erasure"
 	"github.com/ebogdum/callfs/v2/locks"
 	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/metrics"
 )
 
 const (
@@ -45,9 +48,17 @@ type Engine struct {
 	erasureManager       *erasure.Manager
 	metadataCache        *MetadataCache
 	replicaQueue         chan replicaJob
+	taskQueue            cluster.Queue
+	stopTasks            func()
 	replicaCtx           context.Context
 	replicaCancel        context.CancelFunc
+	replicationFailures  atomic.Pointer[func(path, message string)]
+	replicationOutcomes  atomic.Pointer[func(outcome string)]
 	strict               bool
+	asideWriter          asideWriter
+	oldCopyDrops         sync.Map
+	trueOverwrite        bool
+	tmpSaveMaxSize       int64
 	logger               *zap.Logger
 }
 
@@ -83,6 +94,7 @@ func NewEngine(
 		replicaQueue:         make(chan replicaJob, replicaQueueSize),
 		replicaCtx:           replicaCtx,
 		replicaCancel:        replicaCancel,
+		asideWriter:          resolveAsideWriter(localFSBackend),
 		logger:               logger,
 	}
 	if localState, ok := metadataStore.(metadata.LocalState); ok && localState.LocalState() {
@@ -94,8 +106,28 @@ func NewEngine(
 	return engine
 }
 
+func (e *Engine) SetReplicationFailureRecorder(record func(path, message string)) {
+	e.replicationFailures.Store(&record)
+}
+
+func (e *Engine) SetReplicationOutcomeRecorder(record func(outcome string)) {
+	e.replicationOutcomes.Store(&record)
+}
+
+func (e *Engine) countReplication(outcome string) {
+	metrics.ReplicationTotal.WithLabelValues(outcome).Inc()
+	if record := e.replicationOutcomes.Load(); nil != record {
+		(*record)(outcome)
+	}
+}
+
 func (e *Engine) SetStrict(strict bool) {
 	e.strict = strict
+}
+
+func (e *Engine) SetTrueOverwrite(enabled bool, tmpSaveMaxSize int64) {
+	e.trueOverwrite = enabled
+	e.tmpSaveMaxSize = tmpSaveMaxSize
 }
 
 func (e *Engine) SetMetadataCacheTTL(ttl time.Duration) {
@@ -132,6 +164,9 @@ func (e *Engine) GetErasureManager() *erasure.Manager {
 // Close shuts down the engine and releases background resources.
 func (e *Engine) Close() {
 	e.replicaCancel()
+	if nil != e.stopTasks {
+		e.stopTasks()
+	}
 	e.metadataCache.Close()
 }
 
@@ -161,6 +196,9 @@ func (e *Engine) RemovePeerEndpoint(instanceID string) {
 	e.peerMu.Lock()
 	defer e.peerMu.Unlock()
 	delete(e.peerEndpoints, instanceID)
+	if em := e.GetErasureManager(); nil != em {
+		em.RemovePeer(instanceID)
+	}
 }
 
 var (
