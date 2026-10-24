@@ -4,15 +4,26 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/ebogdum/callfs/auth"
+	"github.com/ebogdum/callfs/backends"
+	"github.com/ebogdum/callfs/backends/internalproxy"
 	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/metrics"
+)
+
+const (
+	maxSubtreeMoveWorkers = 8
+	maxSubtreeMoveEntries = 10000
 )
 
 // MoveOptions controls a move operation. Empty Backend/Instance mean "keep the
@@ -22,6 +33,16 @@ type MoveOptions struct {
 	Instance      string // target instance ID; "" keeps source's
 	Overwrite     bool   // replace an existing destination instead of failing
 	CreateParents bool   // create missing destination parent directories
+
+	extraOps   []metadata.Op
+	extraUndo  []metadata.Op
+	extraLocks []string
+}
+
+type moveCommit struct {
+	parents *parentPlan
+	extra   []metadata.Op
+	undo    []metadata.Op
 }
 
 // ErrInvalidRename indicates a malformed rename/move request (bad name, moving a
@@ -35,6 +56,12 @@ func (e *ErrInvalidRename) Error() string { return e.msg }
 type ErrUnsupportedMove struct{ msg string }
 
 func (e *ErrUnsupportedMove) Error() string { return e.msg }
+
+type ErrProxyFailed struct{ err error }
+
+func (e *ErrProxyFailed) Error() string { return "cross-instance proxy failed: " + e.err.Error() }
+
+func (e *ErrProxyFailed) Unwrap() error { return e.err }
 
 func relOf(p string) string { return strings.TrimPrefix(p, "/") }
 
@@ -68,7 +95,16 @@ func (e *Engine) Move(ctx context.Context, srcPath, dstPath string, opts MoveOpt
 	return e.doMove(ctx, srcPath, dstPath, opts)
 }
 
-func (e *Engine) doMove(ctx context.Context, srcPath, dstPath string, opts MoveOptions) error {
+func (e *Engine) doMove(ctx context.Context, srcPath, dstPath string, opts MoveOptions) (err error) {
+	start := time.Now()
+	var movedBackend string
+	defer func() {
+		if nil == err && "" != movedBackend {
+			metrics.FileOperationsTotal.WithLabelValues("rename", movedBackend).Inc()
+			metrics.BackendOpDuration.WithLabelValues(movedBackend, "rename").Observe(time.Since(start).Seconds())
+		}
+	}()
+
 	srcPath = normalizeMovePath(srcPath)
 	dstPath = normalizeMovePath(dstPath)
 
@@ -84,28 +120,20 @@ func (e *Engine) doMove(ctx context.Context, srcPath, dstPath string, opts MoveO
 		return &ErrInvalidRename{msg: "cannot move a path into itself"}
 	}
 
-	// Lock both endpoints in a stable order to avoid deadlock.
-	first, second := srcPath, dstPath
-	if second < first {
-		first, second = second, first
-	}
-	rel1, err := e.acquireMoveLock(ctx, first)
+	release, err := e.lockPaths(ctx, append([]string{srcPath, dstPath}, opts.extraLocks...)...)
 	if err != nil {
 		return err
 	}
-	defer rel1()
-	if second != first {
-		rel2, err := e.acquireMoveLock(ctx, second)
-		if err != nil {
-			return err
-		}
-		defer rel2()
-	}
+	defer release()
+
+	mc := &moveCommit{extra: opts.extraOps, undo: opts.extraUndo}
+	defer func() { e.discardParentPlan(ctx, mc.parents) }()
 
 	srcMd, err := e.GetMetadataUncached(ctx, srcPath)
 	if err != nil {
 		return err
 	}
+	movedBackend = srcMd.BackendType
 
 	currentInstance := e.currentInstanceID
 	srcInstance := ""
@@ -128,126 +156,359 @@ func (e *Engine) doMove(ctx context.Context, srcPath, dstPath string, opts MoveO
 		return &ErrInvalidRename{msg: fmt.Sprintf("unknown instance %q", targetInstance)}
 	}
 
-	if !samePath {
-		if err := e.ensureMoveDestinationParent(ctx, dstPath, srcMd.Owner, opts.CreateParents); err != nil {
-			return err
+	isRelocation := targetBackend != srcMd.BackendType || targetInstance != srcInstance
+	localRelocation := isRelocation && ("" == targetInstance || targetInstance == currentInstance)
+	if localRelocation {
+		if "directory" == srcMd.Type {
+			return &ErrUnsupportedMove{msg: "moving a directory across backends or instances is not supported; move its files individually or keep it on the same backend/instance"}
 		}
-		if err := e.handleExistingDestination(ctx, srcMd, dstPath, opts.Overwrite); err != nil {
-			return err
+		if "erasure" == targetBackend || "erasure" == srcMd.BackendType {
+			return &ErrUnsupportedMove{msg: "moving a file to or from the erasure backend (re-tiering) is not supported in this release"}
 		}
 	}
 
-	isRelocation := targetBackend != srcMd.BackendType || targetInstance != srcInstance
+	var replaced *metadata.Metadata
+	if !samePath {
+		parents, err := e.ensureMoveDestinationParent(ctx, dstPath, srcMd.Owner, opts.CreateParents)
+		if err != nil {
+			return err
+		}
+		mc.parents = parents
+		dstMd, err := e.handleExistingDestination(ctx, srcMd, dstPath, opts.Overwrite)
+		if err != nil {
+			return err
+		}
+		replaced = dstMd
+	}
+
+	if "directory" == srcMd.Type {
+		if err := e.ensureSubtreeOwnedBy(ctx, srcMd); err != nil {
+			return err
+		}
+	}
 
 	if !isRelocation {
 		// Pure rename / folder move: same backend and instance. Execute on the
 		// node that owns the bytes.
 		if srcInstance != "" && srcInstance != currentInstance {
-			return e.proxyMove(ctx, srcInstance, srcPath, dstPath, MoveOptions{})
+			return e.moveThenCommit(ctx, mc, func() error {
+				return e.proxyMove(ctx, srcInstance, srcPath, dstPath, MoveOptions{Overwrite: opts.Overwrite}, srcMd.Type == "directory")
+			})
 		}
-		return e.moveWithinBackend(ctx, srcMd, dstPath)
+		return e.moveWithinBackend(ctx, srcMd, dstPath, replaced, mc)
 	}
 
 	// Relocation: execute on the target instance (it ends up owning the bytes).
 	if targetInstance != "" && targetInstance != currentInstance {
-		return e.proxyMove(ctx, targetInstance, srcPath, dstPath, opts)
+		return e.moveThenCommit(ctx, mc, func() error {
+			return e.proxyMove(ctx, targetInstance, srcPath, dstPath, opts, srcMd.Type == "directory")
+		})
 	}
 
-	if srcMd.Type == "directory" {
-		return &ErrUnsupportedMove{msg: "moving a directory across backends or instances is not supported; move its files individually or keep it on the same backend/instance"}
-	}
-	if targetBackend == "erasure" || srcMd.BackendType == "erasure" {
-		return &ErrUnsupportedMove{msg: "moving a file to or from the erasure backend (re-tiering) is not supported in this release"}
-	}
-	return e.relocateFile(ctx, srcMd, dstPath, targetBackend, srcInstance)
+	return e.moveThenCommit(ctx, mc, func() error {
+		return e.relocateFile(ctx, srcMd, dstPath, targetBackend, srcInstance, replaced)
+	})
 }
+
+func (e *Engine) moveThenCommit(ctx context.Context, mc *moveCommit, move func() error) error {
+	if err := e.applyWithParents(ctx, mc.parents, nil); nil != err {
+		return fmt.Errorf("failed to create destination parents: %w", err)
+	}
+	if err := move(); nil != err {
+		return err
+	}
+	if err := e.applyMetadataBatch(ctx, mc.extra); nil != err {
+		return &moveExtrasError{err: err}
+	}
+	return nil
+}
+
+type moveExtrasError struct{ err error }
+
+func (e *moveExtrasError) Error() string {
+	return "move completed but follow-up metadata failed: " + e.err.Error()
+}
+
+func (e *moveExtrasError) Unwrap() error { return e.err }
 
 // moveWithinBackend performs a rename / folder move where the backend and
 // instance do not change. Bytes are moved in place by the backend; metadata is
 // re-keyed afterwards.
-func (e *Engine) moveWithinBackend(ctx context.Context, srcMd *metadata.Metadata, dstPath string) error {
+func (e *Engine) moveWithinBackend(ctx context.Context, srcMd *metadata.Metadata, dstPath string, replaced *metadata.Metadata, mc *moveCommit) error {
 	srcPath := srcMd.Path
 
-	if srcMd.ErasureCoded || srcMd.BackendType == "erasure" {
-		if srcMd.Type == "directory" {
-			if err := e.moveErasureSubtreeMetadata(ctx, srcPath, dstPath); err != nil {
-				return err
-			}
-		} else if em := e.GetErasureManager(); em != nil {
-			if err := em.RenameFile(ctx, srcPath, dstPath); err != nil {
-				return fmt.Errorf("failed to rename erasure-coded file: %w", err)
-			}
-		}
-		if err := e.metadataStore.Rename(ctx, srcPath, dstPath); err != nil {
+	if isErasureMetadata(srcMd) {
+		if err := e.moveErasureResource(ctx, srcMd, dstPath, replaced, mc); err != nil {
 			return err
 		}
-		e.invalidateMovePaths(srcPath, dstPath)
+		e.invalidateMovePaths(srcPath, dstPath, srcMd.Type == "directory")
 		e.logger.Info("Erasure-coded resource renamed", zap.String("src", srcPath), zap.String("dst", dstPath))
 		return nil
 	}
 
 	if srcMd.Type == "directory" {
-		if err := e.moveDirectoryBytes(ctx, srcMd, dstPath); err != nil {
+		rollback, err := e.moveDirectoryBytes(ctx, srcMd, dstPath)
+		if err != nil {
 			return err
 		}
-		if err := e.metadataStore.Rename(ctx, srcPath, dstPath); err != nil {
-			// Roll back the byte move so backend and metadata stay consistent.
-			if rbErr := e.moveDirectoryBytesBack(ctx, srcMd, dstPath); rbErr != nil {
+		if err := e.rekeyMetadata(ctx, srcPath, dstPath, replaced, mc); err != nil {
+			if rbErr := rollback(); rbErr != nil {
 				e.logger.Error("Failed to roll back directory byte move after metadata failure",
 					zap.String("src", srcPath), zap.String("dst", dstPath), zap.Error(rbErr))
 			}
 			return err
 		}
-		e.invalidateMovePaths(srcPath, dstPath)
+		e.invalidateMovePaths(srcPath, dstPath, srcMd.Type == "directory")
 		e.logger.Info("Directory moved", zap.String("src", srcPath), zap.String("dst", dstPath))
 		return nil
 	}
 
 	storage := e.selectBackendByType(srcMd.BackendType)
 	if err := storage.Move(ctx, relOf(srcPath), relOf(dstPath)); err != nil {
+		metrics.BackendOpFailuresTotal.WithLabelValues(srcMd.BackendType, "rename").Inc()
 		return fmt.Errorf("failed to move file bytes: %w", err)
 	}
-	if err := e.metadataStore.Rename(ctx, srcPath, dstPath); err != nil {
+	if err := e.rekeyMetadata(ctx, srcPath, dstPath, replaced, mc); err != nil {
 		if rbErr := storage.Move(ctx, relOf(dstPath), relOf(srcPath)); rbErr != nil {
 			e.logger.Error("Failed to roll back file byte move after metadata failure",
 				zap.String("src", srcPath), zap.String("dst", dstPath), zap.Error(rbErr))
 		}
 		return err
 	}
-	e.invalidateMovePaths(srcPath, dstPath)
+	e.invalidateMovePaths(srcPath, dstPath, srcMd.Type == "directory")
+	if isErasureMetadata(replaced) {
+		e.discardErasureReplacement(ctx, dstPath)
+	}
 	e.logger.Info("File moved", zap.String("src", srcPath), zap.String("dst", dstPath))
 	return nil
 }
 
-// moveDirectoryBytes moves the backend bytes of a directory subtree. localfs
-// moves the whole tree atomically; object stores move each descendant file.
-func (e *Engine) moveDirectoryBytes(ctx context.Context, srcMd *metadata.Metadata, dstPath string) error {
-	srcPath := srcMd.Path
-	if srcMd.BackendType == "localfs" {
-		return e.localFSBackend.Move(ctx, relOf(srcPath), relOf(dstPath))
+func (e *Engine) rekeyMetadata(ctx context.Context, srcPath, dstPath string, replaced *metadata.Metadata, mc *moveCommit) error {
+	ops := make([]metadata.Op, 0, 2)
+	if nil != replaced {
+		ops = append(ops, metadata.Op{Kind: metadata.OpDelete, Path: dstPath})
 	}
-	storage := e.selectBackendByType(srcMd.BackendType)
-	files, err := e.listDescendantFiles(ctx, srcPath)
-	if err != nil {
+	ops = append(ops, metadata.Op{Kind: metadata.OpRename, Path: srcPath, NewPath: dstPath})
+	if nil == mc {
+		return e.applyMetadataBatch(ctx, ops)
+	}
+	ops = append(ops, mc.extra...)
+	return e.applyWithParents(ctx, mc.parents, ops)
+}
+
+func isErasureMetadata(md *metadata.Metadata) bool {
+	return nil != md && (md.ErasureCoded || "erasure" == md.BackendType)
+}
+
+func (e *Engine) unrekeyMetadata(ctx context.Context, srcPath, dstPath string, replaced *metadata.Metadata, mc *moveCommit) error {
+	ops := []metadata.Op{{Kind: metadata.OpRename, Path: dstPath, NewPath: srcPath}}
+	if nil != replaced {
+		ops = append(ops, metadata.Op{Kind: metadata.OpCreate, Metadata: replaced})
+	}
+	if nil != mc {
+		ops = append(ops, mc.undo...)
+	}
+	return e.applyMetadataBatch(ctx, ops)
+}
+
+func (e *Engine) moveErasureResource(ctx context.Context, srcMd *metadata.Metadata, dstPath string, replaced *metadata.Metadata, mc *moveCommit) error {
+	srcPath := srcMd.Path
+	if srcMd.Type == "directory" {
+		restore, err := e.moveErasureSubtreeMetadata(ctx, srcPath, dstPath)
+		if err != nil {
+			return err
+		}
+		if err := e.rekeyMetadata(ctx, srcPath, dstPath, replaced, mc); err != nil {
+			if rbErr := restore(); nil != rbErr {
+				e.logger.Error("Failed to roll back erasure metadata re-key after metadata failure",
+					zap.String("src", srcPath), zap.String("dst", dstPath), zap.Error(rbErr))
+			}
+			return err
+		}
+		return nil
+	}
+
+	em := e.GetErasureManager()
+	if nil == em {
+		return fmt.Errorf("cannot move %s: erasure manager not configured", srcPath)
+	}
+	if err := e.rekeyMetadata(ctx, srcPath, dstPath, replaced, mc); err != nil {
 		return err
 	}
-	for _, f := range files {
-		newPath := dstPath + f.Path[len(srcPath):]
-		if err := storage.Move(ctx, relOf(f.Path), relOf(newPath)); err != nil {
-			return fmt.Errorf("failed to move %s: %w", f.Path, err)
+	replacedInfo, err := em.RenameFileOverwrite(ctx, srcPath, dstPath)
+	if err != nil {
+		if rbErr := e.unrekeyMetadata(context.WithoutCancel(ctx), srcPath, dstPath, replaced, mc); nil != rbErr {
+			e.logger.Error("Failed to roll back metadata re-key after erasure rename failure",
+				zap.String("src", srcPath), zap.String("dst", dstPath), zap.Error(rbErr))
+		}
+		return fmt.Errorf("failed to rename erasure-coded file: %w", err)
+	}
+	if nil != replacedInfo {
+		if err := em.DeleteShards(ctx, replacedInfo); nil != err {
+			e.logger.Warn("Failed to delete replaced erasure shards after move",
+				zap.String("path", dstPath), zap.Error(err))
+		}
+	}
+	if nil != replaced && !isErasureMetadata(replaced) {
+		e.discardReplacedBytes(ctx, replaced, dstPath)
+	}
+	return nil
+}
+
+func (e *Engine) discardErasureReplacement(ctx context.Context, dstPath string) {
+	em := e.GetErasureManager()
+	if nil == em {
+		e.logger.Error("Cannot delete replaced erasure shards: erasure manager not configured", zap.String("path", dstPath))
+		return
+	}
+	if err := em.DeleteFile(ctx, dstPath); nil != err {
+		e.logger.Warn("Failed to delete replaced erasure shards after move",
+			zap.String("path", dstPath), zap.Error(err))
+	}
+}
+
+func (e *Engine) discardReplacedBytes(ctx context.Context, replaced *metadata.Metadata, dstPath string) {
+	if err := e.selectBackendByType(replaced.BackendType).Delete(ctx, relOf(dstPath)); nil != err {
+		e.logger.Warn("Failed to delete replaced destination bytes",
+			zap.String("path", dstPath), zap.String("backend", replaced.BackendType), zap.Error(err))
+	}
+}
+
+type subtreeMove struct {
+	from string
+	to   string
+}
+
+func (e *Engine) moveDirectoryBytes(ctx context.Context, srcMd *metadata.Metadata, dstPath string) (func() error, error) {
+	srcPath := srcMd.Path
+	if srcMd.BackendType == "localfs" {
+		if err := e.localFSBackend.Move(ctx, relOf(srcPath), relOf(dstPath)); err != nil {
+			return nil, err
+		}
+		return func() error {
+			return e.localFSBackend.Move(context.WithoutCancel(ctx), relOf(dstPath), relOf(srcPath))
+		}, nil
+	}
+	storage := e.selectBackendByType(srcMd.BackendType)
+	items, err := e.listSubtreeWithinLimit(ctx, srcPath)
+	if err != nil {
+		return nil, err
+	}
+	moves := make([]subtreeMove, 0, len(items))
+	markers := []subtreeMove{{from: srcPath, to: dstPath}}
+	for _, it := range items {
+		m := subtreeMove{from: it.Path, to: dstPath + it.Path[len(srcPath):]}
+		if "file" == it.Type {
+			moves = append(moves, m)
+		} else if "directory" == it.Type {
+			markers = append(markers, m)
+		}
+	}
+	moved, err := e.runSubtreeMoves(ctx, storage, moves)
+	if nil == err {
+		err = moveDirectoryMarkers(ctx, storage, markers)
+	}
+	if nil != err {
+		restoreCtx := context.WithoutCancel(ctx)
+		if rbErr := errors.Join(
+			e.reverseSubtreeMoves(restoreCtx, storage, moved),
+			moveDirectoryMarkers(restoreCtx, storage, swapSubtreeMoves(markers)),
+		); nil != rbErr {
+			e.logger.Error("Failed to roll back partial directory byte move",
+				zap.String("src", srcPath), zap.String("dst", dstPath), zap.Error(rbErr))
+		}
+		return nil, err
+	}
+	return func() error {
+		restoreCtx := context.WithoutCancel(ctx)
+		return errors.Join(
+			e.reverseSubtreeMoves(restoreCtx, storage, moves),
+			moveDirectoryMarkers(restoreCtx, storage, swapSubtreeMoves(markers)),
+		)
+	}, nil
+}
+
+func moveDirectoryMarkers(ctx context.Context, storage backends.Storage, markers []subtreeMove) error {
+	for _, m := range markers {
+		if err := storage.CreateDirectory(ctx, relOf(m.to)); nil != err {
+			return fmt.Errorf("failed to create directory marker %s: %w", m.to, err)
+		}
+		if err := storage.Delete(ctx, relOf(m.from)+"/"); nil != err {
+			return fmt.Errorf("failed to delete directory marker %s: %w", m.from, err)
 		}
 	}
 	return nil
 }
 
-func (e *Engine) moveDirectoryBytesBack(ctx context.Context, srcMd *metadata.Metadata, dstPath string) error {
-	reverse := &metadata.Metadata{Path: dstPath, Type: "directory", BackendType: srcMd.BackendType}
-	return e.moveDirectoryBytes(ctx, reverse, srcMd.Path)
+func swapSubtreeMoves(moves []subtreeMove) []subtreeMove {
+	swapped := make([]subtreeMove, 0, len(moves))
+	for _, m := range moves {
+		swapped = append(swapped, subtreeMove{from: m.to, to: m.from})
+	}
+	return swapped
 }
 
-// listDescendantFiles returns all file inodes under dirPath (recursively).
-func (e *Engine) listDescendantFiles(ctx context.Context, dirPath string) ([]*metadata.Metadata, error) {
+func (e *Engine) runSubtreeMoves(ctx context.Context, storage backends.Storage, moves []subtreeMove) ([]subtreeMove, error) {
+	moveCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	sem := make(chan struct{}, maxSubtreeMoveWorkers)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+	moved := make([]subtreeMove, 0, len(moves))
+	for _, m := range moves {
+		if moveCtx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(m subtreeMove) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			err := storage.Move(moveCtx, relOf(m.from), relOf(m.to))
+			mu.Lock()
+			defer mu.Unlock()
+			if nil != err {
+				if nil == firstErr {
+					firstErr = fmt.Errorf("failed to move %s: %w", m.from, err)
+					cancel()
+				}
+				return
+			}
+			moved = append(moved, m)
+		}(m)
+	}
+	wg.Wait()
+	if nil != firstErr {
+		return moved, firstErr
+	}
+	return moved, ctx.Err()
+}
+
+func (e *Engine) reverseSubtreeMoves(ctx context.Context, storage backends.Storage, moves []subtreeMove) error {
+	restoreCtx := context.WithoutCancel(ctx)
+	var firstErr error
+	for _, m := range moves {
+		if err := storage.Move(restoreCtx, relOf(m.to), relOf(m.from)); nil != err && nil == firstErr {
+			firstErr = fmt.Errorf("failed to restore %s: %w", m.from, err)
+		}
+	}
+	return firstErr
+}
+
+func (e *Engine) listSubtreeWithinLimit(ctx context.Context, dirPath string) ([]*metadata.Metadata, error) {
 	items, err := e.ListDirectoryRecursive(ctx, dirPath, -1)
+	if err != nil {
+		return nil, err
+	}
+	if maxSubtreeMoveEntries < len(items) {
+		return nil, &ErrUnsupportedMove{msg: fmt.Sprintf("directory %s has more than %d entries; move it in smaller parts", dirPath, maxSubtreeMoveEntries)}
+	}
+	return items, nil
+}
+
+func (e *Engine) listDescendantFiles(ctx context.Context, dirPath string) ([]*metadata.Metadata, error) {
+	items, err := e.listSubtreeWithinLimit(ctx, dirPath)
 	if err != nil {
 		return nil, err
 	}
@@ -260,34 +521,70 @@ func (e *Engine) listDescendantFiles(ctx context.Context, dirPath string) ([]*me
 	return files, nil
 }
 
-// moveErasureSubtreeMetadata re-keys the erasure info of every erasure-coded
-// file under a directory being renamed.
-func (e *Engine) moveErasureSubtreeMetadata(ctx context.Context, srcDir, dstDir string) error {
-	em := e.GetErasureManager()
-	if em == nil {
-		return nil
-	}
-	files, err := e.listDescendantFiles(ctx, srcDir)
+func (e *Engine) ensureSubtreeOwnedBy(ctx context.Context, dirMd *metadata.Metadata) error {
+	items, err := e.listSubtreeWithinLimit(ctx, dirMd.Path)
 	if err != nil {
 		return err
 	}
-	for _, f := range files {
-		if !f.ErasureCoded {
-			continue
-		}
-		newPath := dstDir + f.Path[len(srcDir):]
-		if err := em.RenameFile(ctx, f.Path, newPath); err != nil {
-			return fmt.Errorf("failed to rename erasure file %s: %w", f.Path, err)
+	for _, it := range items {
+		if dirMd.Owner != it.Owner {
+			return fmt.Errorf("cannot move %s: %s owned by another user: %w", dirMd.Path, it.Path, auth.ErrPermissionDenied)
 		}
 	}
 	return nil
+}
+
+// moveErasureSubtreeMetadata re-keys the erasure info of every erasure-coded
+// file under a directory being renamed.
+func (e *Engine) moveErasureSubtreeMetadata(ctx context.Context, srcDir, dstDir string) (func() error, error) {
+	files, err := e.listDescendantFiles(ctx, srcDir)
+	if nil != err {
+		return nil, err
+	}
+	erasureFiles := make([]*metadata.Metadata, 0, len(files))
+	for _, f := range files {
+		if f.ErasureCoded {
+			erasureFiles = append(erasureFiles, f)
+		}
+	}
+	noop := func() error { return nil }
+	if 0 == len(erasureFiles) {
+		return noop, nil
+	}
+	em := e.GetErasureManager()
+	if nil == em {
+		return nil, fmt.Errorf("cannot move %s: erasure manager not configured", srcDir)
+	}
+	renamed := make([]subtreeMove, 0, len(erasureFiles))
+	rollback := func() error {
+		restoreCtx := context.WithoutCancel(ctx)
+		var errs []error
+		for _, m := range renamed {
+			if err := em.RenameFile(restoreCtx, m.to, m.from); nil != err {
+				errs = append(errs, fmt.Errorf("failed to restore erasure file %s: %w", m.from, err))
+			}
+		}
+		return errors.Join(errs...)
+	}
+	for _, f := range erasureFiles {
+		newPath := dstDir + f.Path[len(srcDir):]
+		if err := em.RenameFile(ctx, f.Path, newPath); nil != err {
+			err = fmt.Errorf("failed to rename erasure file %s: %w", f.Path, err)
+			if rbErr := rollback(); nil != rbErr {
+				return nil, errors.Join(err, rbErr)
+			}
+			return nil, err
+		}
+		renamed = append(renamed, subtreeMove{from: f.Path, to: newPath})
+	}
+	return rollback, nil
 }
 
 // relocateFile physically moves a single file's bytes to targetBackend on the
 // current (target) instance, reading from the source instance if necessary.
 // Bytes are copied before the source is removed, so a failure leaves the source
 // intact.
-func (e *Engine) relocateFile(ctx context.Context, srcMd *metadata.Metadata, dstPath, targetBackend, srcInstance string) error {
+func (e *Engine) relocateFile(ctx context.Context, srcMd *metadata.Metadata, dstPath, targetBackend, srcInstance string, replaced *metadata.Metadata) error {
 	srcPath := srcMd.Path
 	currentInstance := e.currentInstanceID
 
@@ -298,59 +595,121 @@ func (e *Engine) relocateFile(ctx context.Context, srcMd *metadata.Metadata, dst
 	defer reader.Close()
 
 	targetStorage := e.selectBackendByType(targetBackend)
-	if err := targetStorage.Create(ctx, relOf(dstPath), reader, size); err != nil {
+	writePath := relOf(dstPath)
+	if nil != replaced {
+		if writePath, err = newStagingRelativePath(); nil != err {
+			return err
+		}
+	}
+	if err := targetStorage.Create(ctx, writePath, reader, size); err != nil {
+		if nil != replaced {
+			e.discardBackendObject(ctx, targetStorage, dstPath, writePath)
+		}
 		return fmt.Errorf("failed to write relocated file: %w", err)
+	}
+	if nil != replaced {
+		if err := targetStorage.Move(ctx, writePath, relOf(dstPath)); err != nil {
+			e.discardBackendObject(ctx, targetStorage, dstPath, writePath)
+			return fmt.Errorf("failed to commit relocated file: %w", err)
+		}
 	}
 
 	sameInstance := srcInstance == "" || srcInstance == currentInstance
 
 	if sameInstance {
-		// Cross-backend move on this instance: re-key metadata (unless the path
-		// is unchanged — an in-place re-tier), point it at the new backend, then
-		// delete the old bytes.
 		if srcPath != dstPath {
-			if err := e.metadataStore.Rename(ctx, srcPath, dstPath); err != nil {
-				_ = targetStorage.Delete(ctx, relOf(dstPath))
+			if err := e.rekeyMetadata(ctx, srcPath, dstPath, replaced, nil); err != nil {
+				e.rollbackRelocatedBytes(ctx, targetStorage, dstPath, replaced)
 				return err
 			}
 		}
-		newMd, getErr := e.metadataStore.Get(ctx, dstPath)
-		if getErr != nil {
-			return getErr
-		}
+		carried := *srcMd
+		newMd := &carried
+		newMd.Path = dstPath
+		newMd.Name = pathBase(dstPath)
 		newMd.BackendType = targetBackend
 		newMd.CallFSInstanceID = &currentInstance
 		newMd.UpdatedAt = time.Now()
-		if err := e.metadataStore.Update(ctx, newMd); err != nil {
+		if err := e.metadataStore.Update(ctx, newMd); nil != err {
+			restoreCtx := context.WithoutCancel(ctx)
+			if srcPath != dstPath {
+				if rbErr := e.unrekeyMetadata(restoreCtx, srcPath, dstPath, replaced, nil); nil != rbErr {
+					return errors.Join(err, fmt.Errorf("failed to restore source path: %w", rbErr))
+				}
+			}
+			e.rollbackRelocatedBytes(restoreCtx, targetStorage, dstPath, replaced)
 			return err
 		}
-		// The backend changed (same-instance relocation), so the source-backend
-		// copy is always stale and must be removed, even for an in-place re-tier.
 		if err := e.selectBackendByType(srcMd.BackendType).Delete(ctx, relOf(srcPath)); err != nil {
 			e.logger.Warn("Failed to delete source bytes after cross-backend move",
 				zap.String("src", srcPath), zap.Error(err))
 		}
-		e.invalidateMovePaths(srcPath, dstPath)
+		e.discardRelocationReplacement(ctx, replaced, dstPath, targetBackend)
+		e.invalidateMovePaths(srcPath, dstPath, srcMd.Type == "directory")
 		e.logger.Info("File relocated across backends",
 			zap.String("src", srcPath), zap.String("dst", dstPath), zap.String("backend", targetBackend))
 		return nil
 	}
 
-	// Cross-instance move: create the destination inode here, then delete the
-	// source (bytes + metadata row) on the originating instance.
 	newMd := cloneForRelocation(srcMd, dstPath, targetBackend, currentInstance)
+	sourceDeleted := false
+	if srcPath == dstPath {
+		if err := e.DeleteFileOnInstance(ctx, srcInstance, srcPath); err != nil {
+			e.rollbackRelocatedBytes(ctx, targetStorage, dstPath, replaced)
+			return fmt.Errorf("failed to delete source before same-path cross-instance move: %w", err)
+		}
+		sourceDeleted = true
+	}
+	if nil != replaced {
+		if err := e.metadataStore.Delete(ctx, dstPath); nil != err {
+			e.rollbackRelocatedBytes(ctx, targetStorage, dstPath, replaced)
+			return fmt.Errorf("failed to delete replaced destination metadata: %w", err)
+		}
+	}
 	if err := e.metadataStore.Create(ctx, newMd); err != nil {
-		_ = targetStorage.Delete(ctx, relOf(dstPath))
+		if nil != replaced {
+			if restoreErr := e.metadataStore.Create(context.WithoutCancel(ctx), replaced); nil != restoreErr {
+				err = errors.Join(err, fmt.Errorf("failed to restore replaced destination metadata: %w", restoreErr))
+			}
+		}
+		e.rollbackRelocatedBytes(ctx, targetStorage, dstPath, replaced)
 		return err
 	}
-	if err := e.DeleteFileOnInstance(ctx, srcInstance, srcPath); err != nil {
-		e.logger.Warn("Failed to delete source after cross-instance move; source bytes may need cleanup",
-			zap.String("src", srcPath), zap.String("src_instance", srcInstance), zap.Error(err))
+	if !sourceDeleted {
+		if err := e.DeleteFileOnInstance(ctx, srcInstance, srcPath); err != nil {
+			e.logger.Warn("Failed to delete source after cross-instance move; source bytes may need cleanup",
+				zap.String("src", srcPath), zap.String("src_instance", srcInstance), zap.Error(err))
+		}
 	}
-	e.invalidateMovePaths(srcPath, dstPath)
+	e.discardRelocationReplacement(ctx, replaced, dstPath, targetBackend)
+	e.invalidateMovePaths(srcPath, dstPath, srcMd.Type == "directory")
 	e.logger.Info("File relocated across instances",
 		zap.String("src", srcPath), zap.String("dst", dstPath), zap.String("instance", currentInstance))
 	return nil
+}
+
+func (e *Engine) rollbackRelocatedBytes(ctx context.Context, storage backends.Storage, dstPath string, replaced *metadata.Metadata) {
+	if nil != replaced {
+		return
+	}
+	if err := storage.Delete(ctx, relOf(dstPath)); nil != err {
+		e.logger.Error("Failed to delete relocated bytes during rollback",
+			zap.String("path", dstPath), zap.Error(err))
+	}
+}
+
+func (e *Engine) discardRelocationReplacement(ctx context.Context, replaced *metadata.Metadata, dstPath, targetBackend string) {
+	if nil == replaced {
+		return
+	}
+	if isErasureMetadata(replaced) {
+		e.discardErasureReplacement(ctx, dstPath)
+		return
+	}
+	if replaced.BackendType == targetBackend {
+		return
+	}
+	e.discardReplacedBytes(ctx, replaced, dstPath)
 }
 
 func (e *Engine) openSourceForRelocation(ctx context.Context, srcMd *metadata.Metadata, srcInstance string) (io.ReadCloser, int64, error) {
@@ -403,9 +762,9 @@ func pathBase(p string) string {
 }
 
 // proxyMove forwards a rename/move to another instance via the internal proxy.
-func (e *Engine) proxyMove(ctx context.Context, instanceID, srcPath, dstPath string, opts MoveOptions) error {
+func (e *Engine) proxyMove(ctx context.Context, instanceID, srcPath, dstPath string, opts MoveOptions, subtree bool) error {
 	if e.internalProxyAdapter == nil {
-		return fmt.Errorf("internal proxy not configured: no peer endpoints available")
+		return &ErrProxyFailed{err: fmt.Errorf("internal proxy not configured: no peer endpoints available")}
 	}
 	body := map[string]any{"destination": dstPath}
 	if opts.Backend != "" {
@@ -425,80 +784,79 @@ func (e *Engine) proxyMove(ctx context.Context, instanceID, srcPath, dstPath str
 		return fmt.Errorf("failed to encode move request: %w", err)
 	}
 	if err := e.internalProxyAdapter.MoveOnInstance(ctx, instanceID, srcPath, payload); err != nil {
-		return err
+		var badRequest *internalproxy.BadRequestError
+		if errors.As(err, &badRequest) {
+			return &ErrInvalidRename{msg: badRequest.Error()}
+		}
+		return &ErrProxyFailed{err: err}
 	}
-	e.invalidateMovePaths(srcPath, dstPath)
+	e.invalidateMovePaths(srcPath, dstPath, subtree)
 	return nil
 }
 
 // ensureMoveDestinationParent verifies (and optionally creates) the destination's
 // parent directory.
-func (e *Engine) ensureMoveDestinationParent(ctx context.Context, dstPath, owner string, createParents bool) error {
+func (e *Engine) ensureMoveDestinationParent(ctx context.Context, dstPath, owner string, createParents bool) (*parentPlan, error) {
 	parent := dirOf(dstPath)
 	if parent == "/" {
-		return nil
+		return nil, nil
 	}
-	if _, err := e.metadataStore.Get(ctx, parent); err == nil {
-		return nil
+	_, err := e.metadataStore.Get(ctx, parent)
+	if nil == err {
+		return nil, nil
+	}
+	if !errors.Is(err, metadata.ErrNotFound) {
+		return nil, err
 	}
 	if !createParents {
-		return &ErrInvalidRename{msg: fmt.Sprintf("destination parent %q does not exist", parent)}
+		return nil, &ErrInvalidRename{msg: fmt.Sprintf("destination parent %q does not exist", parent)}
 	}
-	if err := e.ensureParentDirectories(ctx, dstPath, "localfs", owner); err != nil {
-		return fmt.Errorf("failed to create destination parents: %w", err)
+	plan, err := e.planParentDirectories(ctx, dstPath, "localfs", owner)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create destination parents: %w", err)
 	}
-	return nil
+	return plan, nil
 }
 
 // handleExistingDestination enforces the overwrite policy when the destination
 // already exists.
-func (e *Engine) handleExistingDestination(ctx context.Context, srcMd *metadata.Metadata, dstPath string, overwrite bool) error {
+func (e *Engine) handleExistingDestination(ctx context.Context, srcMd *metadata.Metadata, dstPath string, overwrite bool) (*metadata.Metadata, error) {
 	dstMd, err := e.metadataStore.Get(ctx, dstPath)
-	if err != nil {
-		return nil // does not exist
+	if nil != err {
+		if errors.Is(err, metadata.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	if !overwrite {
-		return metadata.ErrAlreadyExists
+		return nil, metadata.ErrAlreadyExists
+	}
+	if dstMd.Owner != srcMd.Owner {
+		return nil, fmt.Errorf("cannot overwrite %s owned by another user: %w", dstPath, auth.ErrPermissionDenied)
 	}
 	if dstMd.Type != srcMd.Type {
-		return fmt.Errorf("cannot overwrite %s with %s", dstMd.Type, srcMd.Type)
+		return nil, fmt.Errorf("cannot overwrite %s with %s: %w", dstMd.Type, srcMd.Type, metadata.ErrAlreadyExists)
 	}
-	if dstMd.Type == "directory" {
-		children, listErr := e.metadataStore.ListChildren(ctx, dstPath)
-		if listErr != nil {
-			return listErr
+	if "directory" == dstMd.Type {
+		hasChildren, hasErr := e.metadataStore.HasChildren(ctx, dstPath)
+		if nil != hasErr {
+			return nil, hasErr
 		}
-		if len(children) > 0 {
-			return fmt.Errorf("cannot overwrite non-empty directory")
+		if hasChildren {
+			return nil, fmt.Errorf("cannot overwrite non-empty directory %s: %w", dstPath, metadata.ErrAlreadyExists)
 		}
 	}
-	// The destination lock is already held by doMove, so delete without
-	// re-acquiring it.
-	return e.deleteLockedResource(ctx, dstPath, dstMd)
+	return dstMd, nil
 }
 
-func (e *Engine) acquireMoveLock(ctx context.Context, p string) (func(), error) {
-	lockKey := fmt.Sprintf("file:%s", p)
-	acquired, err := e.lockManager.Acquire(ctx, lockKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to acquire lock: %w", err)
-	}
-	if !acquired {
-		return nil, fmt.Errorf("failed to acquire lock for %s", p)
-	}
-	return func() {
-		if relErr := e.lockManager.Release(context.Background(), lockKey); relErr != nil {
-			e.logger.Error("Failed to release lock", zap.String("lock_key", lockKey), zap.Error(relErr))
-		}
-	}, nil
-}
-
-func (e *Engine) invalidateMovePaths(srcPath, dstPath string) {
+func (e *Engine) invalidateMovePaths(srcPath, dstPath string, subtree bool) {
 	e.metadataCache.Invalidate(srcPath)
 	e.metadataCache.Invalidate(dstPath)
-	e.metadataCache.InvalidatePrefix(dirOf(srcPath))
-	e.metadataCache.InvalidatePrefix(dirOf(dstPath))
-	e.metadataCache.InvalidatePrefix(srcPath)
+	e.metadataCache.Invalidate(dirOf(srcPath))
+	e.metadataCache.Invalidate(dirOf(dstPath))
+	if subtree {
+		e.metadataCache.InvalidatePrefix(srcPath)
+	}
 }
 
 func normalizeMovePath(p string) string {

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -10,12 +11,11 @@ import (
 
 	"github.com/ebogdum/callfs/backends"
 	"github.com/ebogdum/callfs/backends/internalproxy"
+	"github.com/ebogdum/callfs/locks"
 	"github.com/ebogdum/callfs/metadata"
 )
 
-// selectBackend chooses the appropriate backend based on metadata
 func (e *Engine) selectBackend(ctx context.Context, md *metadata.Metadata) (context.Context, backends.Storage) {
-	// If the file belongs to this instance, use the appropriate local backend
 	if md.CallFSInstanceID != nil && *md.CallFSInstanceID == e.currentInstanceID {
 		switch md.BackendType {
 		case "localfs":
@@ -29,13 +29,11 @@ func (e *Engine) selectBackend(ctx context.Context, md *metadata.Metadata) (cont
 		}
 	}
 
-	// File belongs to a different instance, use internal proxy
 	if md.CallFSInstanceID != nil {
 		ctx = internalproxy.WithInstanceID(ctx, *md.CallFSInstanceID)
 		return ctx, e.internalProxyBackend
 	}
 
-	// Fallback for files without instance ID (legacy)
 	switch md.BackendType {
 	case "localfs":
 		return ctx, e.localFSBackend
@@ -48,7 +46,6 @@ func (e *Engine) selectBackend(ctx context.Context, md *metadata.Metadata) (cont
 	}
 }
 
-// selectBackendByType chooses backend by type string
 func (e *Engine) selectBackendByType(backendType string) backends.Storage {
 	switch backendType {
 	case "localfs":
@@ -60,65 +57,79 @@ func (e *Engine) selectBackendByType(backendType string) backends.Storage {
 	}
 }
 
-// ensureParentDirectories creates parent directories if they don't exist.
-// owner is the app-level user ID of the creating user, propagated to
-// auto-created parents so ownership stays consistent with the child resource.
 func (e *Engine) ensureParentDirectories(ctx context.Context, path string, backendType string, owner string) error {
-	parentPath := filepath.Dir(path)
-	if parentPath == "/" || parentPath == "." {
-		return nil // Root directory should always exist
-	}
-
-	// Check if parent exists
-	if _, err := e.metadataStore.Get(ctx, parentPath); err == nil {
-		return nil // Parent exists
-	}
-
-	// Recursively ensure grandparent exists
-	if err := e.ensureParentDirectories(ctx, parentPath, backendType, owner); err != nil {
-		return err
+	var missing []string
+	for dir := filepath.Dir(path); dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+		_, err := e.GetMetadata(ctx, dir)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, metadata.ErrNotFound) {
+			return fmt.Errorf("failed to get parent directory metadata: %w", err)
+		}
+		missing = append(missing, dir)
 	}
 
 	if backendType == "" {
 		backendType = "localfs"
 	}
 
-	// Create parent directory owned by the creating user with standard permissions.
-	parentMd := &metadata.Metadata{
-		Name:        filepath.Base(parentPath),
-		Path:        parentPath,
-		Type:        "directory",
-		Mode:        "0755",
-		Owner:       owner,
-		BackendType: backendType,
-		ATime:       time.Now(),
-		MTime:       time.Now(),
-		CTime:       time.Now(),
-	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		dirPath := missing[i]
+		parentMd := &metadata.Metadata{
+			Name:        filepath.Base(dirPath),
+			Path:        dirPath,
+			Type:        "directory",
+			Mode:        "0755",
+			Owner:       owner,
+			BackendType: backendType,
+			ATime:       time.Now(),
+			MTime:       time.Now(),
+			CTime:       time.Now(),
+		}
 
-	err := e.CreateDirectory(ctx, parentPath, parentMd)
-	if err != nil && err == metadata.ErrAlreadyExists {
-		return nil // Suppress race: concurrent creates of same parent
+		if e.atomicNamespace() {
+			err := e.createDirectoryLocked(ctx, dirPath, parentMd)
+			if nil != err && !errors.Is(err, metadata.ErrAlreadyExists) {
+				return err
+			}
+			e.metadataCache.Invalidate(dirPath)
+			continue
+		}
+		release, err := e.lockPaths(ctx, dirPath)
+		if nil != err {
+			if errors.Is(err, locks.ErrLockHeld) {
+				if _, getErr := e.GetMetadata(ctx, dirPath); nil == getErr {
+					continue
+				}
+			}
+			return fmt.Errorf("failed to acquire lock: %w", err)
+		}
+		err = e.createDirectoryLocked(ctx, dirPath, parentMd)
+		release()
+		if nil != err && !errors.Is(err, metadata.ErrAlreadyExists) {
+			return err
+		}
+		e.metadataCache.Invalidate(dirPath)
 	}
-	return err
+	return nil
 }
 
-// EnsureRootDirectory ensures that the root directory metadata exists
 func (e *Engine) EnsureRootDirectory(ctx context.Context) error {
-	// Check if root directory already exists
-	if _, err := e.metadataStore.Get(ctx, "/"); err == nil {
+	if _, err := e.metadataStore.Get(ctx, "/"); nil == err {
 		e.logger.Debug("Root directory already exists")
 		return nil
+	} else if !errors.Is(err, metadata.ErrNotFound) {
+		return fmt.Errorf("failed to read root directory metadata: %w", err)
 	}
 
-	// Create root directory metadata
 	rootMd := &metadata.Metadata{
 		Name:        "/",
 		Path:        "/",
 		Type:        "directory",
 		Mode:        "0755",
-		Owner:       "root",    // App-level root user, NOT an OS user
-		BackendType: "localfs", // Default backend for root
+		Owner:       "root",
+		BackendType: "localfs",
 		ATime:       time.Now(),
 		MTime:       time.Now(),
 		CTime:       time.Now(),

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -11,24 +12,18 @@ import (
 )
 
 // UpdateFileOnInstance updates a file on a specific instance using the internal proxy
-func (e *Engine) UpdateFileOnInstance(ctx context.Context, instanceID, path string, reader io.Reader, size int64) error {
-	if e.internalProxyBackend == nil {
-		return fmt.Errorf("internal proxy not configured: no peer endpoints available")
+func (e *Engine) UpdateFileOnInstance(ctx context.Context, instanceID, path string, reader io.Reader, size int64, ifMatch string, ifNoneMatch bool) (string, error) {
+	if e.internalProxyAdapter == nil {
+		return "", fmt.Errorf("internal proxy not configured: no peer endpoints available")
 	}
 
-	// Use internal proxy with instance ID context
-	ctx = internalproxy.WithInstanceID(ctx, instanceID)
-
-	// Convert absolute path to relative path for backend
 	relativePath := strings.TrimPrefix(path, "/")
-
-	// Use the internal proxy backend to update the file
-	err := e.internalProxyBackend.Update(ctx, relativePath, reader, size)
-	if err == nil {
-		// Invalidate local cache since remote state changed
-		e.metadataCache.Invalidate(path)
+	etag, err := e.internalProxyAdapter.UpdateOnInstance(ctx, instanceID, relativePath, reader, size, ifMatch, ifNoneMatch)
+	if err != nil {
+		return "", err
 	}
-	return err
+	e.metadataCache.Invalidate(path)
+	return etag, nil
 }
 
 // DeleteFileOnInstance deletes a file on a specific instance using the internal proxy
@@ -54,4 +49,18 @@ func (e *Engine) StatFileOnInstance(ctx context.Context, instanceID, path string
 
 	relativePath := strings.TrimPrefix(path, "/")
 	return e.internalProxyAdapter.StatOnInstance(ctx, instanceID, relativePath)
+}
+
+func (e *Engine) DeleteTreeOnInstance(ctx context.Context, instanceID, path string) error {
+	if nil == e.internalProxyAdapter {
+		return fmt.Errorf("internal proxy not configured: no peer endpoints available")
+	}
+	err := e.internalProxyAdapter.DeleteTreeOnInstance(ctx, instanceID, strings.TrimPrefix(path, "/"))
+	if errors.Is(err, internalproxy.ErrRemoteConflict) {
+		return ErrDirectoryNotEmpty
+	}
+	if nil == err {
+		_ = e.metadataCache.InvalidatePrefix(path)
+	}
+	return err
 }

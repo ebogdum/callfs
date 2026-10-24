@@ -1,6 +1,13 @@
 package core
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +18,13 @@ import (
 	"github.com/ebogdum/callfs/erasure"
 	"github.com/ebogdum/callfs/locks"
 	"github.com/ebogdum/callfs/metadata"
+)
+
+const (
+	defaultMetadataCacheTTL  = 5 * time.Minute
+	defaultMetadataCacheSize = 1000
+	replicaWorkerCount       = 4
+	replicaQueueSize         = 1024
 )
 
 // Engine represents the core CallFS engine that orchestrates operations
@@ -30,6 +44,10 @@ type Engine struct {
 	erasureMu            sync.RWMutex
 	erasureManager       *erasure.Manager
 	metadataCache        *MetadataCache
+	replicaQueue         chan replicaJob
+	replicaCtx           context.Context
+	replicaCancel        context.CancelFunc
+	strict               bool
 	logger               *zap.Logger
 }
 
@@ -48,7 +66,8 @@ func NewEngine(
 	requireReplicaAck bool,
 	logger *zap.Logger,
 ) *Engine {
-	return &Engine{
+	replicaCtx, replicaCancel := context.WithCancel(context.Background())
+	engine := &Engine{
 		metadataStore:        metadataStore,
 		localFSBackend:       localFSBackend,
 		s3Backend:            s3Backend,
@@ -60,9 +79,35 @@ func NewEngine(
 		replicationEnabled:   replicationEnabled,
 		replicaBackend:       replicaBackend,
 		requireReplicaAck:    requireReplicaAck,
-		metadataCache:        NewMetadataCache(5*time.Minute, 1000), // 5 min TTL, max 1000 entries
+		metadataCache:        NewMetadataCache(defaultMetadataCacheTTL, defaultMetadataCacheSize),
+		replicaQueue:         make(chan replicaJob, replicaQueueSize),
+		replicaCtx:           replicaCtx,
+		replicaCancel:        replicaCancel,
 		logger:               logger,
 	}
+	if localState, ok := metadataStore.(metadata.LocalState); ok && localState.LocalState() {
+		engine.metadataCache.SetBypass(true)
+	}
+	for range replicaWorkerCount {
+		go engine.replicaWorker()
+	}
+	return engine
+}
+
+func (e *Engine) SetStrict(strict bool) {
+	e.strict = strict
+}
+
+func (e *Engine) SetMetadataCacheTTL(ttl time.Duration) {
+	e.metadataCache.SetTTL(ttl)
+}
+
+func (e *Engine) SetMetadataCacheSize(size int) {
+	e.metadataCache.SetMaxSize(size)
+}
+
+func (e *Engine) MetadataCache() *MetadataCache {
+	return e.metadataCache
 }
 
 // GetCurrentInstanceID returns the current instance ID
@@ -86,6 +131,7 @@ func (e *Engine) GetErasureManager() *erasure.Manager {
 
 // Close shuts down the engine and releases background resources.
 func (e *Engine) Close() {
+	e.replicaCancel()
 	e.metadataCache.Close()
 }
 
@@ -99,13 +145,120 @@ func (e *Engine) GetPeerEndpoint(instanceID string) string {
 	return ""
 }
 
-// SetPeerEndpoint adds or updates a peer endpoint at runtime (e.g., after Raft join).
-// This updates both the Engine's peer map and the InternalProxyAdapter's instance map.
-func (e *Engine) SetPeerEndpoint(instanceID, endpoint string) {
+func (e *Engine) AddPeerEndpoint(instanceID, endpoint string) error {
+	if nil != e.internalProxyAdapter {
+		if err := e.internalProxyAdapter.AddPeerEndpoint(instanceID, endpoint); nil != err {
+			return err
+		}
+	}
 	e.peerMu.Lock()
 	e.peerEndpoints[instanceID] = endpoint
 	e.peerMu.Unlock()
-	if e.internalProxyAdapter != nil {
-		e.internalProxyAdapter.SetPeerEndpoint(instanceID, endpoint)
+	return nil
+}
+
+func (e *Engine) RemovePeerEndpoint(instanceID string) {
+	e.peerMu.Lock()
+	defer e.peerMu.Unlock()
+	delete(e.peerEndpoints, instanceID)
+}
+
+var (
+	ErrUnknownStorage     = errors.New("unknown storage backend")
+	ErrStorageUnavailable = errors.New("storage backend is not configured")
+	errProbeMismatch      = errors.New("probe content mismatch")
+)
+
+const storageProbePayload = "callfs-probe"
+
+type StorageProbe struct {
+	OK       bool
+	WriteMS  int64
+	ReadMS   int64
+	DeleteMS int64
+	Error    string
+}
+
+func (e *Engine) ProbeStorage(ctx context.Context, name string) (StorageProbe, error) {
+	if "internal_proxy" == name && nil != e.internalProxyAdapter {
+		started := time.Now()
+		err := e.internalProxyAdapter.Ping(ctx)
+		probe := StorageProbe{OK: nil == err, ReadMS: time.Since(started).Milliseconds()}
+		if nil != err {
+			probe.Error = err.Error()
+		}
+		return probe, nil
 	}
+	backend, err := e.storageByName(name)
+	if nil != err {
+		return StorageProbe{}, err
+	}
+
+	var suffix [16]byte
+	if _, err := rand.Read(suffix[:]); nil != err {
+		return StorageProbe{}, fmt.Errorf("generate probe name: %w", err)
+	}
+	path := "/.callfs-probe/" + hex.EncodeToString(suffix[:])
+
+	probe := StorageProbe{}
+	started := time.Now()
+	err = backend.Create(ctx, path, strings.NewReader(storageProbePayload), int64(len(storageProbePayload)))
+	probe.WriteMS = time.Since(started).Milliseconds()
+	if nil != err {
+		probe.Error = err.Error()
+		return probe, nil
+	}
+
+	started = time.Now()
+	err = readStorageProbe(ctx, backend, path)
+	probe.ReadMS = time.Since(started).Milliseconds()
+
+	started = time.Now()
+	deleteErr := backend.Delete(ctx, path)
+	probe.DeleteMS = time.Since(started).Milliseconds()
+
+	switch {
+	case nil != err:
+		probe.Error = err.Error()
+	case nil != deleteErr:
+		probe.Error = deleteErr.Error()
+	default:
+		probe.OK = true
+	}
+	return probe, nil
+}
+
+func (e *Engine) storageByName(name string) (backends.Storage, error) {
+	candidates := map[string]backends.Storage{
+		"localfs":        e.localFSBackend,
+		"s3":             e.s3Backend,
+		"internal_proxy": e.internalProxyBackend,
+	}
+	backend, known := candidates[name]
+	if !known {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownStorage, name)
+	}
+	if nil == backend {
+		return nil, fmt.Errorf("%w: %s", ErrStorageUnavailable, name)
+	}
+	return backend, nil
+}
+
+func readStorageProbe(ctx context.Context, backend backends.Storage, path string) error {
+	reader, err := backend.Open(ctx, path)
+	if nil != err {
+		return err
+	}
+	data, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if nil != readErr {
+		return readErr
+	}
+	if nil != closeErr {
+		return closeErr
+	}
+	if storageProbePayload != string(data) {
+		return errProbeMismatch
+	}
+	return nil
 }

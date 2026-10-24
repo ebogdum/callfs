@@ -3,6 +3,7 @@ package pathutil
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -71,6 +72,9 @@ func Clean(path string) (string, error) {
 func SafeJoin(root, rel string) (string, error) {
 	// Clean both paths
 	cleanRoot := filepath.Clean(root)
+	if resolvedRoot, rootErr := filepath.EvalSymlinks(cleanRoot); nil == rootErr {
+		cleanRoot = resolvedRoot
+	}
 
 	cleanRel, err := Clean(rel)
 	if err != nil {
@@ -82,7 +86,12 @@ func SafeJoin(root, rel string) (string, error) {
 
 	// Ensure the result is still within the root
 	// Use EvalSymlinks to resolve any symbolic links and check the real path
-	resolved, err := filepath.EvalSymlinks(joined)
+	var resolved string
+	if _, statErr := os.Lstat(joined); statErr == nil {
+		resolved, err = filepath.EvalSymlinks(joined)
+	} else {
+		err = statErr
+	}
 	if err != nil {
 		// File might not exist yet — resolve the parent directory to detect symlink escapes
 		dir := filepath.Dir(joined)
@@ -113,6 +122,25 @@ func SafeJoin(root, rel string) (string, error) {
 
 	// Return the resolved path to prevent TOCTOU symlink race
 	return resolved, nil
+}
+
+func SafeLinkJoin(root, rel string) (string, error) {
+	cleanRoot := filepath.Clean(root)
+	if resolvedRoot, rootErr := filepath.EvalSymlinks(cleanRoot); nil == rootErr {
+		cleanRoot = resolvedRoot
+	}
+
+	cleanRel, err := Clean(rel)
+	if nil != err {
+		return "", err
+	}
+
+	joined := filepath.Join(cleanRoot, strings.TrimPrefix(cleanRel, "/"))
+
+	if _, err := SafeJoin(root, rel); nil != err {
+		return "", err
+	}
+	return joined, nil
 }
 
 // ValidatePath performs comprehensive path validation for security.

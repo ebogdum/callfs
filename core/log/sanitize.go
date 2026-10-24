@@ -1,29 +1,28 @@
-// Package log provides secure logging utilities with data sanitization capabilities.
 package log
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
-	"fmt"
+	"encoding/hex"
+	"io"
 	"os"
 	"strings"
 )
 
-// SanitizationMode controls how sensitive data is handled in logs
 type SanitizationMode int
 
 const (
-	// ProductionMode hashes sensitive data for production use
 	ProductionMode SanitizationMode = iota
-	// DevelopmentMode shows truncated sensitive data for debugging
 	DevelopmentMode
-	// DebugMode shows full sensitive data (only for development)
 	DebugMode
 )
 
 var currentMode = ProductionMode
 
+var hashKey, hashKeyErr = newHashKey()
+
 func init() {
-	// Check environment variable to set mode
 	if mode := os.Getenv("CALLFS_LOG_MODE"); mode != "" {
 		switch strings.ToLower(mode) {
 		case "production":
@@ -36,7 +35,23 @@ func init() {
 	}
 }
 
-// SanitizePath sanitizes file paths for logging based on the current mode
+func newHashKey() ([]byte, error) {
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, key); nil != err {
+		return nil, err
+	}
+	return key, nil
+}
+
+func keyedHashPrefix(value string, size int) string {
+	if nil != hashKeyErr {
+		return "unavailable"
+	}
+	mac := hmac.New(sha256.New, hashKey)
+	mac.Write([]byte(value))
+	return hex.EncodeToString(mac.Sum(nil)[:size])
+}
+
 func SanitizePath(path string) string {
 	if path == "" {
 		return ""
@@ -44,26 +59,19 @@ func SanitizePath(path string) string {
 
 	switch currentMode {
 	case ProductionMode:
-		// Hash the path to prevent leaking sensitive filenames
-		hash := sha256.Sum256([]byte(path))
-		return fmt.Sprintf("hash:%x", hash[:8]) // Show first 8 bytes of hash
+		return "hash:" + keyedHashPrefix(path, 8)
 	case DevelopmentMode:
-		// Show truncated path for debugging
 		if len(path) <= 20 {
 			return path
 		}
 		return path[:10] + "..." + path[len(path)-7:]
 	case DebugMode:
-		// Show full path (only for development)
 		return path
 	default:
-		// Default to production mode (non-recursive)
-		hash := sha256.Sum256([]byte(path))
-		return fmt.Sprintf("hash:%x", hash[:8])
+		return "hash:" + keyedHashPrefix(path, 8)
 	}
 }
 
-// SanitizeUserID sanitizes user IDs for logging
 func SanitizeUserID(userID string) string {
 	if userID == "" {
 		return ""
@@ -71,37 +79,28 @@ func SanitizeUserID(userID string) string {
 
 	switch currentMode {
 	case ProductionMode:
-		// Hash the user ID
-		hash := sha256.Sum256([]byte(userID))
-		return fmt.Sprintf("user_hash:%x", hash[:6]) // Show first 6 bytes of hash
+		return "user_hash:" + keyedHashPrefix(userID, 6)
 	case DevelopmentMode:
-		// Show truncated user ID
 		if len(userID) <= 8 {
 			return userID
 		}
 		return userID[:4] + "****"
 	case DebugMode:
-		// Show full user ID
 		return userID
 	default:
-		// Default to production mode (non-recursive)
-		hash := sha256.Sum256([]byte(userID))
-		return fmt.Sprintf("user_hash:%x", hash[:6])
+		return "user_hash:" + keyedHashPrefix(userID, 6)
 	}
 }
 
-// SanitizeSize sanitizes file size information (generally safe to log)
 func SanitizeSize(size int64) int64 {
 	switch currentMode {
 	case ProductionMode:
-		// Round to nearest KiB to obscure exact sizes
 		return ((size + 512) / 1024) * 1024
 	default:
 		return size
 	}
 }
 
-// LogFields provides a structured way to handle sensitive logging fields
 type LogFields struct {
 	Path      string
 	UserID    string
@@ -110,13 +109,12 @@ type LogFields struct {
 	Operation string
 }
 
-// Sanitize returns sanitized versions of all fields
 func (lf LogFields) Sanitize() LogFields {
 	return LogFields{
 		Path:      SanitizePath(lf.Path),
 		UserID:    SanitizeUserID(lf.UserID),
-		Backend:   lf.Backend, // Backend type is not user data
+		Backend:   lf.Backend,
 		Size:      SanitizeSize(lf.Size),
-		Operation: lf.Operation, // Operations are generally safe
+		Operation: lf.Operation,
 	}
 }

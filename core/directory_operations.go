@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,78 +33,98 @@ func (e *Engine) ListDirectory(ctx context.Context, path string) ([]*metadata.Me
 	return children, nil
 }
 
-// ListDirectoryRecursive lists directory contents recursively
-func (e *Engine) ListDirectoryRecursive(ctx context.Context, path string, maxDepth int) ([]*metadata.Metadata, error) {
-	if maxDepth < 0 {
-		maxDepth = 100 // Default maximum depth to prevent infinite recursion
+// CountDirectoryChildren returns the number of direct children of a directory
+// whose metadata the caller has already resolved.
+func (e *Engine) CountDirectoryChildren(ctx context.Context, path string) (int, error) {
+	if counter, ok := e.metadataStore.(metadata.ChildCounter); ok {
+		count, err := counter.CountChildren(ctx, path)
+		if nil != err {
+			return 0, fmt.Errorf("failed to count directory children: %w", err)
+		}
+		return count, nil
 	}
-
-	var allItems []*metadata.Metadata
-	return e.listDirectoryRecursiveHelper(ctx, path, 0, maxDepth, allItems)
+	children, err := e.metadataStore.ListChildren(ctx, path)
+	if nil != err {
+		return 0, fmt.Errorf("failed to list directory children: %w", err)
+	}
+	return len(children), nil
 }
 
-// listDirectoryRecursiveHelper is the recursive helper function
-func (e *Engine) listDirectoryRecursiveHelper(ctx context.Context, path string, currentDepth, maxDepth int, allItems []*metadata.Metadata) ([]*metadata.Metadata, error) {
-	if currentDepth > maxDepth {
-		return allItems, nil
+// ListDirectoryRecursive lists directory contents recursively
+func (e *Engine) ListDirectoryRecursive(ctx context.Context, path string, maxDepth int) ([]*metadata.Metadata, error) {
+	return e.ListDirectoryRecursiveLimited(ctx, path, maxDepth, 0)
+}
+
+// ListDirectoryRecursiveLimited lists directory contents recursively, returning at most limit entries (0 means unlimited)
+func (e *Engine) ListDirectoryRecursiveLimited(ctx context.Context, path string, maxDepth, limit int) ([]*metadata.Metadata, error) {
+	md, err := e.metadataStore.Get(ctx, path)
+	if nil != err {
+		return nil, fmt.Errorf("failed to get directory metadata: %w", err)
+	}
+	if "directory" != md.Type {
+		return nil, fmt.Errorf("path is not a directory")
 	}
 
-	// Get immediate children
-	children, err := e.ListDirectory(ctx, path)
-	if err != nil {
+	storeDepth := 0
+	if 0 <= maxDepth {
+		storeDepth = maxDepth + 1
+	}
+	descendants, err := e.metadataStore.ListDescendants(ctx, path, storeDepth, limit)
+	if nil != err {
 		return nil, fmt.Errorf("failed to list directory %s: %w", path, err)
 	}
+	return descendants, nil
+}
 
-	// Add all children to results
-	allItems = append(allItems, children...)
-
-	// Recursively process subdirectories, threading the accumulator through
-	for _, child := range children {
-		if child.Type == "directory" {
-			var err error
-			allItems, err = e.listDirectoryRecursiveHelper(ctx, child.Path, currentDepth+1, maxDepth, allItems)
-			if err != nil {
-				e.logger.Warn("Failed to list subdirectory",
-					zap.String("path", child.Path),
-					zap.Error(err))
-				continue // Continue with other directories instead of failing completely
-			}
-		}
+func (e *Engine) SearchDirectoryRecursiveLimited(ctx context.Context, path string, maxDepth, limit int, match func(*metadata.Metadata) bool) ([]*metadata.Metadata, int, error) {
+	md, err := e.metadataStore.Get(ctx, path)
+	if nil != err {
+		return nil, 0, fmt.Errorf("failed to get directory metadata: %w", err)
+	}
+	if "directory" != md.Type {
+		return nil, 0, fmt.Errorf("path is not a directory")
 	}
 
-	return allItems, nil
+	storeDepth := 0
+	if 0 <= maxDepth {
+		storeDepth = maxDepth + 1
+	}
+	matched, scanned, err := metadata.SearchDescendants(ctx, e.metadataStore, path, storeDepth, limit, match)
+	if nil != err {
+		return nil, 0, fmt.Errorf("failed to list directory %s: %w", path, err)
+	}
+	return matched, scanned, nil
 }
 
 // CreateDirectory creates a new directory
 func (e *Engine) CreateDirectory(ctx context.Context, path string, md *metadata.Metadata) error {
-	lockKey := fmt.Sprintf("dir:%s", path)
-
-	// Acquire distributed lock
-	acquired, err := e.lockManager.Acquire(ctx, lockKey)
+	if e.atomicNamespace() {
+		if err := e.ensureParentDirectories(ctx, path, md.BackendType, md.Owner); nil != err {
+			return fmt.Errorf("failed to ensure parent directories: %w", err)
+		}
+		return e.createDirectoryLocked(ctx, path, md)
+	}
+	release, err := e.lockPaths(ctx, path)
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
-	if !acquired {
-		return fmt.Errorf("failed to acquire lock for directory creation")
-	}
-	defer func() {
-		if err := e.lockManager.Release(context.Background(), lockKey); err != nil {
-			e.logger.Error("Failed to release lock", zap.String("lock_key", lockKey), zap.Error(err))
-		}
-	}()
+	defer release()
 
-	// Check if directory already exists
-	if _, err := e.metadataStore.Get(ctx, path); err == nil {
-		return metadata.ErrAlreadyExists
-	}
-
-	// Ensure parent directories exist (owned by the creating user)
-	if err := e.ensureParentDirectories(ctx, path, md.BackendType, md.Owner); err != nil {
+	if err := e.ensureParentDirectories(ctx, path, md.BackendType, md.Owner); nil != err {
 		return fmt.Errorf("failed to ensure parent directories: %w", err)
 	}
 
-	// Set instance ID for local FS directories
-	if md.BackendType == "localfs" {
+	return e.createDirectoryLocked(ctx, path, md)
+}
+
+func (e *Engine) createDirectoryLocked(ctx context.Context, path string, md *metadata.Metadata) error {
+	if _, err := e.metadataStore.Get(ctx, path); nil == err {
+		return metadata.ErrAlreadyExists
+	} else if !errors.Is(err, metadata.ErrNotFound) {
+		return fmt.Errorf("failed to check existing directory: %w", err)
+	}
+
+	if "localfs" == md.BackendType {
 		md.CallFSInstanceID = &e.currentInstanceID
 	}
 
@@ -130,8 +151,9 @@ func (e *Engine) CreateDirectory(ctx context.Context, path string, md *metadata.
 		}
 		return fmt.Errorf("failed to store metadata: %w", err)
 	}
+	e.metadataCache.Invalidate(path)
 
-	e.logger.Info("Directory created successfully",
+	e.logger.Debug("Directory created successfully",
 		zap.String("path", path),
 		zap.String("backend", md.BackendType))
 
