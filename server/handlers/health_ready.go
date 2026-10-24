@@ -18,8 +18,15 @@ type healthChecker interface {
 	Report(ctx context.Context, fresh bool) health.Report
 }
 
+type healthReadyPeer struct {
+	Name   string        `json:"name"`
+	Status health.Status `json:"status"`
+	Detail string        `json:"detail"`
+}
+
 type healthReadyBody struct {
-	Status string `json:"status"`
+	Status string            `json:"status"`
+	Peers  []healthReadyPeer `json:"peers,omitempty"`
 }
 
 type healthReadyCache struct {
@@ -30,6 +37,7 @@ type healthReadyCache struct {
 	checkedAt time.Time
 	code      int
 	status    string
+	peers     []healthReadyPeer
 }
 
 func HealthReady(checker healthChecker) http.HandlerFunc {
@@ -39,24 +47,26 @@ func HealthReady(checker healthChecker) http.HandlerFunc {
 func healthReadyHandler(checker healthChecker, now func() time.Time) http.HandlerFunc {
 	cache := &healthReadyCache{checker: checker, now: now}
 	return func(w http.ResponseWriter, _ *http.Request) {
-		code, status := cache.result()
+		code, status, peers := cache.result()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(code)
-		SendJSONResponse(w, healthReadyBody{Status: status})
+		SendJSONResponse(w, healthReadyBody{Status: status, Peers: peers})
 	}
 }
 
-func (c *healthReadyCache) result() (int, string) {
+func (c *healthReadyCache) result() (int, string, []healthReadyPeer) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	current := c.now()
 	if c.filled && healthReadyCacheTTL > current.Sub(c.checkedAt) {
-		return c.code, c.status
+		return c.code, c.status, c.peers
 	}
-	c.code, c.status = healthReadyStatus(c.probe())
+	report := c.probe()
+	c.code, c.status = healthReadyStatus(report)
+	c.peers = healthReadyPeers(report)
 	c.checkedAt = current
 	c.filled = true
-	return c.code, c.status
+	return c.code, c.status, c.peers
 }
 
 func (c *healthReadyCache) probe() health.Report {
@@ -77,4 +87,14 @@ func healthReadyStatus(report health.Report) (int, string) {
 	default:
 		return http.StatusOK, "ok"
 	}
+}
+
+func healthReadyPeers(report health.Report) []healthReadyPeer {
+	var peers []healthReadyPeer
+	for _, comp := range report.Components {
+		if comp.Informational {
+			peers = append(peers, healthReadyPeer{Name: comp.Name, Status: comp.Status, Detail: comp.Detail})
+		}
+	}
+	return peers
 }

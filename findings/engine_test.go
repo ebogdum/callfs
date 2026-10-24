@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/metadata/natsmeta"
 )
 
 type memoryMutes struct {
@@ -323,5 +324,78 @@ func TestCatalogTextLimits(t *testing.T) {
 				t.Errorf("%s: sentence has %d words", entry.id, words)
 			}
 		}
+	}
+}
+
+func natsConfig() *config.AppConfig {
+	cfg := healthyConfig()
+	cfg.NATS.Enabled = true
+	cfg.NATS.Metadata.SnapshotInterval = time.Hour
+	return cfg
+}
+
+func TestNATSFindings(t *testing.T) {
+	cases := []struct {
+		name  string
+		facts Facts
+		want  string
+	}{
+		{"not connected", Facts{NATSUnreachable: true}, "nats.not_connected"},
+		{"no quorum", Facts{MetadataReplicas: 3, MetadataOffline: 2}, "nats.no_quorum"},
+		{"replica offline", Facts{MetadataReplicas: 3, MetadataOffline: 1}, "nats.replica_offline"},
+		{"log lag", Facts{MetadataLogLag: 5000}, "nats.log_lag"},
+		{"snapshot stale", Facts{LastSnapshotAt: testNow.Add(-4 * time.Hour)}, "nats.snapshot_stale"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := tc.facts
+			engine := newTestEngine(natsConfig(), &facts, &memoryMutes{}, testNow)
+			result, err := engine.Evaluate(context.Background())
+			if nil != err {
+				t.Fatal(err)
+			}
+			if _, found := findByID(result, tc.want); !found {
+				t.Fatalf("finding %s missing", tc.want)
+			}
+		})
+	}
+}
+
+func TestNATSFindingsQuietWhenHealthy(t *testing.T) {
+	facts := &Facts{MetadataReplicas: 3, LastSnapshotAt: testNow.Add(-time.Hour), MetadataLogLag: 5}
+	engine := newTestEngine(natsConfig(), facts, &memoryMutes{}, testNow)
+	result, err := engine.Evaluate(context.Background())
+	if nil != err {
+		t.Fatal(err)
+	}
+	if 0 != len(result) {
+		t.Fatalf("findings = %+v, want none", result)
+	}
+}
+
+type fakeMetadataLog struct {
+	info natsmeta.LogInfo
+	err  error
+}
+
+func (f fakeMetadataLog) LogInfo(ctx context.Context) (natsmeta.LogInfo, error) {
+	return f.info, f.err
+}
+
+func TestCollectNATSFacts(t *testing.T) {
+	var facts Facts
+	CollectNATSFacts(context.Background(), fakeMetadataLog{info: natsmeta.LogInfo{
+		LastSeq:      100,
+		AppliedSeq:   40,
+		Replicas:     []natsmeta.ReplicaInfo{{}, {Offline: true}, {}},
+		LastSnapshot: &natsmeta.SnapshotInfo{CreatedAt: testNow},
+	}}, &facts)
+	if 3 != facts.MetadataReplicas || 1 != facts.MetadataOffline || 60 != facts.MetadataLogLag || !testNow.Equal(facts.LastSnapshotAt) {
+		t.Fatalf("facts = %+v", facts)
+	}
+	var unreachable Facts
+	CollectNATSFacts(context.Background(), fakeMetadataLog{err: errors.New("down")}, &unreachable)
+	if !unreachable.NATSUnreachable {
+		t.Fatal("log error must mark NATS unreachable")
 	}
 }

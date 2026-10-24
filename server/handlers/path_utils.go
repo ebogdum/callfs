@@ -33,7 +33,6 @@ func (cr *CountingReader) BytesRead() int64 {
 // PathInfo represents parsed path information
 type PathInfo struct {
 	FullPath    string // The complete path from URL (e.g., "/some/path/here/and/file")
-	ParentPath  string // The parent directory path (e.g., "/some/path/here/and")
 	Name        string // The file or directory name (e.g., "file" or "dir")
 	IsDirectory bool   // True if path ends with "/" indicating directory
 	IsInvalid   bool   // True when path failed validation and should be rejected
@@ -60,7 +59,6 @@ func ParseFilePath(urlPath string) PathInfo {
 	if cleanPath == "" || cleanPath == "." {
 		return PathInfo{
 			FullPath:    "/",
-			ParentPath:  "/",
 			Name:        "",
 			IsDirectory: true, // Root is always a directory
 		}
@@ -69,7 +67,6 @@ func ParseFilePath(urlPath string) PathInfo {
 	if strings.Contains(cleanPath, "\\") {
 		return PathInfo{
 			FullPath:    "/",
-			ParentPath:  "/",
 			Name:        "",
 			IsDirectory: true,
 			IsInvalid:   true,
@@ -82,7 +79,6 @@ func ParseFilePath(urlPath string) PathInfo {
 		// Mark invalid path so callers can return 400 Bad Request.
 		return PathInfo{
 			FullPath:    "/",
-			ParentPath:  "/",
 			Name:        "",
 			IsDirectory: true,
 			IsInvalid:   true,
@@ -102,7 +98,6 @@ func ParseFilePath(urlPath string) PathInfo {
 	if err != nil {
 		return PathInfo{
 			FullPath:    "/",
-			ParentPath:  "/",
 			Name:        "",
 			IsDirectory: true,
 			IsInvalid:   true,
@@ -114,7 +109,6 @@ func ParseFilePath(urlPath string) PathInfo {
 	if cleanPath == "" {
 		return PathInfo{
 			FullPath:    "/",
-			ParentPath:  "/",
 			Name:        "",
 			IsDirectory: true,
 		}
@@ -126,22 +120,14 @@ func ParseFilePath(urlPath string) PathInfo {
 		fullPath += "/"
 	}
 
-	// Extract parent path and name
-	parentPath := "/"
 	name := cleanPath
 
 	if lastSlash := strings.LastIndex(cleanPath, "/"); lastSlash >= 0 {
-		if lastSlash == 0 {
-			parentPath = "/"
-		} else {
-			parentPath = "/" + cleanPath[:lastSlash]
-		}
 		name = cleanPath[lastSlash+1:]
 	}
 
 	return PathInfo{
 		FullPath:    fullPath,
-		ParentPath:  parentPath,
 		Name:        name,
 		IsDirectory: isDirectory,
 	}

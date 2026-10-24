@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/ebogdum/callfs/v2/metadata"
 )
@@ -18,6 +19,7 @@ type OwnerAliases interface {
 type UnixAuthorizer struct {
 	metadataStore metadata.Store
 	aliases       OwnerAliases
+	admins        *AdminSet
 }
 
 func NewUnixAuthorizer(metadataStore metadata.Store, aliases OwnerAliases) *UnixAuthorizer {
@@ -25,6 +27,14 @@ func NewUnixAuthorizer(metadataStore metadata.Store, aliases OwnerAliases) *Unix
 		metadataStore: metadataStore,
 		aliases:       aliases,
 	}
+}
+
+func (a *UnixAuthorizer) SetAdmins(admins *AdminSet) {
+	a.admins = admins
+}
+
+func (a *UnixAuthorizer) isAdmin(userID string) bool {
+	return isSuperUser(userID) || (nil != a.admins && a.admins.IsAdmin(userID))
 }
 
 func (a *UnixAuthorizer) isOwner(owner string, userID string) bool {
@@ -101,7 +111,7 @@ func (a *UnixAuthorizer) Explain(ctx context.Context, userID string, path string
 
 	decision := Decision{Allowed: allowed, Owner: md.Owner, Type: md.Type, Reason: "not_owner"}
 	switch {
-	case isSuperUser(userID):
+	case a.isAdmin(userID):
 		decision.Reason = "admin"
 	case a.isOwner(md.Owner, userID):
 		decision.Reason = "owner"
@@ -115,37 +125,44 @@ func isSuperUser(userID string) bool {
 	return "root" == userID || "internal-proxy" == userID
 }
 
-// checkPermissions verifies the app user has the requested permission.
-//
-// Rules:
-//  1. The "root" and "internal-proxy" app users bypass all checks (admin).
-//  2. The resource owner has full read/write/delete access.
-//  3. Directories: all authenticated users can read and write (create children).
-//     Only the owner can delete the directory itself.
-//  4. Files: all authenticated users can read. Only the owner can write or delete.
+const (
+	otherReadBit  = 04
+	otherWriteBit = 02
+
+	defaultFileMode      = 0644
+	defaultDirectoryMode = 0777
+)
+
+func otherBits(md *metadata.Metadata) uint64 {
+	fallback := uint64(defaultFileMode)
+	if "directory" == md.Type {
+		fallback = defaultDirectoryMode
+	}
+	mode, err := strconv.ParseUint(md.Mode, 8, 32)
+	if nil != err || "" == md.Mode {
+		mode = fallback
+	}
+	return mode & 07
+}
+
 func (a *UnixAuthorizer) checkPermissions(md *metadata.Metadata, userID string, perm PermissionType) error {
-	// Admin app users bypass all permission checks
-	if isSuperUser(userID) {
+	if a.isAdmin(userID) {
 		return nil
 	}
 
-	// Owner has full access
 	if a.isOwner(md.Owner, userID) {
 		return nil
 	}
 
-	// Directory permissions: all authenticated users can read and create children.
-	// Only the owner can delete the directory.
-	if md.Type == "directory" {
-		if perm == DeletePerm {
-			return ErrPermissionDenied
+	switch perm {
+	case ReadPerm:
+		if 0 != otherBits(md)&otherReadBit {
+			return nil
 		}
-		return nil
-	}
-
-	// File permissions: non-owners can read but not write or delete.
-	if perm == ReadPerm {
-		return nil
+	case WritePerm:
+		if 0 != otherBits(md)&otherWriteBit {
+			return nil
+		}
 	}
 	return ErrPermissionDenied
 }

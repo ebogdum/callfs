@@ -24,15 +24,16 @@ var (
 	ErrTooManyActiveLinks = errors.New("too many active download links")
 )
 
-const maxActiveLinksPerOwner = 1000
+const DefaultMaxActiveLinksPerOwner = 1000
 
 type LinkManager struct {
 	metadataStore metadata.Store
 	secretKey     []byte
+	maxActive     int
 	logger        *zap.Logger
 }
 
-func NewLinkManager(ms metadata.Store, secretKey string, logger *zap.Logger) (*LinkManager, error) {
+func NewLinkManager(ms metadata.Store, secretKey string, maxActiveLinksPerOwner int, logger *zap.Logger) (*LinkManager, error) {
 	if nil == ms {
 		return nil, errors.New("metadata store cannot be nil")
 	}
@@ -43,11 +44,19 @@ func NewLinkManager(ms metadata.Store, secretKey string, logger *zap.Logger) (*L
 		return nil, errors.New("logger cannot be nil")
 	}
 
+	if 0 > maxActiveLinksPerOwner {
+		return nil, errors.New("max active links per owner cannot be negative")
+	}
+	if 0 == maxActiveLinksPerOwner {
+		maxActiveLinksPerOwner = DefaultMaxActiveLinksPerOwner
+	}
+
 	h := sha256.Sum256([]byte(secretKey))
 
 	return &LinkManager{
 		metadataStore: ms,
 		secretKey:     h[:],
+		maxActive:     maxActiveLinksPerOwner,
 		logger:        logger,
 	}, nil
 }
@@ -57,18 +66,10 @@ func (lm *LinkManager) GenerateOwnedLink(ctx context.Context, owner, filePath st
 	if nil != err {
 		return nil, fmt.Errorf("failed to count active links: %w", err)
 	}
-	if maxActiveLinksPerOwner <= active {
+	if lm.maxActive <= active {
 		return nil, ErrTooManyActiveLinks
 	}
 	return lm.createLink(ctx, owner, filePath, expiryDuration)
-}
-
-func (lm *LinkManager) GenerateLink(ctx context.Context, filePath string, expiryDuration time.Duration) (string, error) {
-	link, err := lm.createLink(ctx, "", filePath, expiryDuration)
-	if nil != err {
-		return "", err
-	}
-	return link.Token, nil
 }
 
 func (lm *LinkManager) createLink(ctx context.Context, owner, filePath string, expiryDuration time.Duration) (*metadata.SingleUseLink, error) {

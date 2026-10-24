@@ -101,7 +101,7 @@ func V1PatchFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, admins
 		}
 
 		// A move is a delete at the source plus a create at the destination.
-		if isMove && !isAdminAppUser(userID) && ("" != req.Backend || "" != req.Instance) {
+		if isMove && !isAdminUser(userID, admins) && ("" != req.Backend || "" != req.Instance) {
 			SendErrorResponse(w, logger, &customError{message: "moving to a different backend or instance requires admin"}, http.StatusForbidden)
 			return
 		}
@@ -210,8 +210,12 @@ type fileAttributesResponse struct {
 	Owner string `json:"owner"`
 }
 
+func isAdminUser(userID string, admins *auth.AdminSet) bool {
+	return isAdminAppUser(userID) || admins.IsAdmin(userID)
+}
+
 func patchFileAttributes(w http.ResponseWriter, r *http.Request, engine *core.Engine, admins *auth.AdminSet, userID, path string, req renameMoveRequest, logger *zap.Logger) {
-	isAdmin := isAdminAppUser(userID) || admins.IsAdmin(userID)
+	isAdmin := isAdminUser(userID, admins)
 	if "" != req.Owner && !isAdmin {
 		sendCodedError(w, logger, http.StatusForbidden, "ADMIN_REQUIRED", "Only admins can do this.")
 		return

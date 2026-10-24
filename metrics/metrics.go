@@ -198,30 +198,6 @@ var (
 		[]string{"reason"},
 	)
 
-	RaftApplyDuration = promauto.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "callfs_raft_apply_duration_seconds",
-			Help:    "Raft log apply duration in seconds",
-			Buckets: prometheus.DefBuckets,
-		},
-	)
-
-	RaftForwardDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "callfs_raft_forward_duration_seconds",
-			Help:    "Duration of requests forwarded to the Raft leader in seconds",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"result"},
-	)
-
-	RaftLeaderChangesTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "callfs_raft_leader_changes_total",
-			Help: "Total number of Raft leader changes",
-		},
-	)
-
 	JobsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "callfs_jobs_total",
@@ -251,5 +227,12 @@ var (
 			Help: "Files stored per storage backend",
 		},
 		[]string{"storage"},
+	)
+
+	OverwriteRestoresTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "callfs_overwrite_restores_total",
+			Help: "Local disk overwrites rolled back to the previous file copy",
+		},
 	)
 )

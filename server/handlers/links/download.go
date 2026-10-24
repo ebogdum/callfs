@@ -17,6 +17,7 @@ import (
 	"github.com/ebogdum/callfs/v2/internal/pathutil"
 	"github.com/ebogdum/callfs/v2/links"
 	"github.com/ebogdum/callfs/v2/server/handlers"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 // DownloadLinkHandler creates an HTTP handler for downloading files via single-use links.
@@ -87,8 +88,15 @@ func V1DownloadLinkHandlerWithTrustedProxies(engine *core.Engine, manager *links
 		filename := filepath.Base(filePath)
 		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(filename))
 
+		totalBytes := int64(-1)
+		if md, mdErr := engine.GetMetadata(ctx, filePath); nil == mdErr {
+			totalBytes = md.Size
+		}
+		transfer := telemetry.Transfers.BeginIfLarge("download", "", filePath, userIP, totalBytes)
+		defer transfer.Finish()
+
 		// Stream the file content
-		_, err = io.Copy(w, reader)
+		_, err = io.Copy(transfer.Writer(w), reader)
 		if err != nil {
 			logger.Error("Failed to stream file content for single-use link",
 				zap.String("token", links.TruncateToken(token)),

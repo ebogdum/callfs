@@ -260,6 +260,13 @@ type auditStateKey struct{}
 
 type auditState struct {
 	userID string
+	path   string
+}
+
+func SetAuditPath(ctx context.Context, path string) {
+	if state, ok := ctx.Value(auditStateKey{}).(*auditState); ok {
+		state.path = path
+	}
 }
 
 func SetAuditUser(ctx context.Context, userID string) {
@@ -333,22 +340,83 @@ func AuditMiddleware(hub *Hub) func(http.Handler) http.Handler {
 			if 0 == status {
 				status = http.StatusOK
 			}
-			hub.Audit.Add(AuditRecord{
+			record := AuditRecord{
 				At:         started.UTC(),
 				RequestID:  recorder.Header().Get("X-Request-ID"),
 				UserID:     state.userID,
 				Method:     r.Method,
 				Route:      route,
-				Path:       auditPath(r, route),
+				Path:       auditPathOf(r, route, state),
 				Op:         classifyOp(r, route),
 				Status:     status,
 				BytesIn:    max(r.ContentLength, 0),
 				BytesOut:   recorder.bytes,
 				DurationMS: time.Since(started).Milliseconds(),
 				Client:     clientAddress(r.RemoteAddr),
-			})
+			}
+			hub.Audit.Add(record)
+			if http.StatusUnauthorized == record.Status && !presentedCredentials(r) {
+				return
+			}
+			if event, found := eventOfAudit(record); found {
+				hub.Events.record(event)
+			}
 		})
 	}
+}
+
+type auditEventKind struct {
+	eventType string
+	verb      string
+	entity    string
+}
+
+var auditEventKinds = map[string]auditEventKind{
+	OpUpload:     {"file.created", "uploaded", "file"},
+	OpReplace:    {"file.updated", "replaced", "file"},
+	OpRename:     {"file.renamed", "renamed", "file"},
+	OpMove:       {"file.moved", "moved", "file"},
+	OpDelete:     {"file.deleted", "deleted", "file"},
+	OpTrash:      {"file.trashed", "moved to trash", "file"},
+	OpRestore:    {"file.restored", "restored", "file"},
+	OpLinkCreate: {"link.created", "created a link for", "link"},
+	OpLinkOpen:   {"link.opened", "opened a link to", "link"},
+}
+
+func eventOfAudit(record AuditRecord) (Event, bool) {
+	var actor *string
+	if "" != record.UserID {
+		user := record.UserID
+		actor = &user
+	}
+	who := record.UserID
+	if "" == who {
+		who = "Someone"
+	}
+	fields := map[string]any{"route": record.Route, "status": record.Status, "request_id": record.RequestID}
+	switch {
+	case http.StatusUnauthorized == record.Status:
+		return Event{At: record.At, Type: "security.auth_failed", Level: LevelWarn, Message: "Sign-in failed from " + record.Client, Fields: fields}, true
+	case http.StatusTooManyRequests == record.Status:
+		return Event{At: record.At, Type: "security.rate_limited", Level: LevelWarn, Actor: actor, Message: who + " was slowed down by a rate limit", Fields: fields}, true
+	}
+	kind, tracked := auditEventKinds[record.Op]
+	if !tracked {
+		return Event{}, false
+	}
+	if http.StatusBadRequest <= record.Status {
+		if OpLinkOpen != record.Op {
+			return Event{}, false
+		}
+		return Event{At: record.At, Type: "link.failed", Level: LevelWarn, Actor: actor, Message: "A link could not be opened", Fields: fields}, true
+	}
+	entities := []Entity{}
+	message := who + " " + kind.verb
+	if "" != record.Path {
+		entities = append(entities, Entity{Kind: kind.entity, ID: record.Path})
+		message += " " + record.Path
+	}
+	return Event{At: record.At, Type: kind.eventType, Level: LevelInfo, Actor: actor, Message: message, Entities: entities, Fields: fields}, true
 }
 
 func routePattern(r *http.Request) string {
@@ -357,6 +425,13 @@ func routePattern(r *http.Request) string {
 		return ""
 	}
 	return routeContext.RoutePattern()
+}
+
+func auditPathOf(r *http.Request, route string, state *auditState) string {
+	if "" != state.path {
+		return state.path
+	}
+	return auditPath(r, route)
 }
 
 func auditPath(r *http.Request, route string) string {
@@ -373,7 +448,7 @@ func auditPath(r *http.Request, route string) string {
 
 func classifyOp(r *http.Request, route string) string {
 	switch {
-	case hasPathPrefix(route, "/v1/admin"):
+	case hasPathPrefix(route, "/v1/admin") && http.MethodGet != r.Method && http.MethodHead != r.Method:
 		return OpAdmin
 	case hasPathPrefix(route, "/v1/session"):
 		return OpSession
@@ -523,4 +598,14 @@ func (r *ReplicationFailureRing) CountSince(since time.Time) int {
 		return true
 	})
 	return count
+}
+
+func presentedCredentials(r *http.Request) bool {
+	if "" != r.Header.Get("Authorization") {
+		return true
+	}
+	if cookie, err := r.Cookie("callfs_session"); nil == err && "" != cookie.Value {
+		return true
+	}
+	return nil != r.Body && http.MethodPost == r.Method && strings.HasSuffix(r.URL.Path, "/session")
 }

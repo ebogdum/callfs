@@ -234,14 +234,19 @@ func compareDirectoryChildren(a, b *metadata.Metadata, query directoryPageQuery)
 	return result
 }
 
-func serveDirectoryPage(ctx context.Context, w http.ResponseWriter, values url.Values, engine *core.Engine, path string, logger *zap.Logger) {
+func serveDirectoryPage(ctx context.Context, w http.ResponseWriter, values url.Values, engine *core.Engine, path string, recursive bool, maxDepth int, logger *zap.Logger) {
 	query, err := parseDirectoryPageQuery(values)
 	if nil != err {
 		SendErrorResponse(w, logger, err, http.StatusBadRequest)
 		return
 	}
 
-	children, err := engine.ListDirectory(ctx, path)
+	var children []*metadata.Metadata
+	if recursive {
+		children, err = engine.ListDirectoryRecursiveLimited(ctx, path, maxDepth, maxDirectoryListItems+1)
+	} else {
+		children, err = engine.ListDirectory(ctx, path)
+	}
 	if nil != err {
 		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 		return
@@ -347,13 +352,13 @@ func V1ListDirectoryWithConfig(engine *core.Engine, authorizer auth.Authorizer, 
 			return
 		}
 
-		if values := r.URL.Query(); values.Has("limit") {
-			serveDirectoryPage(metadataCtx, w, values, engine, enginePath, logger)
-			return
-		}
-
 		recursive := r.URL.Query().Get("recursive") == "true"
 		maxDepth := parseMaxDepth(r)
+
+		if values := r.URL.Query(); values.Has("limit") {
+			serveDirectoryPage(metadataCtx, w, values, engine, enginePath, recursive, maxDepth, logger)
+			return
+		}
 
 		var children []*metadata.Metadata
 		var err error

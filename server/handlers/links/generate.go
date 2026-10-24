@@ -12,6 +12,7 @@ import (
 	"github.com/ebogdum/callfs/v2/links"
 	"github.com/ebogdum/callfs/v2/server/handlers"
 	"github.com/ebogdum/callfs/v2/server/middleware"
+	"github.com/ebogdum/callfs/v2/telemetry"
 	"go.uber.org/zap"
 )
 
@@ -94,6 +95,7 @@ func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorize
 		expiryDuration := time.Duration(req.ExpirySeconds) * time.Second
 
 		// Generate single-use link
+		telemetry.SetAuditPath(ctx, enginePath)
 		link, err := manager.GenerateOwnedLink(ctx, userID, enginePath, expiryDuration)
 		if nil != err && errors.Is(err, links.ErrTooManyActiveLinks) {
 			handlers.SendErrorResponse(w, logger, err, http.StatusTooManyRequests)

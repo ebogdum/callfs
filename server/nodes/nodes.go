@@ -16,6 +16,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
+
+	"github.com/ebogdum/callfs/v2/cluster"
+	"github.com/ebogdum/callfs/v2/internal/peertls"
 )
 
 const (
@@ -23,6 +26,9 @@ const (
 	ForwardedByHeader = "X-CallFS-Forwarded-By"
 	probeTimeout      = 2 * time.Second
 	statusBodyLimit   = 1 << 20
+	RoleLeader        = "leader"
+	RoleFollower      = "follower"
+	RoleOffline       = "offline"
 )
 
 var errUnknownNode = errors.New("unknown node")
@@ -38,17 +44,19 @@ type Config struct {
 	InternalSecret string
 	User           UserResolver
 	IsAdmin        AdminChecker
-	Role           func() (state, leaderID string)
+	Presence       cluster.Presence
+	Leader         func(ctx context.Context) (string, error)
 	Logger         *zap.Logger
 }
 
 type Directory struct {
-	cfg     Config
-	peers   map[string]*url.URL
-	client  *http.Client
-	proxies map[string]*httputil.ReverseProxy
-	local   http.Handler
-	localMu sync.RWMutex
+	cfg       Config
+	peers     map[string]*url.URL
+	client    *http.Client
+	proxiesMu sync.Mutex
+	proxies   map[string]*httputil.ReverseProxy
+	local     http.Handler
+	localMu   sync.RWMutex
 }
 
 type Node struct {
@@ -74,15 +82,15 @@ func New(cfg Config) (*Directory, error) {
 	d := &Directory{
 		cfg:     cfg,
 		peers:   make(map[string]*url.URL, len(cfg.Peers)),
-		client:  &http.Client{Timeout: probeTimeout},
+		client:  &http.Client{Timeout: probeTimeout, Transport: peerTransport()},
 		proxies: make(map[string]*httputil.ReverseProxy, len(cfg.Peers)),
 	}
 	for id, endpoint := range cfg.Peers {
 		if id == cfg.SelfID || "" == strings.TrimSpace(endpoint) {
 			continue
 		}
-		target, err := url.Parse(strings.TrimRight(endpoint, "/"))
-		if nil != err || "" == target.Host || ("http" != target.Scheme && "https" != target.Scheme) {
+		target, ok := parseEndpoint(endpoint)
+		if !ok {
 			return nil, errors.New("invalid endpoint for node " + id)
 		}
 		d.peers[id] = target
@@ -109,22 +117,32 @@ func (d *Directory) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	admin := d.cfg.IsAdmin(userID)
-	ids := make([]string, 0, len(d.peers))
-	for id := range d.peers {
+	members := d.members()
+	targets := d.targets(members)
+	ids := make([]string, 0, len(targets))
+	for id := range targets {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	roles := d.roles(r.Context(), members)
 	out := make([]Node, len(ids)+1)
 	out[0] = Node{ID: d.cfg.SelfID, Endpoint: d.cfg.SelfEndpoint, Self: true, Status: "up"}
-	if nil != d.cfg.Role {
-		out[0].Role, out[0].LeaderID = d.cfg.Role()
-	}
+	roles.fill(&out[0])
 	var wg sync.WaitGroup
 	for i, id := range ids {
+		if nil != d.cfg.Presence && !d.cfg.Presence.Alive(id) {
+			out[i+1] = Node{ID: id, Endpoint: targets[id].String(), Status: "down", Role: RoleOffline, Detail: "no presence heartbeat"}
+			continue
+		}
 		wg.Add(1)
 		go func(i int, id string) {
 			defer wg.Done()
-			out[i+1] = d.probe(r.Context(), id, userID, admin)
+			node := d.probe(r.Context(), id, targets[id], userID, admin)
+			if member, known := members[id]; known && admin {
+				fillMember(&node, member)
+			}
+			roles.fill(&node)
+			out[i+1] = node
 		}(i, id)
 	}
 	if admin {
@@ -159,8 +177,104 @@ func (d *Directory) selfStatus(r *http.Request, userID string) func(ctx context.
 	}
 }
 
-func (d *Directory) probe(ctx context.Context, id, userID string, admin bool) Node {
-	target := d.peers[id]
+type roleView struct {
+	leader   string
+	leaderID string
+	names    map[string]string
+}
+
+func (v roleView) fill(node *Node) {
+	if "" == v.leader || RoleOffline == node.Role {
+		return
+	}
+	node.LeaderID = v.leaderID
+	node.Role = RoleFollower
+	if v.names[node.ID] == v.leader {
+		node.Role = RoleLeader
+	}
+}
+
+func (d *Directory) members() map[string]cluster.Member {
+	out := make(map[string]cluster.Member)
+	if nil == d.cfg.Presence {
+		return out
+	}
+	for _, member := range d.cfg.Presence.Members() {
+		out[member.ID] = member
+	}
+	return out
+}
+
+func (d *Directory) targets(members map[string]cluster.Member) map[string]*url.URL {
+	out := make(map[string]*url.URL, len(d.peers)+len(members))
+	for id, target := range d.peers {
+		out[id] = target
+	}
+	for id, member := range members {
+		if id == d.cfg.SelfID {
+			continue
+		}
+		if _, known := out[id]; known {
+			continue
+		}
+		if target, ok := parseEndpoint(member.APIEndpoint); ok {
+			out[id] = target
+		}
+	}
+	return out
+}
+
+func (d *Directory) roles(ctx context.Context, members map[string]cluster.Member) roleView {
+	view := roleView{names: make(map[string]string, len(members))}
+	if nil == d.cfg.Leader {
+		return view
+	}
+	leader, err := d.cfg.Leader(ctx)
+	if nil != err {
+		if nil != d.cfg.Logger {
+			d.cfg.Logger.Warn("File index leader lookup failed", zap.Error(err))
+		}
+		return view
+	}
+	view.leader = leader
+	view.leaderID = leader
+	for id, member := range members {
+		name := member.ServerName
+		if "" == name {
+			name = id
+		}
+		view.names[id] = name
+		if name == leader {
+			view.leaderID = id
+		}
+	}
+	if _, known := view.names[d.cfg.SelfID]; !known {
+		view.names[d.cfg.SelfID] = d.cfg.SelfID
+	}
+	return view
+}
+
+func fillMember(node *Node, member cluster.Member) {
+	node.Version = member.Version
+	if !member.StartedAt.IsZero() {
+		started := member.StartedAt
+		node.StartedAt = &started
+		node.UptimeS = int64(time.Since(started) / time.Second)
+	}
+}
+
+func parseEndpoint(endpoint string) (*url.URL, bool) {
+	if "" == strings.TrimSpace(endpoint) {
+		return nil, false
+	}
+	target, err := url.Parse(strings.TrimRight(endpoint, "/"))
+	if nil != err || "" == target.Host || ("http" != target.Scheme && "https" != target.Scheme) {
+		return nil, false
+	}
+	return target, true
+}
+
+func (d *Directory) probe(ctx context.Context, id string, target *url.URL, userID string, admin bool) Node {
 	node := Node{ID: id, Endpoint: target.String(), Status: "down"}
 	started := time.Now()
 	health, err := d.get(ctx, target.String()+"/health")
@@ -170,21 +284,13 @@ func (d *Directory) probe(ctx context.Context, id, userID string, admin bool) No
 		return node
 	}
 	var body struct {
-		Status  string `json:"status"`
-		Cluster *struct {
-			State    string `json:"state"`
-			LeaderID string `json:"leader_id"`
-		} `json:"cluster"`
+		Status string `json:"status"`
 	}
 	if decodeErr := json.Unmarshal(health, &body); nil != decodeErr {
 		node.Detail = "unreadable health answer"
 		return node
 	}
 	node.Status = "up"
-	if nil != body.Cluster {
-		node.Role = body.Cluster.State
-		node.LeaderID = body.Cluster.LeaderID
-	}
 	if admin {
 		d.fillStatus(ctx, &node, func(ctx context.Context) (*http.Response, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String()+"/v1/admin/status", nil)
@@ -268,7 +374,7 @@ func (d *Directory) Forward(w http.ResponseWriter, r *http.Request) {
 		d.serveLocal(w, r, rest)
 		return
 	}
-	proxy, known := d.proxies[nodeID]
+	proxy, known := d.proxyFor(nodeID)
 	if !known {
 		writeError(w, http.StatusNotFound, "NODE_NOT_FOUND", errUnknownNode.Error()+": "+nodeID)
 		return
@@ -278,6 +384,30 @@ func (d *Directory) Forward(w http.ResponseWriter, r *http.Request) {
 	out.URL.RawPath = ""
 	out.Header.Set(OnBehalfHeader, userID)
 	proxy.ServeHTTP(w, out)
+}
+
+func (d *Directory) proxyFor(id string) (*httputil.ReverseProxy, bool) {
+	d.proxiesMu.Lock()
+	defer d.proxiesMu.Unlock()
+	if proxy, known := d.proxies[id]; known {
+		return proxy, true
+	}
+	if nil == d.cfg.Presence || !d.cfg.Presence.Alive(id) {
+		return nil, false
+	}
+	for _, member := range d.cfg.Presence.Members() {
+		if id != member.ID {
+			continue
+		}
+		target, ok := parseEndpoint(member.APIEndpoint)
+		if !ok {
+			return nil, false
+		}
+		proxy := d.newProxy(id, target)
+		d.proxies[id] = proxy
+		return proxy, true
+	}
+	return nil, false
 }
 
 func (d *Directory) serveLocal(w http.ResponseWriter, r *http.Request, rest string) {
@@ -319,6 +449,7 @@ func forwardable(path string) bool {
 
 func (d *Directory) newProxy(id string, target *url.URL) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
+		Transport: peerTransport(),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.Out.URL.Path = target.Path + pr.In.URL.Path
@@ -354,4 +485,10 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]string{"code": code, "message": message})
+}
+
+func peerTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = peertls.ClientConfig()
+	return transport
 }

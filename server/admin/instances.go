@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/internal/peertls"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/server/handlers"
 )
@@ -31,7 +31,6 @@ const (
 	instancePageSize       = 500
 	instanceSourceSelf     = "self"
 	instanceSourceConfig   = "config"
-	instanceSourceJoined   = "joined"
 )
 
 var (
@@ -108,6 +107,8 @@ type instanceView struct {
 	Files      int64      `json:"files"`
 	Bytes      int64      `json:"bytes"`
 	Pieces     int64      `json:"pieces"`
+	DiskFree   *uint64    `json:"disk_free_bytes"`
+	DiskTotal  *uint64    `json:"disk_total_bytes"`
 }
 
 type instancesPage struct {
@@ -334,6 +335,7 @@ func (a *API) instanceViews(ctx context.Context) ([]instanceView, error) {
 		view.Files = counts.Files
 		view.Bytes = counts.Bytes
 		view.Pieces = counts.Pieces
+		view.DiskFree, view.DiskTotal = a.instanceDisk(endpoint.id, endpoint.isSelf)
 		views = append(views, view)
 	}
 	return views, nil
@@ -341,6 +343,7 @@ func (a *API) instanceViews(ctx context.Context) ([]instanceView, error) {
 
 func (a *API) instanceUsage(ctx context.Context) (map[string]instanceUsage, error) {
 	usage := make(map[string]instanceUsage)
+	selfID := a.deps.Engine.GetCurrentInstanceID()
 	startAfter := ""
 	for {
 		files, err := a.deps.Store.ListByPrefix(ctx, "/", startAfter, instancePageSize)
@@ -348,9 +351,14 @@ func (a *API) instanceUsage(ctx context.Context) (map[string]instanceUsage, erro
 			return nil, err
 		}
 		for _, md := range files {
-			owner := ""
+			if "directory" == md.Type || md.ErasureCoded {
+				continue
+			}
+			owner := selfID
 			if nil != md.CallFSInstanceID {
 				owner = *md.CallFSInstanceID
+			} else if "localfs" != md.BackendType {
+				continue
 			}
 			entry := usage[owner]
 			entry.Files++
@@ -414,8 +422,9 @@ func (a *API) instanceProbeClient() *http.Client {
 	return &http.Client{
 		Timeout: instanceProbeTimeout,
 		Transport: &http.Transport{
-			Proxy:           http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: a.deps.Config.Backend.InternalProxySkipTLSVerify},
+			Proxy:             http.ProxyFromEnvironment,
+			TLSClientConfig:   peertls.ClientConfig(),
+			DisableKeepAlives: true,
 		},
 	}
 }
@@ -499,4 +508,29 @@ func nullableString(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func (a *API) instanceDisk(id string, isSelf bool) (*uint64, *uint64) {
+	if isSelf {
+		root := a.deps.Config.Backend.LocalFSRootPath
+		if "" == root {
+			return nil, nil
+		}
+		free, total, _, err := localDiskUsage(root)
+		if nil != err {
+			return nil, nil
+		}
+		return &free, &total
+	}
+	if nil == a.deps.Presence {
+		return nil, nil
+	}
+	for _, member := range a.deps.Presence.Members() {
+		if id != member.ID || 0 == member.DiskTotal {
+			continue
+		}
+		free, total := member.DiskFree, member.DiskTotal
+		return &free, &total
+	}
+	return nil, nil
 }

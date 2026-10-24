@@ -18,6 +18,7 @@ import (
 
 	"github.com/ebogdum/callfs/v2/auth"
 	"github.com/ebogdum/callfs/v2/metrics"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 type contextKey string
@@ -160,6 +161,7 @@ func V1AuthMiddleware(authenticator auth.Authenticator, sessions *auth.SessionMa
 }
 
 func withAuthenticatedScope(r *http.Request, userID string, session *auth.SessionClaims) *http.Request {
+	telemetry.SetAuditUser(r.Context(), userID)
 	if scope, ok := r.Context().Value(requestScopeKey).(*requestScope); ok {
 		scope.userID = userID
 		scope.authenticated = true

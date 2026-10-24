@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"math"
 	"net/http"
@@ -122,5 +123,70 @@ func TestRateLimitRegistrySetLimitsUpdatesExistingLimiter(t *testing.T) {
 	setting := stats.Limits[0]
 	if RateLimitSession != setting.Endpoint || 10 != setting.RPS || 3 != setting.Burst {
 		t.Fatalf("got limit %+v, want session 10 rps burst 3", setting)
+	}
+}
+
+type stubClusterCounters struct {
+	allowed  bool
+	err      error
+	calls    int
+	failures int
+}
+
+func (s *stubClusterCounters) Allow(_ context.Context, _, _ string, _ float64, _ int) (bool, error) {
+	s.calls++
+	return s.allowed, s.err
+}
+
+func (s *stubClusterCounters) ReportFailure(string, error) {
+	s.failures++
+}
+
+func serveRateLimited(t *testing.T, registry *RateLimitRegistry) int {
+	t.Helper()
+	mw, err := registry.Middleware(RateLimitDownload)
+	if nil != err {
+		t.Fatalf("middleware: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).ServeHTTP(recorder, newRateLimitRequest())
+	return recorder.Code
+}
+
+func TestRateLimitRegistryUsesClusterCounters(t *testing.T) {
+	registry := NewRateLimitRegistry(zap.NewNop())
+	defer registry.Stop()
+	if err := registry.SetLimits(RateLimitDownload, 100, 100); nil != err {
+		t.Fatalf("set limits: %v", err)
+	}
+	counters := &stubClusterCounters{allowed: false}
+	registry.SetCounters(counters)
+
+	if code := serveRateLimited(t, registry); http.StatusTooManyRequests != code {
+		t.Fatalf("cluster rejection: got %d, want 429", code)
+	}
+	counters.allowed = true
+	if code := serveRateLimited(t, registry); http.StatusOK != code {
+		t.Fatalf("cluster allowance: got %d, want 200", code)
+	}
+	if 2 != counters.calls {
+		t.Fatalf("counter calls = %d, want 2", counters.calls)
+	}
+}
+
+func TestRateLimitRegistryFallsBackToLocalOnCounterError(t *testing.T) {
+	registry := NewRateLimitRegistry(zap.NewNop())
+	defer registry.Stop()
+	if err := registry.SetLimits(RateLimitDownload, 100, 100); nil != err {
+		t.Fatalf("set limits: %v", err)
+	}
+	counters := &stubClusterCounters{err: errors.New("nats down")}
+	registry.SetCounters(counters)
+
+	if code := serveRateLimited(t, registry); http.StatusOK != code {
+		t.Fatalf("fail open: got %d, want 200", code)
+	}
+	if 1 != counters.failures {
+		t.Fatalf("failures reported = %d, want 1", counters.failures)
 	}
 }

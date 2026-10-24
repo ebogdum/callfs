@@ -1,13 +1,17 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/v2/auth"
+	"github.com/ebogdum/callfs/v2/cluster"
 	"github.com/ebogdum/callfs/v2/config"
 	"github.com/ebogdum/callfs/v2/core"
 	"github.com/ebogdum/callfs/v2/erasure"
@@ -44,12 +48,19 @@ type Deps struct {
 	Findings      *findings.Engine
 	Restart       func(reason string) error
 	Logger        *zap.Logger
+	ClusterLog    ClusterMetadataLog
+	NATS          *nats.Conn
+	JetStream     jetstream.JetStream
+	ClusterName   string
+	Presence      cluster.Presence
+	DeadTasks     cluster.DeadTasks
 }
 
 type API struct {
 	Deps
 	deps        Deps
 	factsMemory factsMemory
+	removePeer  func(ctx context.Context, peer string) error
 }
 
 type route struct {
@@ -89,6 +100,13 @@ func (a *API) routes() []route {
 		{http.MethodPut, "/config", a.SaveConfig},
 		{http.MethodPatch, "/config/runtime", a.PatchRuntimeConfig},
 		{http.MethodGet, "/config/export", a.ExportConfig},
+		{http.MethodGet, "/cluster", a.Cluster},
+		{http.MethodGet, "/cluster/state-stats", a.ClusterStateStats},
+		{http.MethodPost, "/cluster/leadership-transfer", a.ClusterLeadershipTransfer},
+		{http.MethodDelete, "/cluster/nodes/{id}", a.ClusterRemoveNode},
+		{http.MethodGet, "/cluster/snapshots", a.ClusterSnapshots},
+		{http.MethodPost, "/cluster/snapshot", a.ClusterTakeSnapshot},
+		{http.MethodGet, "/cluster/join-config", a.ClusterJoinConfig},
 		{http.MethodGet, "/instances", a.Instances},
 		{http.MethodPut, "/instances/{id}/endpoint", a.SetInstanceEndpoint},
 		{http.MethodDelete, "/instances/{id}/endpoint", a.RemoveInstanceEndpoint},
@@ -132,6 +150,9 @@ func (a *API) routes() []route {
 		{http.MethodPost, "/jobs/{id}/retry-failed", a.RetryJobFailed},
 		{http.MethodGet, "/workers", a.Workers},
 		{http.MethodPost, "/workers/{name}/run", a.RunWorker},
+		{http.MethodGet, "/tasks/dead", a.DeadTasks},
+		{http.MethodPost, "/tasks/dead/{id}/retry", a.RetryDeadTask},
+		{http.MethodDelete, "/tasks/dead/{id}", a.DropDeadTask},
 	}
 }
 

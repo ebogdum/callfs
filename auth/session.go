@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,10 +38,18 @@ type sessionPayload struct {
 	CSRF        string `json:"csrf"`
 }
 
+type SessionRevocationPublisher interface {
+	Publish(id string, expiresAt time.Time) error
+}
+
 type SessionManager struct {
 	key []byte
 	ttl time.Duration
 	now func() time.Time
+
+	mu        sync.Mutex
+	revoked   map[string]time.Time
+	publisher SessionRevocationPublisher
 }
 
 func DeriveSessionKey(internalProxySecret string) ([]byte, error) {
@@ -52,7 +61,7 @@ func DeriveSessionKey(internalProxySecret string) ([]byte, error) {
 }
 
 func NewSessionManager(key []byte, ttl time.Duration) *SessionManager {
-	return &SessionManager{key: key, ttl: ttl, now: time.Now}
+	return &SessionManager{key: key, ttl: ttl, now: time.Now, revoked: make(map[string]time.Time)}
 }
 
 func (m *SessionManager) Issue(userID, keyFingerprint string) (string, string, time.Time, error) {
@@ -109,7 +118,59 @@ func (m *SessionManager) Verify(cookieValue string) (SessionClaims, error) {
 	if !m.now().Before(claims.ExpiresAt) {
 		return claims, ErrSessionExpired
 	}
+	if m.isRevoked(signature) {
+		return claims, ErrInvalidSession
+	}
 	return claims, nil
+}
+
+func (m *SessionManager) SetRevocationPublisher(publisher SessionRevocationPublisher) {
+	m.mu.Lock()
+	m.publisher = publisher
+	m.mu.Unlock()
+}
+
+func (m *SessionManager) Revoke(cookieValue string) error {
+	claims, err := m.Verify(cookieValue)
+	if nil != err {
+		if errors.Is(err, ErrSessionExpired) || errors.Is(err, ErrInvalidSession) {
+			return nil
+		}
+		return err
+	}
+	_, signature, _ := strings.Cut(cookieValue, ".")
+	m.AcceptRevocation(signature, claims.ExpiresAt)
+	m.mu.Lock()
+	publisher := m.publisher
+	m.mu.Unlock()
+	if nil == publisher {
+		return nil
+	}
+	if publishErr := publisher.Publish(signature, claims.ExpiresAt); nil != publishErr {
+		return fmt.Errorf("failed to replicate session revocation: %w", publishErr)
+	}
+	return nil
+}
+
+func (m *SessionManager) AcceptRevocation(id string, expiresAt time.Time) {
+	now := m.now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for revokedID, revokedUntil := range m.revoked {
+		if !now.Before(revokedUntil) {
+			delete(m.revoked, revokedID)
+		}
+	}
+	if now.Before(expiresAt) {
+		m.revoked[id] = expiresAt
+	}
+}
+
+func (m *SessionManager) isRevoked(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expiresAt, found := m.revoked[id]
+	return found && m.now().Before(expiresAt)
 }
 
 func (m *SessionManager) sign(encoded string) string {

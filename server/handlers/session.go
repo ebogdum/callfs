@@ -24,10 +24,11 @@ type sessionCreateRequest struct {
 }
 
 type sessionCreateResponse struct {
-	UserID    string    `json:"user_id"`
-	IsAdmin   bool      `json:"is_admin"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CSRFToken string    `json:"csrf_token"`
+	UserID          string    `json:"user_id"`
+	IsAdmin         bool      `json:"is_admin"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	CSRFToken       string    `json:"csrf_token"`
+	IdleTimeoutSecs int       `json:"idle_timeout_seconds"`
 }
 
 func V1CreateSession(authenticator auth.Authenticator, sessions *auth.SessionManager, admins *auth.AdminSet, uiConfig config.UIConfig, logger *zap.Logger) http.HandlerFunc {
@@ -47,7 +48,11 @@ func V1CreateSession(authenticator auth.Authenticator, sessions *auth.SessionMan
 		apiKey := normalizeAPIKey(request.APIKey)
 		userID, err := authenticator.Authenticate(r.Context(), apiKey)
 		if nil != err {
-			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+			status := http.StatusInternalServerError
+			if errors.Is(err, auth.ErrAuthenticationFailed) {
+				status = http.StatusUnauthorized
+			}
+			SendErrorResponse(w, logger, err, status)
 			return
 		}
 
@@ -59,18 +64,25 @@ func V1CreateSession(authenticator auth.Authenticator, sessions *auth.SessionMan
 
 		http.SetCookie(w, sessionCookie(r, cookieValue, int(uiConfig.SessionTTL/time.Second)))
 		SendJSONResponse(w, sessionCreateResponse{
-			UserID:    userID,
-			IsAdmin:   admins.IsAdmin(userID),
-			ExpiresAt: expiresAt,
-			CSRFToken: csrfToken,
+			UserID:          userID,
+			IsAdmin:         isAdminUser(userID, admins),
+			ExpiresAt:       expiresAt,
+			CSRFToken:       csrfToken,
+			IdleTimeoutSecs: int(uiConfig.IdleTimeout / time.Second),
 		})
 		logger.Info("Session started", zap.String("user_id", userID))
 	}
 }
 
-func V1DeleteSession() http.HandlerFunc {
+func V1DeleteSession(sessions *auth.SessionManager, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, sessionCookie(r, "", -1))
+		if cookie, cookieErr := r.Cookie(sessionCookieName); nil == cookieErr && nil != sessions {
+			if err := sessions.Revoke(cookie.Value); nil != err {
+				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+				return
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

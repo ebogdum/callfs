@@ -480,6 +480,18 @@ func (a *API) candidateFor(changes map[string]any) (config.AppConfig, []configFi
 		return base, append(problems, configFieldError{Message: err.Error()})
 	}
 	for _, path := range configPaths(changes) {
+		if nil == changes[path] {
+			if message := a.resetProblem(path); "" != message {
+				problems = append(problems, configFieldError{Path: path, Message: message})
+				continue
+			}
+			if key, ok := config.LookupKey(path); ok {
+				if setErr := config.SetByPath(&base, path, key.Default); nil != setErr {
+					problems = append(problems, configFieldError{Path: path, Message: setErr.Error()})
+				}
+			}
+			continue
+		}
 		if message := a.changeProblem(path, changes[path]); "" != message {
 			problems = append(problems, configFieldError{Path: path, Message: message})
 			continue
@@ -494,6 +506,16 @@ func (a *API) candidateFor(changes map[string]any) (config.AppConfig, []configFi
 		}
 	}
 	return base, problems
+}
+
+func (a *API) resetProblem(path string) string {
+	if _, ok := config.LookupKey(path); !ok {
+		return "unknown setting"
+	}
+	if config.IsEnvOnly(path) || config.SourceEnv == a.sourceOf(path) {
+		return "set by environment"
+	}
+	return ""
 }
 
 func (a *API) changeProblem(path string, value any) string {

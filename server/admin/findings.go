@@ -189,6 +189,9 @@ func (a *API) gatherFacts(ctx context.Context) (findings.Facts, error) {
 	if err := a.diskFacts(&facts, now); nil != err {
 		return facts, err
 	}
+	if a.Deps.Config.NATS.Enabled && nil != a.Deps.ClusterLog {
+		findings.CollectNATSFacts(ctx, a.Deps.ClusterLog, &facts)
+	}
 	if err := a.erasureFacts(ctx, &facts); nil != err {
 		return facts, err
 	}

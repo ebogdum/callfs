@@ -136,6 +136,9 @@ func (a *API) ErasureVerifyAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) newErasureSummary() erasureSummaryResponse {
+	if nil == a.Deps.Config {
+		return erasureSummaryResponse{Instances: []string{}, PiecesByInstance: map[string]int{}, Placement: erasurePlacement}
+	}
 	cfg := a.Deps.Config.Erasure
 	summary := erasureSummaryResponse{
 		Enabled:          nil != a.Deps.Erasure,

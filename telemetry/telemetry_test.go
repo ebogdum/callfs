@@ -47,7 +47,7 @@ func TestRingKeepsNewestEntriesNewestFirst(t *testing.T) {
 
 func TestLogRingQueryFiltersAndPaginates(t *testing.T) {
 	hub := newTestHub(t)
-	logger := zap.New(hub.Logs.Core())
+	logger := zap.New(hub.Logs.CoreAt(zap.DebugLevel))
 	logger.Info("first", zap.String("request_id", "r1"))
 	logger.Warn("second")
 	logger.Error("third boom")
@@ -100,7 +100,7 @@ func TestClassifyOp(t *testing.T) {
 		{http.MethodPost, "/v1/links/generate", "/v1/links/generate", OpLinkCreate},
 		{http.MethodGet, "/download/token", "/download/{token}", OpLinkOpen},
 		{http.MethodPost, "/v1/trash/3/restore", "/v1/trash/{id}/restore", OpRestore},
-		{http.MethodGet, "/v1/admin/status", "/v1/admin/status", OpAdmin},
+		{http.MethodGet, "/v1/admin/status", "/v1/admin/status", OpRead},
 		{http.MethodPost, "/v1/session", "/v1/session", OpSession},
 	}
 	for _, tc := range cases {
@@ -261,7 +261,7 @@ func TestServeSSEReplaysLastEventIDAndStreamsLive(t *testing.T) {
 
 func TestTelemetryConcurrentAccess(t *testing.T) {
 	hub := newTestHub(t)
-	logger := zap.New(hub.Logs.Core())
+	logger := zap.New(hub.Logs.CoreAt(zap.DebugLevel))
 	var group sync.WaitGroup
 	for writer := 0; writer < 4; writer++ {
 		group.Add(1)
@@ -300,4 +300,21 @@ func TestTelemetryConcurrentAccess(t *testing.T) {
 		}()
 	}
 	group.Wait()
+}
+
+func TestEventOfAuditMapsFileAndSecurityActivity(t *testing.T) {
+	created, found := eventOfAudit(AuditRecord{Op: OpUpload, Status: 201, UserID: "alice", Path: "/a.txt"})
+	if !found || "file.created" != created.Type || nil == created.Actor || "alice" != *created.Actor {
+		t.Fatalf("upload event = %+v, found %v", created, found)
+	}
+	if _, found := eventOfAudit(AuditRecord{Op: OpRead, Status: 200}); found {
+		t.Fatal("reads must not become events")
+	}
+	if _, found := eventOfAudit(AuditRecord{Op: OpDelete, Status: 404}); found {
+		t.Fatal("failed deletes must not become events")
+	}
+	denied, found := eventOfAudit(AuditRecord{Op: OpList, Status: 401})
+	if !found || "security.auth_failed" != denied.Type {
+		t.Fatalf("401 event = %+v, found %v", denied, found)
+	}
 }

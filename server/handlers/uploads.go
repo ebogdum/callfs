@@ -18,6 +18,7 @@ import (
 	"github.com/ebogdum/callfs/v2/erasure"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/server/middleware"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 const uploadCreateBodyLimit = 64 << 10
@@ -102,6 +103,7 @@ func V1CreateUpload(uploads *core.Uploads) http.HandlerFunc {
 			IfMatch:   normalizeUploadIfMatch(body.IfMatch),
 			Mode:      body.Mode,
 			Storage:   body.Storage,
+			NoErasure: "false" == erasureHeaderValue(r),
 		}
 		if nil != body.Erasure {
 			req.Erasure = &erasure.StoreOptions{
@@ -154,6 +156,13 @@ func V1PutUploadPart(uploads *core.Uploads) http.HandlerFunc {
 
 		id := chi.URLParam(r, "id")
 		r.Body = http.MaxBytesReader(w, r.Body, length)
+		transferPath := "/uploads/" + id
+		if known, statusErr := uploads.Status(userID, id); nil == statusErr {
+			transferPath = known.Path
+		}
+		transfer := telemetry.Transfers.Begin("upload_part", userID, transferPath, transferClient(r), length)
+		defer transfer.Finish()
+		r.Body = transfer.Body(r.Body)
 		session, err := uploads.PutPart(userID, id, part, r.Body)
 		if nil != err {
 			sendUploadError(w, logger, err)

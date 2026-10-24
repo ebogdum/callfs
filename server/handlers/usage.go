@@ -266,7 +266,9 @@ func aggregateUsage(rows []*metadata.Metadata, root string, depth int, owner, cu
 		usage.Files++
 		usage.Bytes += md.Size
 		addUsageTotals(usage.ByStorage, md.BackendType, md.Size)
-		addUsageTotals(usage.ByInstance, owningInstanceID(md, currentInstanceID), md.Size)
+		if !md.ErasureCoded && (nil != md.CallFSInstanceID || "localfs" == md.BackendType) {
+			addUsageTotals(usage.ByInstance, owningInstanceID(md, currentInstanceID), md.Size)
+		}
 		addUsageTotals(usage.ByOwner, md.Owner, md.Size)
 		if md.ErasureCoded {
 			usage.ErasureFiles++

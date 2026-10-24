@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/v2/auth"
+	"github.com/ebogdum/callfs/v2/jobs"
 	"github.com/ebogdum/callfs/v2/links"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/server/handlers"
@@ -89,20 +90,39 @@ type linkConsumed struct {
 	Invalid  int `json:"invalid"`
 }
 
-type linkCleanupReport struct {
+type linkStatsResponse struct {
+	Window      string       `json:"window"`
+	Generated   int          `json:"generated"`
+	Consumed    linkConsumed `json:"consumed"`
+	Active      int          `json:"active"`
+	UsedLast24h int          `json:"used_last_24h"`
+	LastCleanup linkCleanup  `json:"last_cleanup"`
+}
+
+type linkCleanup struct {
 	At             *time.Time `json:"at"`
 	ExpiredRemoved int        `json:"expired_removed"`
 	UsedRemoved    int        `json:"used_removed"`
 	Error          *string    `json:"error"`
 }
 
-type linkStatsResponse struct {
-	Window      string            `json:"window"`
-	Generated   int               `json:"generated"`
-	Consumed    linkConsumed      `json:"consumed"`
-	Active      int               `json:"active"`
-	UsedLast24h int               `json:"used_last_24h"`
-	LastCleanup linkCleanupReport `json:"last_cleanup"`
+func lastLinkCleanup(runner *jobs.Runner) linkCleanup {
+	var result linkCleanup
+	if nil == runner {
+		return result
+	}
+	for _, status := range runner.Workers() {
+		if "link_cleanup" != status.Name {
+			continue
+		}
+		result.At = status.LastRunAt
+		result.Error = status.LastError
+		if counts, ok := status.LastResult.(map[string]int); ok {
+			result.ExpiredRemoved = counts["expired_removed"]
+			result.UsedRemoved = counts["used_removed"]
+		}
+	}
+	return result
 }
 
 func V1ListLinks(store metadata.Store, admins *auth.AdminSet) http.HandlerFunc {
@@ -228,23 +248,46 @@ func V1RevokeLink(store metadata.Store, admins *auth.AdminSet) http.HandlerFunc 
 	}
 }
 
-func V1LinkStats(store metadata.Store, hub *telemetry.Hub) http.HandlerFunc {
+func V1LinkStats(store metadata.Store, admins *auth.AdminSet, hub *telemetry.Hub, runner *jobs.Runner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		logger := zap.L()
+		userID, ok := middleware.GetUserID(r.Context())
+		if !ok {
+			handlers.SendErrorResponse(w, logger, auth.ErrAuthenticationFailed, http.StatusUnauthorized)
+			return
+		}
 		window, duration, err := parseLinkStatsWindow(r.URL.Query().Get("window"))
 		if nil != err {
 			handlers.SendErrorResponse(w, logger, err, http.StatusBadRequest)
 			return
 		}
 		now := time.Now()
-		generated, consumed, err := linkEventCounts(hub, now.Add(-duration))
-		if nil != err {
-			handlers.SendErrorResponse(w, logger, err, http.StatusInternalServerError)
-			return
+		since := now.Add(-duration)
+		admin := admins.IsAdmin(userID)
+		var generated int
+		var consumed linkConsumed
+		if admin {
+			generated, consumed, err = linkEventCounts(hub, since)
+			if nil != err {
+				handlers.SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+				return
+			}
+		}
+		filter := metadata.LinkFilter{Now: now}
+		if !admin {
+			filter.CreatedBy = userID
 		}
 		var active, usedRecent int
 		cutoff := now.Add(-linkUsedRecentWindow)
-		err = scanLinks(r.Context(), store, metadata.LinkFilter{Now: now}, func(link metadata.SingleUseLink) {
+		err = scanLinks(r.Context(), store, filter, func(link metadata.SingleUseLink) {
+			if !admin {
+				if !link.CreatedAt.Before(since) {
+					generated++
+				}
+				if nil != link.UsedAt && !link.UsedAt.Before(since) {
+					consumed.Success++
+				}
+			}
 			switch effectiveLinkStatus(link, now) {
 			case "active":
 				active++
@@ -264,7 +307,7 @@ func V1LinkStats(store metadata.Store, hub *telemetry.Hub) http.HandlerFunc {
 			Consumed:    consumed,
 			Active:      active,
 			UsedLast24h: usedRecent,
-			LastCleanup: lastCleanupReport(),
+			LastCleanup: lastLinkCleanup(runner),
 		})
 	}
 }
@@ -474,22 +517,4 @@ func linkEventCounts(hub *telemetry.Hub, since time.Time) (int, linkConsumed, er
 		}
 	}
 	return generated, consumed, nil
-}
-
-func lastCleanupReport() linkCleanupReport {
-	result, ok := links.LastCleanup()
-	if !ok {
-		return linkCleanupReport{}
-	}
-	at := result.At
-	report := linkCleanupReport{
-		At:             &at,
-		ExpiredRemoved: result.ExpiredRemoved,
-		UsedRemoved:    result.UsedRemoved,
-	}
-	if nil != result.Err {
-		message := result.Err.Error()
-		report.Error = &message
-	}
-	return report
 }

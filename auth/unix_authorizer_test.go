@@ -49,9 +49,6 @@ func (s *stubStore) CreateSingleUseLink(_ context.Context, _ *metadata.SingleUse
 func (s *stubStore) CountActiveSingleUseLinks(_ context.Context, _ string, _ time.Time) (int, error) {
 	return 0, nil
 }
-func (s *stubStore) UpdateSingleUseLink(_ context.Context, _ string, _ string, _ *time.Time, _ *string) error {
-	return nil
-}
 func (s *stubStore) CleanupExpiredLinks(_ context.Context, _ time.Time) (int, error) { return 0, nil }
 func (s *stubStore) CleanupUsedLinks(_ context.Context, _ time.Time) (int, error)    { return 0, nil }
 func (s *stubStore) Close() error                                                    { return nil }
@@ -208,7 +205,7 @@ func TestWriteToNonexistentChecksParent(t *testing.T) {
 		Path:  "/mydir",
 		Type:  "directory",
 		Owner: "api-user-0",
-		Mode:  "0755",
+		Mode:  "0777",
 	}
 
 	az := NewUnixAuthorizer(store, nil)
@@ -231,7 +228,7 @@ func TestAuthorizeWithMetadataMissingFileChecksParent(t *testing.T) {
 		Path:  "/mydir",
 		Type:  "directory",
 		Owner: "api-user-0",
-		Mode:  "0755",
+		Mode:  "0777",
 	}
 	store.entries["/myfile.txt"] = &metadata.Metadata{
 		Path:  "/myfile.txt",
@@ -264,7 +261,7 @@ func TestDirectoryPermissions(t *testing.T) {
 		Path:  "/shared",
 		Type:  "directory",
 		Owner: "api-user-0",
-		Mode:  "0755",
+		Mode:  "0777",
 	}
 
 	az := NewUnixAuthorizer(store, nil)
@@ -358,6 +355,59 @@ func TestLegacyAliasDoesNotMatchOtherIdentity(t *testing.T) {
 		err := az.Authorize(ctx, "api-user-hashed-b", "/legacy.txt", perm)
 		if !errors.Is(err, ErrPermissionDenied) {
 			t.Errorf("non-aliased identity should be denied %v, got: %v", perm, err)
+		}
+	}
+}
+
+func TestOtherBitsGateNonOwners(t *testing.T) {
+	store := newStubStore()
+	store.entries["/closed"] = &metadata.Metadata{Path: "/closed", Type: "directory", Owner: "api-user-0", Mode: "0750"}
+	store.entries["/readonly"] = &metadata.Metadata{Path: "/readonly", Type: "directory", Owner: "api-user-0", Mode: "0755"}
+	store.entries["/private.txt"] = &metadata.Metadata{Path: "/private.txt", Type: "file", Owner: "api-user-0", Mode: "0640"}
+	store.entries["/shared.txt"] = &metadata.Metadata{Path: "/shared.txt", Type: "file", Owner: "api-user-0", Mode: "0666"}
+
+	az := NewUnixAuthorizer(store, nil)
+	ctx := context.Background()
+
+	cases := []struct {
+		path    string
+		perm    PermissionType
+		allowed bool
+	}{
+		{"/closed", ReadPerm, false},
+		{"/closed", WritePerm, false},
+		{"/readonly", ReadPerm, true},
+		{"/readonly", WritePerm, false},
+		{"/private.txt", ReadPerm, false},
+		{"/shared.txt", WritePerm, true},
+		{"/shared.txt", DeletePerm, false},
+	}
+	for _, tc := range cases {
+		err := az.Authorize(ctx, "api-user-1", tc.path, tc.perm)
+		if tc.allowed != (nil == err) {
+			t.Errorf("%s perm %v: allowed=%v, err=%v", tc.path, tc.perm, tc.allowed, err)
+		}
+		if ownerErr := az.Authorize(ctx, "api-user-0", tc.path, tc.perm); nil != ownerErr {
+			t.Errorf("%s perm %v: owner denied: %v", tc.path, tc.perm, ownerErr)
+		}
+	}
+	if err := az.Authorize(ctx, "api-user-1", "/closed/new.txt", WritePerm); !errors.Is(err, ErrPermissionDenied) {
+		t.Errorf("create child in closed directory should be denied, got: %v", err)
+	}
+}
+
+func TestConfiguredAdminsBypassModeBits(t *testing.T) {
+	store := newStubStore()
+	store.entries["/private.txt"] = &metadata.Metadata{Path: "/private.txt", Type: "file", Owner: "api-user-0", Mode: "0600"}
+	az := NewUnixAuthorizer(store, nil)
+	ctx := context.Background()
+	if nil == az.Authorize(ctx, "ops", "/private.txt", ReadPerm) {
+		t.Fatal("non-admin read a private file")
+	}
+	az.SetAdmins(NewAdminSet([]string{"ops"}))
+	for _, perm := range []PermissionType{ReadPerm, WritePerm, DeletePerm} {
+		if err := az.Authorize(ctx, "ops", "/private.txt", perm); nil != err {
+			t.Fatalf("admin denied perm %v: %v", perm, err)
 		}
 	}
 }

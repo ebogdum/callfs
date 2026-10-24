@@ -1,6 +1,10 @@
 package handlers
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ebogdum/callfs/v2/auth"
+)
 
 func TestResolveDestinationRename(t *testing.T) {
 	cases := []struct {
@@ -45,5 +49,18 @@ func TestResolveDestinationMoveNormalizes(t *testing.T) {
 		if got != c.want {
 			t.Fatalf("resolveDestination dest %q = %q, want %q", c.dst, got, c.want)
 		}
+	}
+}
+
+func TestIsAdminUser(t *testing.T) {
+	admins := auth.NewAdminSet([]string{"ops"})
+	cases := map[string]bool{"root": true, "internal-proxy": true, "ops": true, "alice": false}
+	for userID, want := range cases {
+		if want != isAdminUser(userID, admins) {
+			t.Errorf("isAdminUser(%q) = %v, want %v", userID, !want, want)
+		}
+	}
+	if isAdminUser("alice", nil) {
+		t.Error("nil admin set must not grant admin")
 	}
 }

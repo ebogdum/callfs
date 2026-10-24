@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap/zapcore"
@@ -13,6 +14,7 @@ const logEventName = "log"
 
 type LogEntry struct {
 	ID        uint64         `json:"id"`
+	Node      string         `json:"node,omitempty"`
 	At        time.Time      `json:"at"`
 	Level     string         `json:"level"`
 	Message   string         `json:"message"`
@@ -39,8 +41,16 @@ type LogPage struct {
 type LogRing struct {
 	mu      sync.Mutex
 	nextID  uint64
+	node    string
 	entries *ring[LogEntry]
 	subs    map[*Subscription]struct{}
+	forward atomic.Pointer[logForward]
+}
+
+type logForward struct {
+	minLevel zapcore.Level
+	out      chan LogEntry
+	dropped  atomic.Uint64
 }
 
 func NewLogRing(capacity int) (*LogRing, error) {
@@ -49,10 +59,6 @@ func NewLogRing(capacity int) (*LogRing, error) {
 		return nil, err
 	}
 	return &LogRing{entries: entries, subs: make(map[*Subscription]struct{})}, nil
-}
-
-func (l *LogRing) Core() zapcore.Core {
-	return &logCore{ring: l}
 }
 
 func (l *LogRing) CoreAt(enabler zapcore.LevelEnabler) zapcore.Core {
@@ -77,23 +83,46 @@ func (l *LogRing) append(entry zapcore.Entry, base, extra []zapcore.Field) {
 	if value, ok := values["request_id"].(string); ok && "" != value {
 		requestID = &value
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.nextID++
-	record := LogEntry{
-		ID:        l.nextID,
+	record := l.store(LogEntry{
 		At:        entry.Time.UTC(),
+		Node:      l.node,
 		Level:     entry.Level.String(),
 		Message:   entry.Message,
 		Logger:    entry.LoggerName,
 		Fields:    values,
 		RequestID: requestID,
 		severity:  entry.Level,
+	})
+	if forward := l.forward.Load(); nil != forward && forward.minLevel <= entry.Level && !isLogStreamLogger(entry.LoggerName) {
+		select {
+		case forward.out <- record:
+		default:
+			forward.dropped.Add(1)
+		}
 	}
+}
+
+func (l *LogRing) Ingest(entry LogEntry) error {
+	if err := entry.severity.UnmarshalText([]byte(entry.Level)); nil != err {
+		return fmt.Errorf("%w: level %q", ErrInvalidEvent, entry.Level)
+	}
+	if nil == entry.Fields {
+		entry.Fields = map[string]any{}
+	}
+	l.store(entry)
+	return nil
+}
+
+func (l *LogRing) store(record LogEntry) LogEntry {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.nextID++
+	record.ID = l.nextID
 	l.entries.add(record)
 	if 0 < len(l.subs) {
 		fanout(l.subs, Message{ID: record.ID, Name: logEventName, Data: record})
 	}
+	return record
 }
 
 func (l *LogRing) Query(query LogQuery) (LogPage, error) {

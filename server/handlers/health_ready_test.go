@@ -12,13 +12,14 @@ import (
 )
 
 type readyStubChecker struct {
-	status health.Status
-	calls  int
+	status     health.Status
+	components []health.Component
+	calls      int
 }
 
 func (s *readyStubChecker) Report(_ context.Context, _ bool) health.Report {
 	s.calls++
-	return health.Report{Status: s.status}
+	return health.Report{Status: s.status, Components: s.components}
 }
 
 type readyStubClock struct {
@@ -82,5 +83,21 @@ func TestHealthReadyNilCheckerIsDown(t *testing.T) {
 	code, body := serveReady(t, healthReadyHandler(nil, clock.Now))
 	if http.StatusServiceUnavailable != code || `{"status":"down"}` != body {
 		t.Fatalf("got %d %s, want 503 down", code, body)
+	}
+}
+
+func TestHealthReadyListsPeersWithoutFailing(t *testing.T) {
+	checker := &readyStubChecker{
+		status: health.StatusOK,
+		components: []health.Component{
+			{Name: "locks", Status: health.StatusOK},
+			{Name: "storage.internal_proxy", Status: health.StatusDown, Detail: "peer down", Informational: true},
+		},
+	}
+	clock := &readyStubClock{now: time.Unix(1000, 0)}
+	code, body := serveReady(t, healthReadyHandler(checker, clock.Now))
+	want := `{"status":"ok","peers":[{"name":"storage.internal_proxy","status":"down","detail":"peer down"}]}`
+	if http.StatusOK != code || want != body {
+		t.Fatalf("got %d %s, want 200 %s", code, body, want)
 	}
 }

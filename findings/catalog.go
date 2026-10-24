@@ -27,7 +27,6 @@ const (
 
 const (
 	certWarnWindow                = 21 * 24 * time.Hour
-	noLeaderGrace                 = 10 * time.Second
 	instanceDownGrace             = 60 * time.Second
 	largeUploadReadTimeout        = 5 * time.Minute
 	minSecretLength               = 32
@@ -39,6 +38,8 @@ const (
 	authFailureLimit              = 100
 	defaultInstanceID             = "callfs-instance-1"
 	defaultDBPassword             = "callfs"
+	logLagLimit            uint64 = 1000
+	snapshotStaleFactor           = 3
 )
 
 var placeholderSecrets = []string{
@@ -351,6 +352,77 @@ var catalog = []rule{
 		},
 	},
 	{
+		id: "nats.plain_transport", area: AreaSecurity, severity: SeverityWarning,
+		title: "Cluster messaging is not encrypted",
+		body:  "Servers exchange file index changes and locks without TLS. Set the NATS certificate files.",
+		label: "Change setting", route: "/settings/coordination", setting: "nats.tls.cert_file",
+		check: func(in input) *hit {
+			return hitIf(natsPlainTransport(in.cfg))
+		},
+	},
+	{
+		id: "nats.not_connected", area: AreaCluster, severity: SeverityCritical,
+		title: "This server is not connected to NATS",
+		body:  "Shared file data, locks and server messages cannot be reached. Check the NATS settings and the network.",
+		label: "Open Servers", route: "/cluster/servers",
+		check: func(in input) *hit {
+			return hitIf(in.cfg.NATS.Enabled && in.facts.NATSUnreachable)
+		},
+	},
+	{
+		id: "nats.no_quorum", area: AreaCluster, severity: SeverityCritical,
+		title: "File index has lost its majority",
+		body:  "Too many copies of the file index are offline, so changes cannot be saved. Bring the offline servers back.",
+		label: "Open Servers", route: "/cluster/servers",
+		check: func(in input) *hit {
+			if !in.cfg.NATS.Enabled || 0 == in.facts.MetadataOffline || in.facts.MetadataReplicas > 2*in.facts.MetadataOffline {
+				return nil
+			}
+			return &hit{n: in.facts.MetadataOffline}
+		},
+	},
+	{
+		id: "nats.replica_offline", area: AreaCluster, severity: SeverityWarning,
+		title: "{n} file index copies are offline",
+		body:  "The file index still works but has less protection. Bring the offline servers back or remove them.",
+		label: "Open Servers", route: "/cluster/servers",
+		check: func(in input) *hit {
+			if !in.cfg.NATS.Enabled || 0 == in.facts.MetadataOffline || in.facts.MetadataReplicas <= 2*in.facts.MetadataOffline {
+				return nil
+			}
+			return &hit{n: in.facts.MetadataOffline}
+		},
+	},
+	{
+		id: "nats.log_lag", area: AreaCluster, severity: SeverityWarning,
+		title: "This server is behind on changes",
+		body:  "It has not yet applied {n} recent file changes, so it may show old data. Check its network and disk speed.",
+		label: "Open Servers", route: "/cluster/servers",
+		check: func(in input) *hit {
+			if !in.cfg.NATS.Enabled || logLagLimit >= in.facts.MetadataLogLag {
+				return nil
+			}
+			return &hit{n: int(in.facts.MetadataLogLag)}
+		},
+	},
+	{
+		id: "nats.snapshot_stale", area: AreaCluster, severity: SeverityWarning,
+		title: "File index snapshot is out of date",
+		body:  "No snapshot was taken in the last {n} hours, so a new or restarted server takes longer to catch up. Take a snapshot now.",
+		label: "Open Servers", route: "/cluster/servers", setting: "nats.metadata.snapshot_interval",
+		check: func(in input) *hit {
+			interval := in.cfg.NATS.Metadata.SnapshotInterval
+			if !in.cfg.NATS.Enabled || 0 >= interval || in.facts.LastSnapshotAt.IsZero() {
+				return nil
+			}
+			age := in.now.Sub(in.facts.LastSnapshotAt)
+			if snapshotStaleFactor*interval >= age {
+				return nil
+			}
+			return &hit{n: int(math.Ceil(age.Hours()))}
+		},
+	},
+	{
 		id: "index.sslmode_disable", area: AreaSecurity, severity: SeverityWarning,
 		title: "File index connection is not encrypted",
 		body:  "The database connection does not use TLS. Set sslmode to require or verify-full.",
@@ -566,4 +638,20 @@ func findRule(id string) (rule, bool) {
 		}
 	}
 	return rule{}, false
+}
+
+func natsPlainTransport(cfg *config.AppConfig) bool {
+	if !cfg.NATS.Enabled {
+		return false
+	}
+	if config.NATSModeExternal == cfg.NATS.Mode {
+		for _, raw := range cfg.NATS.External.URLs {
+			if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(raw)), "tls://") && "" == cfg.NATS.External.TLSCAFile {
+				return true
+			}
+		}
+		return false
+	}
+	clustered := "" != cfg.NATS.ClusterListen || 0 < len(cfg.NATS.Routes) || cfg.NATS.RoutesFromPeers
+	return clustered && "" == cfg.NATS.TLS.CertFile
 }

@@ -22,6 +22,7 @@ const (
 	lockPathKeyPrefix      = "path:"
 	lockReasonMaxBytes     = 500
 	lockBackendRedis       = "redis"
+	lockBackendNATS        = "nats"
 	lockBackendLocal       = "local"
 	lockDefaultListLimit   = 200
 	lockMaxListLimit       = 1000
@@ -137,6 +138,8 @@ func (a *API) Locks(w http.ResponseWriter, r *http.Request) {
 			Errors:      stats.Errors,
 			Lost:        stats.LostLeases,
 			RenewErrors: stats.RenewErrors,
+			WaitP50Ms:   stats.WaitP50Ms,
+			WaitP95Ms:   stats.WaitP95Ms,
 		},
 	})
 }
@@ -280,8 +283,11 @@ func heldLockItems(held []locks.HeldLock, pathFilter string, limit int) []heldLo
 }
 
 func lockBackendName(dlmType string) string {
-	if strings.EqualFold(strings.TrimSpace(dlmType), lockBackendRedis) {
+	switch strings.ToLower(strings.TrimSpace(dlmType)) {
+	case lockBackendRedis:
 		return lockBackendRedis
+	case lockBackendNATS:
+		return lockBackendNATS
 	}
 	return lockBackendLocal
 }

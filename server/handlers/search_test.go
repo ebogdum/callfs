@@ -105,7 +105,7 @@ func newSearchTestRouter() http.Handler {
 
 	router := chi.NewRouter()
 	router.Use(middleware.V1AuthMiddleware(fakeSearchAuthenticator{}, nil, nil, zap.NewNop(), nil))
-	router.Get("/v1/search", V1Search(engine, authorizer))
+	router.Get("/v1/search", V1Search(engine, authorizer, nil))
 	router.Get("/v1/usage", V1Usage(engine, NewUsageCache(nil)))
 	router.Get("/v1/permissions/check", V1PermissionCheck(authorizer, engine, auth.NewAdminSet(nil)))
 	return router

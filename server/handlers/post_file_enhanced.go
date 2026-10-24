@@ -20,6 +20,7 @@ import (
 	"github.com/ebogdum/callfs/v2/erasure"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/server/middleware"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 func erasureOptionValue(r *http.Request, header, query string) string {
@@ -172,21 +173,35 @@ func handleLocalConflict(w http.ResponseWriter, logger *zap.Logger, existingMd *
 	SendErrorResponse(w, logger, &customError{message: "file already exists, use PUT to update"}, http.StatusConflict)
 }
 
-func handleErasureUpload(w http.ResponseWriter, r *http.Request, engine *core.Engine, enginePath string, pathInfo PathInfo, userID string, logger *zap.Logger) {
-	const maxErasureUpload = 1 << 30
+const maxErasureUpload = 1 << 30
+
+func erasureHeaderValue(r *http.Request) string {
+	return strings.ToLower(strings.TrimSpace(erasureOptionValue(r, "X-CallFS-Erasure", "erasure")))
+}
+
+func erasureExplicit(r *http.Request) bool {
+	return "true" == erasureHeaderValue(r)
+}
+
+func erasureAutoSplit(r *http.Request, em *erasure.Manager) bool {
+	if nil == em || "false" == erasureHeaderValue(r) {
+		return false
+	}
+	return r.ContentLength <= maxErasureUpload && em.AutoSplit(r.ContentLength)
+}
+
+func storeErasureUpload(w http.ResponseWriter, r *http.Request, engine *core.Engine, enginePath string, pathInfo PathInfo, userID string) (*metadata.Metadata, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxErasureUpload)
 	hasher := sha256.New()
 	opts, parseErr := parseErasureOptions(r)
 	if nil != parseErr {
-		SendErrorResponse(w, logger, parseErr, http.StatusBadRequest)
-		return
+		return nil, parseErr
 	}
 	if validErr := validateErasureOptions(opts); nil != validErr {
-		SendErrorResponse(w, logger, validErr, http.StatusBadRequest)
-		return
+		return nil, validErr
 	}
 
-	committedMd, err := engine.CreateErasureFile(r.Context(), enginePath, io.TeeReader(r.Body, hasher), opts, func(info *erasure.ErasureFileInfo) *metadata.Metadata {
+	return engine.CreateErasureFile(r.Context(), enginePath, io.TeeReader(r.Body, hasher), opts, func(info *erasure.ErasureFileInfo) *metadata.Metadata {
 		return &metadata.Metadata{
 			Name:         pathInfo.Name,
 			Type:         "file",
@@ -201,7 +216,16 @@ func handleErasureUpload(w http.ResponseWriter, r *http.Request, engine *core.En
 			ETag:         hex.EncodeToString(hasher.Sum(nil)),
 		}
 	})
+}
+
+func handleErasureUpload(w http.ResponseWriter, r *http.Request, engine *core.Engine, enginePath string, pathInfo PathInfo, userID string, logger *zap.Logger) {
+	var customErr *customError
+	committedMd, err := storeErasureUpload(w, r, engine, enginePath, pathInfo, userID)
 	if err != nil {
+		if errors.As(err, &customErr) {
+			SendErrorResponse(w, logger, err, http.StatusBadRequest)
+			return
+		}
 		if errors.Is(err, metadata.ErrPrecondition) {
 			if existingMd, lookupErr := engine.GetMetadata(r.Context(), enginePath); lookupErr == nil {
 				respondExistingConflict(w, engine, existingMd, pathInfo, enginePath, logger)
@@ -268,7 +292,7 @@ func handleRegularFileCreate(w http.ResponseWriter, r *http.Request, engine *cor
 		zap.Int64("size", committedMd.Size))
 }
 
-func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendConfig *config.BackendConfig, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc {
+func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendConfig *config.BackendConfig, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
@@ -299,12 +323,12 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 			return
 		}
 
-		erasureRequested := r.Header.Get("X-CallFS-Erasure") == "true" || r.URL.Query().Get("erasure") == "true"
+		erasureRequested := erasureExplicit(r)
 		if erasureRequested && nil == engine.GetErasureManager() {
 			SendErrorResponse(w, logger, &customError{message: "erasure coding is not enabled on this server"}, http.StatusNotImplemented)
 			return
 		}
-		erasureEnabled := erasureRequested
+		erasureEnabled := erasureRequested || (!pathInfo.IsDirectory && erasureAutoSplit(r, engine.GetErasureManager()))
 
 		if (pathInfo.IsDirectory || erasureEnabled) && nil != existingMd {
 			respondExistingConflict(w, engine, existingMd, pathInfo, enginePath, logger)
@@ -315,7 +339,7 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 			md := &metadata.Metadata{
 				Name:        pathInfo.Name,
 				Type:        "directory",
-				Mode:        "0755",
+				Mode:        "0777",
 				Owner:       userID,
 				BackendType: backendConfig.DefaultBackend,
 				ATime:       time.Now(),
@@ -332,6 +356,10 @@ func V1PostFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backend
 				zap.String("user_id", userID))
 			return
 		}
+
+		transfer := telemetry.Transfers.BeginIfLarge("upload", userID, enginePath, transferClient(r), r.ContentLength)
+		defer transfer.Finish()
+		r.Body = transfer.Body(r.Body)
 
 		if erasureEnabled {
 			handleErasureUpload(w, r, engine, enginePath, pathInfo, userID, logger)

@@ -8,12 +8,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ebogdum/callfs/v2/metadata/natsmeta"
 )
 
 func componentNamed(t *testing.T, report Report, name string) Component {
@@ -97,15 +100,15 @@ func TestSlowProbeIsReportedDown(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	checker := NewChecker([]Probe{
-		{Name: "raft", Run: func(ctx context.Context) Result {
+		{Name: "metadata_log", Run: func(ctx context.Context) Result {
 			<-release
 			return ok("late")
 		}},
 	})
 
 	report := checker.Report(context.Background(), true)
-	if raft := componentNamed(t, report, "raft"); StatusDown != raft.Status {
-		t.Fatalf("raft status = %s, want down", raft.Status)
+	if slow := componentNamed(t, report, "metadata_log"); StatusDown != slow.Status {
+		t.Fatalf("metadata_log status = %s, want down", slow.Status)
 	}
 }
 
@@ -138,5 +141,66 @@ func writeSelfSignedCert(t *testing.T, path string, notBefore, notAfter time.Tim
 	}
 	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); nil != err {
 		t.Fatalf("write certificate: %v", err)
+	}
+}
+
+func TestInformationalComponentDoesNotFailOverall(t *testing.T) {
+	checker := NewChecker([]Probe{
+		{Name: "locks", Run: func(ctx context.Context) Result { return ok("fine") }},
+		{Name: "storage.internal_proxy", Informational: true, Run: func(ctx context.Context) Result {
+			return Result{Status: StatusDown, Detail: "peer down"}
+		}},
+	})
+
+	report := checker.Report(context.Background(), true)
+	if StatusOK != report.Status {
+		t.Fatalf("overall = %s, want ok", report.Status)
+	}
+	peer := componentNamed(t, report, "storage.internal_proxy")
+	if StatusDown != peer.Status || !peer.Informational {
+		t.Fatalf("peer = %+v, want down and informational", peer)
+	}
+}
+
+type fakeMetadataLog struct {
+	info     natsmeta.LogInfo
+	readyErr error
+}
+
+func (f fakeMetadataLog) LogInfo(ctx context.Context) (natsmeta.LogInfo, error) { return f.info, nil }
+
+func (f fakeMetadataLog) Ready() error { return f.readyErr }
+
+func TestMetadataLogProbe(t *testing.T) {
+	cases := []struct {
+		name string
+		log  fakeMetadataLog
+		want Status
+	}{
+		{"caught up", fakeMetadataLog{info: natsmeta.LogInfo{LastSeq: 10, AppliedSeq: 10}}, StatusOK},
+		{"small lag", fakeMetadataLog{info: natsmeta.LogInfo{LastSeq: 500, AppliedSeq: 10}}, StatusWarn},
+		{"large lag", fakeMetadataLog{info: natsmeta.LogInfo{LastSeq: 90000, AppliedSeq: 10}}, StatusDown},
+		{"halted", fakeMetadataLog{readyErr: errors.New("halted")}, StatusDown},
+		{"one of three offline", fakeMetadataLog{info: natsmeta.LogInfo{Replicas: []natsmeta.ReplicaInfo{{}, {}, {Offline: true}}}}, StatusWarn},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := MetadataLogProbe(true, tc.log).Run(context.Background())
+			if tc.want != result.Status {
+				t.Fatalf("status = %s (%s), want %s", result.Status, result.Detail, tc.want)
+			}
+		})
+	}
+}
+
+func TestNATSProbe(t *testing.T) {
+	if StatusDisabled != NATSProbe(false, nil).Run(context.Background()).Status {
+		t.Fatal("disabled probe must report disabled")
+	}
+	if StatusDown != NATSProbe(true, func() bool { return false }).Run(context.Background()).Status {
+		t.Fatal("disconnected probe must report down")
+	}
+	if StatusOK != NATSProbe(true, func() bool { return true }).Run(context.Background()).Status {
+		t.Fatal("connected probe must report ok")
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/metrics"
 	"github.com/ebogdum/callfs/v2/server/middleware"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 // FileInfo represents file/directory information for JSON responses
@@ -113,7 +114,9 @@ func serveFileContent(w http.ResponseWriter, r *http.Request, engine *core.Engin
 		w.WriteHeader(http.StatusPartialContent)
 	}
 
-	if _, err := io.Copy(w, reader); nil != err {
+	transfer := telemetry.Transfers.BeginIfLarge("download", userID, enginePath, transferClient(r), contentLength)
+	defer transfer.Finish()
+	if _, err := io.Copy(transfer.Writer(w), reader); nil != err {
 		logger.Error("Failed to stream file content", zap.Error(err))
 		return
 	}

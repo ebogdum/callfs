@@ -317,12 +317,16 @@ func (x batchExecutor) trashPath(ctx context.Context, path string) error {
 	return err
 }
 
+func (x batchExecutor) isAdmin() bool {
+	return isAdminAppUser(x.userID) || x.trash.IsAdmin(x.userID)
+}
+
 func (x batchExecutor) move(ctx context.Context, src string, op batchOp) error {
 	dst, err := resolveDestination(src, renameMoveRequest{Destination: op.Destination})
 	if nil != err {
 		return fmt.Errorf("%w: %s", errBatchInvalid, err.Error())
 	}
-	if !isAdminAppUser(x.userID) && ("" != op.Storage || "" != op.Instance) {
+	if !x.isAdmin() && ("" != op.Storage || "" != op.Instance) {
 		return fmt.Errorf("%w: moving to a different storage or instance requires admin", errBatchForbidden)
 	}
 	if _, err := x.lookup(ctx, src, auth.DeletePerm); nil != err {
@@ -358,7 +362,7 @@ func (x batchExecutor) changeMode(ctx context.Context, path, mode string) error 
 	if nil != err {
 		return err
 	}
-	if x.userID != md.Owner && !isAdminAppUser(x.userID) {
+	if x.userID != md.Owner && !x.isAdmin() {
 		return fmt.Errorf("%w: only the owner or an admin can change the mode", errBatchForbidden)
 	}
 	md.Mode = mode

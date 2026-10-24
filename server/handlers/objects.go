@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	objectsPageSize     = 1000
 	maxCountedObjects   = 1000000
 	objectDeleteTimeout = 5 * time.Minute
 )

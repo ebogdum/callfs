@@ -29,6 +29,7 @@ type CapabilitiesSource struct {
 type capabilitiesFeatures struct {
 	Erasure          bool `json:"erasure"`
 	Cluster          bool `json:"cluster"`
+	NATS             bool `json:"nats"`
 	CrossServer      bool `json:"cross_server"`
 	Websocket        bool `json:"websocket"`
 	Replication      bool `json:"replication"`
@@ -103,6 +104,7 @@ func buildCapabilities(source CapabilitiesSource) capabilitiesResponse {
 		Features: capabilitiesFeatures{
 			Erasure:          cfg.Erasure.Enabled,
 			Cluster:          cfg.NATS.Enabled,
+			NATS:             cfg.NATS.Enabled,
 			CrossServer:      0 < len(cfg.InstanceDiscovery.PeerEndpoints),
 			Websocket:        true,
 			Replication:      cfg.HA.ReplicationEnabled,
@@ -133,7 +135,7 @@ func buildCapabilities(source CapabilitiesSource) capabilitiesResponse {
 			DataShards:     cfg.Erasure.DataShards,
 			ParityShards:   cfg.Erasure.ParityShards,
 			MaxTotalShards: capabilitiesMaxTotalShards,
-			MinFileSize:    0,
+			MinFileSize:    cfg.Erasure.MinFileSize.Int64(),
 		},
 		TrashRetentionS: int64(cfg.Trash.Retention / time.Second),
 	}

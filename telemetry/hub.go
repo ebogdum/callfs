@@ -37,6 +37,7 @@ type Hub struct {
 	Events       *EventBus
 	AuthFailures *AuthFailureRing
 	Replication  *ReplicationFailureRing
+	Outcomes     *ReplicationOutcomes
 }
 
 func NewHub(cfg Config) (*Hub, error) {
@@ -44,6 +45,7 @@ func NewHub(cfg Config) (*Hub, error) {
 	if nil != err {
 		return nil, err
 	}
+	logs.node = cfg.InstanceID
 	audit, err := NewAuditRing(cfg.InstanceID, cfg.AuditEntries)
 	if nil != err {
 		return nil, err
@@ -66,6 +68,7 @@ func NewHub(cfg Config) (*Hub, error) {
 		Events:       events,
 		AuthFailures: authFailures,
 		Replication:  replication,
+		Outcomes:     NewReplicationOutcomes(),
 	}, nil
 }
 

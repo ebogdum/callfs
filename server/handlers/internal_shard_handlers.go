@@ -21,14 +21,14 @@ import (
 
 // InternalStoreShardHandler handles PUT /v1/internal/shards/{path}/{index}
 // Stores a shard on this node (authenticated via InternalProxySecret).
-func InternalStoreShardHandler(localBackend backends.Storage, internalSecret string, logger *zap.Logger) http.HandlerFunc {
+func InternalStoreShardHandler(localBackend backends.Storage, shardRoot string, internalSecret string, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authorizeInternal(r, internalSecret) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		shardPath, _, err := parseShardPath(r.URL.Path)
+		shardPath, _, err := parseShardPath(shardRoot, r.URL.Path)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -62,14 +62,14 @@ func InternalStoreShardHandler(localBackend backends.Storage, internalSecret str
 
 // InternalGetShardHandler handles GET /v1/internal/shards/{path}/{index}
 // Retrieves a shard from this node.
-func InternalGetShardHandler(localBackend backends.Storage, internalSecret string, logger *zap.Logger) http.HandlerFunc {
+func InternalGetShardHandler(localBackend backends.Storage, shardRoot string, internalSecret string, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authorizeInternal(r, internalSecret) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		shardPath, _, err := parseShardPath(r.URL.Path)
+		shardPath, _, err := parseShardPath(shardRoot, r.URL.Path)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -98,14 +98,14 @@ func InternalGetShardHandler(localBackend backends.Storage, internalSecret strin
 
 // InternalDeleteShardHandler handles DELETE /v1/internal/shards/{path}/{index}
 // Deletes a shard from this node.
-func InternalDeleteShardHandler(localBackend backends.Storage, internalSecret string, logger *zap.Logger) http.HandlerFunc {
+func InternalDeleteShardHandler(localBackend backends.Storage, shardRoot string, internalSecret string, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authorizeInternal(r, internalSecret) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		shardPath, _, err := parseShardPath(r.URL.Path)
+		shardPath, _, err := parseShardPath(shardRoot, r.URL.Path)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -155,7 +155,7 @@ func authorizeInternal(r *http.Request, secret string) bool {
 
 // parseShardPath extracts the shard storage path and index from a URL like
 // /v1/internal/shards/some/file/path/3
-func parseShardPath(urlPath string) (string, int, error) {
+func parseShardPath(shardRoot, urlPath string) (string, int, error) {
 	// Strip the prefix
 	trimmed := strings.TrimPrefix(urlPath, "/v1/internal/shards/")
 	if trimmed == urlPath {
@@ -186,7 +186,7 @@ func parseShardPath(urlPath string) (string, int, error) {
 	// Use content-hash based path matching erasure/manager.go convention.
 	// The filePath is used as-is since the caller (storeRemoteShard) already
 	// sends the hash-based prefix as the path component.
-	shardPath := fmt.Sprintf(".erasure/%s/%d", filePath, index)
+	shardPath := fmt.Sprintf("%s/%s/%d", shardRoot, filePath, index)
 	// NOTE: This path scheme must match erasure.Manager.StoreFile's shardPath construction.
 	return shardPath, index, nil
 }

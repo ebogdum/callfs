@@ -99,7 +99,7 @@ func TestV1CreateSessionRejectsOversizeBody(t *testing.T) {
 
 func TestV1DeleteSessionClearsCookie(t *testing.T) {
 	rec := httptest.NewRecorder()
-	V1DeleteSession()(rec, httptest.NewRequest(http.MethodDelete, "/v1/session", nil))
+	V1DeleteSession(nil, zap.NewNop())(rec, httptest.NewRequest(http.MethodDelete, "/v1/session", nil))
 	if http.StatusNoContent != rec.Code {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -118,7 +118,7 @@ func TestV1MeReportsSessionAuth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieValue})
 	rec := httptest.NewRecorder()
-	sessionTestChain(authenticator, sessions, V1Me(admins, sessions)).ServeHTTP(rec, req)
+	sessionTestChain(authenticator, sessions, V1Me(admins, config.UIConfig{IdleTimeout: time.Hour})).ServeHTTP(rec, req)
 	if http.StatusOK != rec.Code {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
 	}
@@ -137,7 +137,7 @@ func TestV1MeReportsAPIKeyAuth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer "+sessionTestAliceKey)
 	rec := httptest.NewRecorder()
-	sessionTestChain(authenticator, sessions, V1Me(admins, sessions)).ServeHTTP(rec, req)
+	sessionTestChain(authenticator, sessions, V1Me(admins, config.UIConfig{IdleTimeout: time.Hour})).ServeHTTP(rec, req)
 	if http.StatusOK != rec.Code {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
 	}

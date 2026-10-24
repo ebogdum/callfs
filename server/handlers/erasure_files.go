@@ -166,7 +166,11 @@ func V1GetErasureFile(store erasureRecordStore, em *erasure.Manager, authorizer 
 		}
 		info, err := store.GetErasureInfo(r.Context(), filePath)
 		if nil != err {
-			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+			status := http.StatusInternalServerError
+			if errors.Is(err, metadata.ErrNotFound) {
+				status = http.StatusNotFound
+			}
+			SendErrorResponse(w, logger, err, status)
 			return
 		}
 		report, err := em.Verify(r.Context(), filePath)

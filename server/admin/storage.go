@@ -17,6 +17,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/ebogdum/callfs/v2/backends/localfs"
 	"github.com/ebogdum/callfs/v2/jobs"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/server/handlers"
@@ -70,9 +71,9 @@ type stagingTotals struct {
 }
 
 type replicationCounts struct {
-	OK      *int `json:"ok"`
-	Failed  int  `json:"failed"`
-	Skipped *int `json:"skipped"`
+	OK      int `json:"ok"`
+	Failed  int `json:"failed"`
+	Skipped int `json:"skipped"`
 }
 
 type replicationPage struct {
@@ -133,10 +134,8 @@ func (a *API) Replication(w http.ResponseWriter, r *http.Request) {
 		Enabled:        a.deps.Config.HA.ReplicationEnabled,
 		ReplicaStorage: a.deps.Config.HA.ReplicaBackend,
 		RequireSuccess: a.deps.Config.HA.RequireReplicaSuccess,
-		Counts24h: replicationCounts{
-			Failed: hub.Replication.CountSince(time.Now().Add(-backupFailureWindow)),
-		},
-		Failures: failures,
+		Counts24h:      a.replicationCounts(hub),
+		Failures:       failures,
 	})
 }
 
@@ -437,7 +436,7 @@ func scanLocalStaging(root string, now time.Time) ([]stagingItem, error) {
 		return nil, err
 	}
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), stagingTempPrefix) {
+		if !strings.HasPrefix(entry.Name(), stagingTempPrefix) || localfs.IsOverwriteName(entry.Name()) {
 			continue
 		}
 		item, err := stagingEntry(root, path.Join("/", entry.Name()), "tmp", now)
@@ -571,4 +570,15 @@ func migrationDriver(storeType string) string {
 		return "postgres"
 	}
 	return "none"
+}
+
+func (a *API) replicationCounts(hub *telemetry.Hub) replicationCounts {
+	since := time.Now().Add(-backupFailureWindow)
+	counts := replicationCounts{Failed: hub.Replication.CountSince(since)}
+	if nil != hub.Outcomes {
+		ok, skipped, _ := hub.Outcomes.Since(since)
+		counts.OK = ok
+		counts.Skipped = skipped
+	}
+	return counts
 }

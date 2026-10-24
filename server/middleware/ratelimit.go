@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -251,12 +252,27 @@ func writeRateLimited(w http.ResponseWriter, limit rate.Limit, logger *zap.Logge
 	}
 }
 
-func limitPerIP(perIP *perIPRateLimiter, onReject func(client string), logger *zap.Logger) func(http.Handler) http.Handler {
+type ClusterCounters interface {
+	Allow(ctx context.Context, endpoint, client string, rps float64, burst int) (bool, error)
+	ReportFailure(op string, err error)
+}
+
+type clusterDecision func(ctx context.Context, client string) (allowed, decided bool)
+
+func limitPerIP(perIP *perIPRateLimiter, onReject func(client string), cluster clusterDecision, logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := clientIP(r.RemoteAddr)
 			limiter := perIP.getLimiter(ip)
-			if limiter.Allow() {
+			permitted := false
+			decided := false
+			if nil != cluster {
+				permitted, decided = cluster(r.Context(), ip)
+			}
+			if !decided {
+				permitted = limiter.Allow()
+			}
+			if permitted {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -274,7 +290,7 @@ func limitPerIP(perIP *perIPRateLimiter, onReject func(client string), logger *z
 
 func V1RateLimitMiddleware(limiter *rate.Limiter, logger *zap.Logger) (*RateLimiterHandle, func(http.Handler) http.Handler) {
 	perIP := newPerIPRateLimiter(limiter.Limit(), limiter.Burst())
-	return &RateLimiterHandle{perIP: perIP}, limitPerIP(perIP, nil, logger)
+	return &RateLimiterHandle{perIP: perIP}, limitPerIP(perIP, nil, nil, logger)
 }
 
 func RedactDownloadPath(path string) string {
@@ -294,6 +310,8 @@ type RateLimitRegistry struct {
 	endpoints  map[string]*endpointRateLimit
 	rejections *rejectionRing
 	logger     *zap.Logger
+	counterMu  sync.RWMutex
+	counters   ClusterCounters
 }
 
 type RateLimitSetting struct {
@@ -327,6 +345,18 @@ func NewRateLimitRegistry(logger *zap.Logger) *RateLimitRegistry {
 	}
 }
 
+func (r *RateLimitRegistry) SetCounters(counters ClusterCounters) {
+	r.counterMu.Lock()
+	defer r.counterMu.Unlock()
+	r.counters = counters
+}
+
+func (r *RateLimitRegistry) clusterCounters() ClusterCounters {
+	r.counterMu.RLock()
+	defer r.counterMu.RUnlock()
+	return r.counters
+}
+
 func (r *RateLimitRegistry) SetLimits(endpoint string, rps float64, burst int) error {
 	if !slices.Contains(rateLimitEndpointNames, endpoint) {
 		return fmt.Errorf("%w: %s", ErrUnknownRateLimitEndpoint, endpoint)
@@ -358,7 +388,20 @@ func (r *RateLimitRegistry) Middleware(endpoint string) (func(http.Handler) http
 		metrics.RateLimitRejectionsTotal.WithLabelValues(endpoint).Inc()
 		r.rejections.add(rejectionEvent{client: client, endpoint: endpoint, at: time.Now()})
 	}
-	return limitPerIP(entry.perIP, onReject, r.logger), nil
+	cluster := func(ctx context.Context, client string) (bool, bool) {
+		counters := r.clusterCounters()
+		if nil == counters {
+			return false, false
+		}
+		rps, burst := entry.perIP.settings()
+		allowed, err := counters.Allow(ctx, endpoint, rateLimitKey(client), float64(rps), burst)
+		if nil != err {
+			counters.ReportFailure("rate_limit."+endpoint, err)
+			return false, false
+		}
+		return allowed, true
+	}
+	return limitPerIP(entry.perIP, onReject, cluster, r.logger), nil
 }
 
 func (r *RateLimitRegistry) Stats() RateLimitStats {

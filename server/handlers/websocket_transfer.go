@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	"github.com/ebogdum/callfs/v2/core"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/server/middleware"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 const wsChunkSize = 64 * 1024
@@ -100,17 +102,81 @@ var (
 	wsUploadSlotsMu     sync.Mutex
 	wsUploadSlotsActive int
 	wsUploadSlotsByUser = make(map[string]int)
+
+	wsSlotCountersMu sync.RWMutex
+	wsSlotCounters   SlotCounters
 )
 
-func wsAcquireUploadSlot(userID string) bool {
+const (
+	wsSlotScopeTotal = "ws_total"
+	wsSlotScopeUser  = "ws_user"
+	wsSlotKeyAll     = "all"
+)
+
+type SlotCounters interface {
+	Acquire(ctx context.Context, scope, key string, limit int) (bool, error)
+	Release(ctx context.Context, scope, key string) error
+	ReportFailure(op string, err error)
+}
+
+func SetWebSocketSlotCounters(counters SlotCounters) {
+	wsSlotCountersMu.Lock()
+	defer wsSlotCountersMu.Unlock()
+	wsSlotCounters = counters
+}
+
+func currentWebSocketSlotCounters() SlotCounters {
+	wsSlotCountersMu.RLock()
+	defer wsSlotCountersMu.RUnlock()
+	return wsSlotCounters
+}
+
+func wsAcquireClusterSlot(ctx context.Context, counters SlotCounters, userID string) (release func(), acquired, decided bool) {
+	totalOK, err := counters.Acquire(ctx, wsSlotScopeTotal, wsSlotKeyAll, wsMaxConcurrentUploads)
+	if nil != err {
+		counters.ReportFailure("websocket_slots", err)
+		return nil, false, false
+	}
+	if !totalOK {
+		return nil, false, true
+	}
+	releaseTotal := func() {
+		if relErr := counters.Release(context.Background(), wsSlotScopeTotal, wsSlotKeyAll); nil != relErr {
+			counters.ReportFailure("websocket_slots", relErr)
+		}
+	}
+	userOK, err := counters.Acquire(ctx, wsSlotScopeUser, userID, wsMaxUploadsPerUser)
+	if nil != err {
+		counters.ReportFailure("websocket_slots", err)
+		releaseTotal()
+		return nil, false, false
+	}
+	if !userOK {
+		releaseTotal()
+		return nil, false, true
+	}
+	return func() {
+		if relErr := counters.Release(context.Background(), wsSlotScopeUser, userID); nil != relErr {
+			counters.ReportFailure("websocket_slots", relErr)
+		}
+		releaseTotal()
+	}, true, true
+}
+
+func wsAcquireUploadSlot(ctx context.Context, userID string) (func(), bool) {
+	if counters := currentWebSocketSlotCounters(); nil != counters {
+		if release, acquired, decided := wsAcquireClusterSlot(ctx, counters, userID); decided {
+			return release, acquired
+		}
+	}
 	wsUploadSlotsMu.Lock()
 	defer wsUploadSlotsMu.Unlock()
 	if wsMaxConcurrentUploads <= wsUploadSlotsActive || wsMaxUploadsPerUser <= wsUploadSlotsByUser[userID] {
-		return false
+		return nil, false
 	}
 	wsUploadSlotsActive++
 	wsUploadSlotsByUser[userID]++
-	return true
+	return func() { wsReleaseUploadSlot(userID) }, true
 }
 
 func wsReleaseUploadSlot(userID string) {
@@ -121,6 +187,14 @@ func wsReleaseUploadSlot(userID string) {
 	if 0 == wsUploadSlotsByUser[userID] {
 		delete(wsUploadSlotsByUser, userID)
 	}
+}
+
+func transferClient(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if nil != err || "" == host {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func wsCloseWithError(conn *websocket.Conn, code int, msg string) {
@@ -177,6 +251,9 @@ func wsDownload(conn *websocket.Conn, r *http.Request, engine *core.Engine, auth
 		return
 	}
 
+	transfer := telemetry.Transfers.Begin("websocket_download", userID, enginePath, transferClient(r), md.Size)
+	defer transfer.Finish()
+
 	bufPtr := wsChunkPool.Get().(*[]byte)
 	defer wsChunkPool.Put(bufPtr)
 	buf := *bufPtr
@@ -194,6 +271,7 @@ func wsDownload(conn *websocket.Conn, r *http.Request, engine *core.Engine, auth
 				return
 			}
 			sent += int64(n)
+			transfer.Add(int64(n))
 			if err := wsSendIfDue(conn, "progress:", sent, wsProgressInterval, &nextProgress); nil != err {
 				logger.Warn("Failed writing websocket download progress", zap.Error(err))
 				return
@@ -441,11 +519,11 @@ func wsResolveUploadTarget(conn *websocket.Conn, ctx context.Context, engine *co
 	return md, true
 }
 
-func wsStreamToEngine(conn *websocket.Conn, r *http.Request, engine *core.Engine, md *metadata.Metadata, enginePath string, declared int64, logger *zap.Logger) (string, error) {
+func wsStreamToEngine(conn *websocket.Conn, r *http.Request, engine *core.Engine, md *metadata.Metadata, enginePath string, declared int64, transfer *telemetry.TransferHandle, logger *zap.Logger) (string, error) {
 	pr, pw := io.Pipe()
 	streamDone := make(chan error, 1)
 	go func() {
-		err := wsStreamUpload(conn, pw, declared)
+		err := wsStreamUpload(conn, transfer.Writer(pw), declared)
 		pw.CloseWithError(err)
 		streamDone <- err
 	}()
@@ -483,13 +561,17 @@ func wsUpload(conn *websocket.Conn, r *http.Request, engine *core.Engine, author
 		return
 	}
 
+	transfer := telemetry.Transfers.Begin("websocket_upload", userID, enginePath, transferClient(r), -1)
+	defer transfer.Finish()
+
 	if rawSize := r.URL.Query().Get("size"); rawSize != "" {
 		declared, err := strconv.ParseInt(rawSize, 10, 64)
 		if err != nil || declared < 0 || declared > wsMaxUploadBytes {
 			wsCloseWithError(conn, websocket.CloseUnsupportedData, "invalid upload size")
 			return
 		}
-		etag, err := wsStreamToEngine(conn, r, engine, md, enginePath, declared, logger)
+		transfer.SetTotal(declared)
+		etag, err := wsStreamToEngine(conn, r, engine, md, enginePath, declared, transfer, logger)
 		if err != nil {
 			if errors.Is(err, errWSUploadTooLarge) {
 				wsCloseWithError(conn, websocket.CloseMessageTooBig, "upload too large")
@@ -511,6 +593,7 @@ func wsUpload(conn *websocket.Conn, r *http.Request, engine *core.Engine, author
 	defer payload.Close()
 
 	size := payload.size
+	transfer.Add(size)
 	reader, readerErr := payload.Reader()
 	if readerErr != nil {
 		logger.Error("Failed to read buffered websocket upload", zap.Error(readerErr))
@@ -563,12 +646,13 @@ func V1WebSocketTransfer(engine *core.Engine, authorizer auth.Authorizer, backen
 
 		releaseSlot := func() {}
 		if "upload" == mode {
-			if !wsAcquireUploadSlot(userID) {
+			releaseUploadSlot, acquired := wsAcquireUploadSlot(r.Context(), userID)
+			if !acquired {
 				SendErrorResponse(w, logger, &customError{message: "too many concurrent websocket uploads"}, http.StatusServiceUnavailable)
 				return
 			}
 			var releaseOnce sync.Once
-			releaseSlot = func() { releaseOnce.Do(func() { wsReleaseUploadSlot(userID) }) }
+			releaseSlot = func() { releaseOnce.Do(releaseUploadSlot) }
 			defer releaseSlot()
 		}
 

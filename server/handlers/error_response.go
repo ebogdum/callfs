@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -125,7 +126,7 @@ func SendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, def
 	}
 
 	logLevel := logger.Debug
-	if statusCode >= 500 {
+	if 500 <= statusCode && http.StatusNotImplemented != statusCode && !errors.Is(err, context.Canceled) {
 		logLevel = logger.Error
 	}
 	logLevel("Error response sent",
@@ -149,6 +150,9 @@ func SendJSONResponse(w http.ResponseWriter, data interface{}) {
 }
 
 func genericErrorFields(statusCode int, err error) (string, string) {
+	if http.StatusNotImplemented == statusCode {
+		return "NOT_IMPLEMENTED", "this server is not set up for this request"
+	}
 	if 500 <= statusCode && http.StatusBadGateway != statusCode {
 		return "INTERNAL_ERROR", "an internal error occurred"
 	}

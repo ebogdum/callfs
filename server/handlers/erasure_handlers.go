@@ -15,6 +15,7 @@ import (
 	"github.com/ebogdum/callfs/v2/erasure"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/server/middleware"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 // V1GetShard handles GET /v1/shards/{path}/{index} - public shard download (authenticated).
@@ -109,9 +110,12 @@ func HandleErasureDownload(w http.ResponseWriter, r *http.Request, em *erasure.M
 		w.Header().Set("Content-Range", contentRangeHeader(offset, n, md.Size))
 		w.WriteHeader(http.StatusPartialContent)
 	}
+	userID, _ := middleware.GetUserID(r.Context())
+	transfer := telemetry.Transfers.BeginIfLarge("download", userID, path, transferClient(r), n)
+	defer transfer.Finish()
 	buf := getCopyBuffer()
 	defer putCopyBuffer(buf)
-	if _, err := io.CopyBuffer(w, rc, *buf); err != nil {
+	if _, err := io.CopyBuffer(transfer.Writer(w), rc, *buf); err != nil {
 		logger.Error("Failed to stream reassembled file", zap.Error(err))
 	}
 }

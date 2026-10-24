@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ebogdum/callfs/v2/core"
 )
 
 func TestInstanceEndpointValidation(t *testing.T) {
@@ -136,7 +134,7 @@ func TestRetagHashMatchesETag(t *testing.T) {
 	if nil != err {
 		t.Fatal(err)
 	}
-	if want := core.ETagFor([]byte("abc")); want != digest {
+	if want := "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"; want != digest {
 		t.Fatalf("hashContent returned %s, want %s", digest, want)
 	}
 }

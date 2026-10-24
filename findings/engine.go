@@ -113,6 +113,11 @@ type Facts struct {
 	LinkFailedOpens1h       int
 	AuthFailures10m         int
 	PendingRestart          int
+	NATSUnreachable         bool
+	MetadataReplicas        int
+	MetadataOffline         int
+	MetadataLogLag          uint64
+	LastSnapshotAt          time.Time
 }
 
 type Source func(ctx context.Context) (Facts, error)

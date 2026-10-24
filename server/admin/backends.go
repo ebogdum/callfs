@@ -4,13 +4,13 @@ import (
 	"errors"
 	"net/http"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/v2/core"
+	"github.com/ebogdum/callfs/v2/internal/diskspace"
 	"github.com/ebogdum/callfs/v2/server/handlers"
 )
 
@@ -246,13 +246,9 @@ func backendStatus(enabled bool, probe *backendProbeRecord, free, total uint64) 
 }
 
 func localDiskUsage(root string) (uint64, uint64, uint64, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(root, &stat); nil != err {
+	usage, err := diskspace.Of(root)
+	if nil != err {
 		return 0, 0, 0, err
 	}
-	block := uint64(stat.Bsize)
-	total := uint64(stat.Blocks) * block
-	free := uint64(stat.Bavail) * block
-	used := total - uint64(stat.Bfree)*block
-	return free, total, used, nil
+	return usage.Free, usage.Total, usage.Used, nil
 }

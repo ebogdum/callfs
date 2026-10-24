@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ebogdum/callfs/v2/locks"
+	"github.com/ebogdum/callfs/v2/metadata/natsmeta"
 )
 
 type Status string
@@ -29,6 +30,8 @@ const (
 	certWarnWindow = 21 * 24 * time.Hour
 	diskWarnRatio  = 0.10
 	diskDownRatio  = 0.01
+	logLagWarn     = 100
+	logLagDown     = 5000
 )
 
 type Result struct {
@@ -37,16 +40,18 @@ type Result struct {
 }
 
 type Probe struct {
-	Name string
-	Run  func(ctx context.Context) Result
+	Name          string
+	Informational bool
+	Run           func(ctx context.Context) Result
 }
 
 type Component struct {
-	Name      string    `json:"name"`
-	Status    Status    `json:"status"`
-	LatencyMs int64     `json:"latency_ms"`
-	Detail    string    `json:"detail"`
-	Since     time.Time `json:"since"`
+	Name          string    `json:"name"`
+	Status        Status    `json:"status"`
+	LatencyMs     int64     `json:"latency_ms"`
+	Detail        string    `json:"detail"`
+	Since         time.Time `json:"since"`
+	Informational bool      `json:"informational,omitempty"`
 }
 
 type Report struct {
@@ -131,16 +136,20 @@ func runProbe(ctx context.Context, probe Probe) Component {
 	case <-probeCtx.Done():
 	}
 	return Component{
-		Name:      probe.Name,
-		Status:    result.Status,
-		Detail:    result.Detail,
-		LatencyMs: time.Since(start).Milliseconds(),
+		Name:          probe.Name,
+		Status:        result.Status,
+		Detail:        result.Detail,
+		LatencyMs:     time.Since(start).Milliseconds(),
+		Informational: probe.Informational,
 	}
 }
 
 func overallStatus(components []Component) Status {
 	overall := StatusOK
 	for _, comp := range components {
+		if comp.Informational {
+			continue
+		}
 		if StatusDown == comp.Status {
 			return StatusDown
 		}
@@ -189,6 +198,61 @@ func LocksProbe(manager locks.Manager, instanceID string) Probe {
 	}}
 }
 
+type MetadataLog interface {
+	LogInfo(ctx context.Context) (natsmeta.LogInfo, error)
+	Ready() error
+}
+
+func NATSProbe(enabled bool, connected func() bool) Probe {
+	return Probe{Name: "nats", Run: func(ctx context.Context) Result {
+		if !enabled {
+			return disabled("Messaging is off")
+		}
+		if !connected() {
+			return Result{Status: StatusDown, Detail: "This server is not connected to NATS"}
+		}
+		return ok("Connected")
+	}}
+}
+
+func MetadataLogProbe(enabled bool, log MetadataLog) Probe {
+	return Probe{Name: "metadata_log", Run: func(ctx context.Context) Result {
+		if !enabled {
+			return disabled("Messaging is off")
+		}
+		if err := log.Ready(); nil != err {
+			return failed(err)
+		}
+		info, err := log.LogInfo(ctx)
+		if nil != err {
+			return failed(err)
+		}
+		var lag uint64
+		if info.AppliedSeq < info.LastSeq {
+			lag = info.LastSeq - info.AppliedSeq
+		}
+		if logLagDown < lag {
+			return Result{Status: StatusDown, Detail: fmt.Sprintf("This server is %d changes behind", lag)}
+		}
+		offline := 0
+		for _, replica := range info.Replicas {
+			if replica.Offline {
+				offline++
+			}
+		}
+		if 0 < offline && len(info.Replicas) <= 2*offline {
+			return warned(fmt.Sprintf("%d of %d log copies are offline and writes have no majority", offline, len(info.Replicas)))
+		}
+		if logLagWarn < lag {
+			return warned(fmt.Sprintf("This server is %d changes behind", lag))
+		}
+		if 0 < offline {
+			return warned(fmt.Sprintf("%d of %d log copies are offline", offline, len(info.Replicas)))
+		}
+		return ok("Up to date")
+	}}
+}
+
 func StorageProbe(name string, enabled bool, stat func(ctx context.Context) error) Probe {
 	return Probe{Name: name, Run: func(ctx context.Context) Result {
 		if !enabled {
@@ -199,6 +263,12 @@ func StorageProbe(name string, enabled bool, stat func(ctx context.Context) erro
 		}
 		return ok("Reachable")
 	}}
+}
+
+func PeerStorageProbe(name string, enabled bool, stat func(ctx context.Context) error) Probe {
+	probe := StorageProbe(name, enabled, stat)
+	probe.Informational = true
+	return probe
 }
 
 func ErasureProbe(enabled, present bool) Probe {

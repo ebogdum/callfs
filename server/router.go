@@ -54,10 +54,6 @@ func (rr *RouterResources) Stop() {
 	}
 }
 
-type ClusterRoleInfo interface {
-	LeaderInfo() (state, leaderID, leaderAddr string)
-}
-
 type ErasureRecordStore interface {
 	metadata.ErasureMetadataStore
 	ListErasureInfos(ctx context.Context, prefix, cursor string, limit int) ([]*metadata.ErasureFileInfo, string, error)
@@ -71,7 +67,6 @@ type RouterOptions struct {
 	ServerConfig  *config.ServerConfig
 	BackendConfig *config.BackendConfig
 	APIHost       string
-	ClusterRole   ClusterRoleInfo
 	Logger        *zap.Logger
 
 	Config       *config.AppConfig
@@ -92,15 +87,8 @@ type RouterOptions struct {
 	Nodes        *nodes.Directory
 }
 
-type healthCluster struct {
-	State      string `json:"state"`
-	LeaderID   string `json:"leader_id"`
-	LeaderAddr string `json:"leader_addr"`
-}
-
 type healthResponse struct {
-	Status  string         `json:"status"`
-	Cluster *healthCluster `json:"cluster,omitempty"`
+	Status string `json:"status"`
 }
 
 func parseTrustedProxies(cidrs []string) ([]netip.Prefix, error) {
@@ -343,13 +331,9 @@ func trackTransfer(kind string, next http.Handler) http.HandlerFunc {
 	}
 }
 
-func healthEndpoint(roleInfo ClusterRoleInfo) http.HandlerFunc {
+func healthEndpoint() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body := healthResponse{Status: "ok"}
-		if nil != roleInfo {
-			state, leaderID, leaderAddr := roleInfo.LeaderInfo()
-			body.Cluster = &healthCluster{State: state, LeaderID: leaderID, LeaderAddr: leaderAddr}
-		}
 		payload, err := json.Marshal(body)
 		if nil != err {
 			http.Error(w, "failed to encode health response", http.StatusInternalServerError)
@@ -386,36 +370,6 @@ func limitMiddleware(opts RouterOptions, resources *RouterResources, endpoint st
 	return mw, nil
 }
 
-func NewRouter(
-	engine *core.Engine,
-	authenticator auth.Authenticator,
-	authorizer auth.Authorizer,
-	linkManager *links.LinkManager,
-	serverConfig *config.ServerConfig,
-	backendConfig *config.BackendConfig,
-	apiHost string,
-	roleInfo ClusterRoleInfo,
-	logger *zap.Logger,
-) (chi.Router, *RouterResources) {
-	var erasureManager *erasure.Manager
-	if nil != engine {
-		erasureManager = engine.GetErasureManager()
-	}
-	return NewRouterWithOptions(RouterOptions{
-		Engine:        engine,
-		Authenticator: authenticator,
-		Authorizer:    authorizer,
-		Links:         linkManager,
-		ServerConfig:  serverConfig,
-		BackendConfig: backendConfig,
-		APIHost:       apiHost,
-		ClusterRole:   roleInfo,
-		Logger:        logger,
-		Erasure:       erasureManager,
-		Admins:        auth.NewAdminSet(nil),
-	})
-}
-
 func NewRouterWithOptions(opts RouterOptions) (*chi.Mux, *RouterResources) {
 	resources := &RouterResources{rateLimits: opts.RateLimits}
 	logger := opts.Logger
@@ -439,7 +393,7 @@ func NewRouterWithOptions(opts RouterOptions) (*chi.Mux, *RouterResources) {
 	r.Use(trustedClientIPMiddleware(trustedProxies))
 	r.Use(requestMetricsMiddleware(logger))
 
-	r.Get("/health", healthEndpoint(opts.ClusterRole))
+	r.Get("/health", healthEndpoint())
 	registerHealthReady(r, opts.Health)
 
 	r.Group(func(r chi.Router) {
@@ -455,6 +409,7 @@ func NewRouterWithOptions(opts RouterOptions) (*chi.Mux, *RouterResources) {
 		r.Group(func(r chi.Router) {
 			r.Use(authMiddleware.V1AuthMiddleware(opts.Authenticator, opts.Sessions, fingerprints, logger, authFailureRecorder(opts.Telemetry)))
 			r.Use(writeAckMiddleware)
+			r.Use(trueOverwriteMiddleware)
 			registerAccountRoutes(r, opts)
 			registerFileRoutes(r, opts, logger)
 			registerLinkRoutes(r, opts, resources, logger)
@@ -504,10 +459,10 @@ func registerSessionRoute(r chi.Router, opts RouterOptions, logger *zap.Logger) 
 
 func registerAccountRoutes(r chi.Router, opts RouterOptions) {
 	if nil != opts.Sessions {
-		r.Delete("/session", handlers.V1DeleteSession())
+		r.Delete("/session", handlers.V1DeleteSession(opts.Sessions, opts.Logger))
 	}
 	if nil != opts.Admins {
-		r.Get("/me", handlers.V1Me(opts.Admins, opts.Sessions))
+		r.Get("/me", handlers.V1Me(opts.Admins, opts.UI))
 	}
 	if nil != opts.Telemetry {
 		r.Get("/me/events", handlers.V1MyEvents(opts.Telemetry))
@@ -521,7 +476,7 @@ func registerAccountRoutes(r chi.Router, opts RouterOptions) {
 	if nil != opts.Locks {
 		r.Get("/stat/*", handlers.V1Stat(opts.Engine, opts.Authorizer, opts.Locks))
 	}
-	r.Get("/search", handlers.V1Search(opts.Engine, opts.Authorizer))
+	r.Get("/search", handlers.V1Search(opts.Engine, opts.Authorizer, opts.Locks))
 	r.Get("/permissions/check", handlers.V1PermissionCheck(opts.Authorizer, opts.Engine, opts.Admins))
 	if nil != opts.Jobs {
 		r.Get("/usage", handlers.V1Usage(opts.Engine, handlers.NewUsageCache(opts.Jobs)))
@@ -533,8 +488,8 @@ func registerFileRoutes(r chi.Router, opts RouterOptions, logger *zap.Logger) {
 		r.Get("/ws/*", trackTransfer("websocket", handlers.V1WebSocketTransfer(opts.Engine, opts.Authorizer, opts.BackendConfig, logger)))
 		r.Get("/*", trackTransfer("download", handlers.V1GetFile(opts.Engine, opts.Authorizer, opts.ServerConfig, logger)))
 		r.Head("/*", handlers.V1HeadFileEnhanced(opts.Engine, opts.Authorizer, logger))
-		r.Post("/*", trackTransfer("upload", handlers.V1PostFileEnhanced(opts.Engine, opts.Authorizer, opts.BackendConfig, opts.ServerConfig, logger)))
-		r.Put("/*", trackTransfer("upload", handlers.V1PutFileEnhanced(opts.Engine, opts.Authorizer, opts.BackendConfig, opts.ServerConfig, logger)))
+		r.Post("/*", trackTransfer("upload", handlers.V1PostFileEnhanced(opts.Engine, opts.Authorizer, opts.BackendConfig, logger)))
+		r.Put("/*", trackTransfer("upload", handlers.V1PutFileEnhanced(opts.Engine, opts.Authorizer, opts.BackendConfig, logger)))
 		r.Patch("/*", handlers.V1PatchFileEnhanced(opts.Engine, opts.Authorizer, opts.Admins, opts.BackendConfig, opts.ServerConfig, logger))
 		r.Delete("/*", handlers.V1DeleteFileEnhanced(opts.Engine, opts.Authorizer, logger))
 	})
@@ -569,7 +524,7 @@ func registerLinkRoutes(r chi.Router, opts RouterOptions, resources *RouterResou
 		if nil == opts.Telemetry {
 			return
 		}
-		r.Get("/stats", linksHandlers.V1LinkStats(opts.Store, opts.Telemetry))
+		r.Get("/stats", linksHandlers.V1LinkStats(opts.Store, opts.Admins, opts.Telemetry, opts.Jobs))
 		r.Get("/{id}", linksHandlers.V1GetLink(opts.Store, opts.Admins, opts.Telemetry))
 	})
 }
@@ -642,5 +597,21 @@ func writeAckMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(backends.WithWriteAck(r.Context(), ack)))
+	})
+}
+
+func trueOverwriteMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		value := r.Header.Get(backends.TrueOverwriteHeader)
+		if "" == value {
+			next.ServeHTTP(w, r)
+			return
+		}
+		enabled, err := backends.ParseTrueOverwrite(value)
+		if nil != err {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(backends.WithTrueOverwrite(r.Context(), enabled)))
 	})
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -159,5 +160,20 @@ func TestMyEventsParseSince(t *testing.T) {
 	}
 	if _, err := parseEventsLimit(fmt.Sprint(telemetry.MaxPageLimit + 1)); nil == err {
 		t.Fatal("events limit above max accepted")
+	}
+}
+
+func TestBatchMoveAcrossStorageRequiresAdmin(t *testing.T) {
+	trash := core.NewTrash(nil, nil, auth.NewAdminSet([]string{"ops"}), nil, 0, nil)
+	for userID, want := range map[string]bool{"ops": true, "root": true, "alice": false} {
+		executor := batchExecutor{userID: userID, trash: trash}
+		if want != executor.isAdmin() {
+			t.Errorf("isAdmin for %q = %v, want %v", userID, !want, want)
+		}
+	}
+	executor := batchExecutor{userID: "alice", trash: trash}
+	err := executor.move(context.Background(), "/a.txt", batchOp{Destination: "/b.txt", Storage: "s3"})
+	if !errors.Is(err, errBatchForbidden) {
+		t.Fatalf("err = %v, want errBatchForbidden", err)
 	}
 }

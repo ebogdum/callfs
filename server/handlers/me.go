@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/v2/auth"
+	"github.com/ebogdum/callfs/v2/config"
 	"github.com/ebogdum/callfs/v2/server/middleware"
 )
 
@@ -17,9 +18,10 @@ type meResponse struct {
 	SessionExpiresAt *time.Time `json:"session_expires_at"`
 	CSRFToken        *string    `json:"csrf_token"`
 	PermissionsModel string     `json:"permissions_model"`
+	IdleTimeoutSecs  int        `json:"idle_timeout_seconds"`
 }
 
-func V1Me(admins *auth.AdminSet, _ *auth.SessionManager) http.HandlerFunc {
+func V1Me(admins *auth.AdminSet, uiConfig config.UIConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := middleware.GetUserID(r.Context())
 		if !ok {
@@ -28,9 +30,10 @@ func V1Me(admins *auth.AdminSet, _ *auth.SessionManager) http.HandlerFunc {
 		}
 		response := meResponse{
 			UserID:           userID,
-			IsAdmin:          admins.IsAdmin(userID),
+			IsAdmin:          isAdminUser(userID, admins),
 			AuthMethod:       "api_key",
 			PermissionsModel: "owner",
+			IdleTimeoutSecs:  int(uiConfig.IdleTimeout / time.Second),
 		}
 		if claims, isSession := middleware.GetSession(r.Context()); isSession {
 			expiresAt := claims.ExpiresAt

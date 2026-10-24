@@ -22,7 +22,6 @@ const (
 var (
 	ErrAuthenticationFailed = errors.New("authentication failed")
 	ErrPermissionDenied     = errors.New("permission denied")
-	ErrInvalidToken         = errors.New("invalid token")
 )
 
 // Authenticator defines the interface for user authentication

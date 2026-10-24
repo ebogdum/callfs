@@ -15,8 +15,10 @@ import (
 	"github.com/ebogdum/callfs/v2/auth"
 	"github.com/ebogdum/callfs/v2/config"
 	"github.com/ebogdum/callfs/v2/core"
+	"github.com/ebogdum/callfs/v2/erasure"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/server/middleware"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 // V1PutFileEnhanced handles PUT /files/{path} requests with cross-server support
@@ -63,6 +65,22 @@ func putResolveTarget(w http.ResponseWriter, r *http.Request, engine *core.Engin
 	currentInstanceID := engine.GetCurrentInstanceID()
 
 	if nil == existingMd {
+		if em := engine.GetErasureManager(); "" == ifMatch && (erasureAutoSplit(r, em) || (nil != em && erasureExplicit(r))) {
+			committedMd, putErr := storeErasureUpload(w, r, engine, enginePath, pathInfo, userID)
+			if nil != putErr {
+				status := http.StatusInternalServerError
+				var customErr *customError
+				switch {
+				case errors.As(putErr, &customErr), errors.Is(putErr, erasure.ErrEmptyUpload):
+					status = http.StatusBadRequest
+				case errors.Is(putErr, metadata.ErrPrecondition):
+					status = http.StatusConflict
+				}
+				sendWriteError(w, logger, putErr, status)
+				return nil, 0, true
+			}
+			return committedMd, http.StatusCreated, false
+		}
 		newMd := &metadata.Metadata{
 			Name:        pathInfo.Name,
 			Type:        "file",
@@ -148,7 +166,7 @@ func parseWriteConditions(r *http.Request) (string, bool, error) {
 	}
 }
 
-func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendConfig *config.BackendConfig, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc {
+func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendConfig *config.BackendConfig, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
@@ -171,6 +189,11 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 		}
 
 		enginePath := pathInfo.FullPath
+
+		if erasureExplicit(r) && nil == engine.GetErasureManager() {
+			SendErrorResponse(w, logger, &customError{message: "erasure coding is not enabled on this server"}, http.StatusNotImplemented)
+			return
+		}
 
 		ifMatch, ifNoneMatch, condErr := parseWriteConditions(r)
 		if condErr != nil {
@@ -203,6 +226,10 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
 			return
 		}
+
+		transfer := telemetry.Transfers.BeginIfLarge("upload", userID, enginePath, transferClient(r), r.ContentLength)
+		defer transfer.Finish()
+		r.Body = transfer.Body(r.Body)
 
 		committedMd, statusCode, done := putResolveTarget(w, r, engine, backendConfig, enginePath, pathInfo, userID, existingMd, size, countReader, ifMatch, ifNoneMatch, logger)
 		if done {

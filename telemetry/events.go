@@ -65,6 +65,11 @@ func (b *EventBus) Publish(event Event) error {
 	if LevelInfo != event.Level && LevelWarn != event.Level && LevelError != event.Level {
 		return fmt.Errorf("%w: level", ErrInvalidEvent)
 	}
+	b.record(event)
+	return nil
+}
+
+func (b *EventBus) record(event Event) {
 	if nil == event.Entities {
 		event.Entities = []Entity{}
 	}
@@ -84,7 +89,6 @@ func (b *EventBus) Publish(event Event) error {
 	if 0 < len(b.subs) {
 		fanout(b.subs, Message{ID: event.ID, Name: event.Type, Data: event})
 	}
-	return nil
 }
 
 func (b *EventBus) Query(query EventQuery) ([]Event, error) {

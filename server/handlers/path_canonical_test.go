@@ -21,20 +21,19 @@ import "testing"
 // sides agree and ownership checks land on the real resource.
 func TestParseFilePathCanonicalizes(t *testing.T) {
 	tests := []struct {
-		name           string
-		urlPath        string
-		wantFullPath   string
-		wantParentPath string
-		wantName       string
+		name         string
+		urlPath      string
+		wantFullPath string
+		wantName     string
 	}{
-		{"dot-dot rewinds into parent", "dir/../secret.txt", "/secret.txt", "/", "secret.txt"},
-		{"leading current-dir", "./secret.txt", "/secret.txt", "/", "secret.txt"},
-		{"interior current-dir", "a/./b", "/a/b", "/a", "b"},
-		{"duplicate separators", "a//b", "/a/b", "/a", "b"},
-		{"many duplicate separators", "a///b////c", "/a/b/c", "/a/b", "c"},
-		{"trailing current-dir segment", "a/b/.", "/a/b", "/a", "b"},
-		{"deep rewind back to same file", "a/b/../../secret.txt", "/secret.txt", "/", "secret.txt"},
-		{"already canonical is unchanged", "a/b/c.txt", "/a/b/c.txt", "/a/b", "c.txt"},
+		{"dot-dot rewinds into parent", "dir/../secret.txt", "/secret.txt", "secret.txt"},
+		{"leading current-dir", "./secret.txt", "/secret.txt", "secret.txt"},
+		{"interior current-dir", "a/./b", "/a/b", "b"},
+		{"duplicate separators", "a//b", "/a/b", "b"},
+		{"many duplicate separators", "a///b////c", "/a/b/c", "c"},
+		{"trailing current-dir segment", "a/b/.", "/a/b", "b"},
+		{"deep rewind back to same file", "a/b/../../secret.txt", "/secret.txt", "secret.txt"},
+		{"already canonical is unchanged", "a/b/c.txt", "/a/b/c.txt", "c.txt"},
 	}
 
 	for _, tt := range tests {
@@ -45,9 +44,6 @@ func TestParseFilePathCanonicalizes(t *testing.T) {
 			}
 			if got.FullPath != tt.wantFullPath {
 				t.Errorf("FullPath = %q, want %q (metadata and backend must agree)", got.FullPath, tt.wantFullPath)
-			}
-			if got.ParentPath != tt.wantParentPath {
-				t.Errorf("ParentPath = %q, want %q", got.ParentPath, tt.wantParentPath)
 			}
 			if got.Name != tt.wantName {
 				t.Errorf("Name = %q, want %q", got.Name, tt.wantName)

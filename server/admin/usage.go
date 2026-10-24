@@ -46,6 +46,8 @@ func (a *API) UsageRefreshWorker(ctx context.Context) (any, error) {
 		}
 		startAfter = files[len(files)-1].Path
 	}
+	metrics.UsageFiles.Reset()
+	metrics.UsageBytes.Reset()
 	for storage, totals := range byBackend {
 		metrics.UsageFiles.WithLabelValues(storage).Set(float64(totals.files))
 		metrics.UsageBytes.WithLabelValues(storage).Set(float64(totals.bytes))

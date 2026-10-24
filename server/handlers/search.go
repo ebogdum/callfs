@@ -13,6 +13,7 @@ import (
 
 	"github.com/ebogdum/callfs/v2/auth"
 	"github.com/ebogdum/callfs/v2/core"
+	"github.com/ebogdum/callfs/v2/locks"
 	"github.com/ebogdum/callfs/v2/metadata"
 	"github.com/ebogdum/callfs/v2/server/middleware"
 )
@@ -61,6 +62,7 @@ type searchFilter struct {
 	storage        string
 	instance       string
 	erasure        *bool
+	locked         *bool
 }
 
 type searchRequest struct {
@@ -71,7 +73,7 @@ type searchRequest struct {
 	facets bool
 }
 
-func V1Search(engine *core.Engine, authorizer auth.Authorizer) http.HandlerFunc {
+func V1Search(engine *core.Engine, authorizer auth.Authorizer, lockInspector locks.Inspector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		logger := zap.L()
 		started := time.Now()
@@ -98,12 +100,28 @@ func V1Search(engine *core.Engine, authorizer auth.Authorizer) http.HandlerFunc 
 			return
 		}
 		if err := authorizer.AuthorizeWithMetadata(r.Context(), userID, req.scope, scopeMD, auth.ReadPerm); nil != err {
-			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+			status := http.StatusInternalServerError
+			if errors.Is(err, auth.ErrPermissionDenied) {
+				status = http.StatusForbidden
+			}
+			SendErrorResponse(w, logger, err, status)
 			return
+		}
+
+		var lockedPaths map[string]bool
+		if nil != req.filter.locked {
+			lockedPaths, err = heldPathLocks(r.Context(), lockInspector)
+			if nil != err {
+				SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		currentInstanceID := engine.GetCurrentInstanceID()
 		candidates, scanned, err := engine.SearchDirectoryRecursiveLimited(r.Context(), req.scope, -1, searchScanBudget, func(md *metadata.Metadata) bool {
+			if nil != req.filter.locked && *req.filter.locked != lockedPaths[md.Path] {
+				return false
+			}
 			return req.filter.matches(md, currentInstanceID)
 		})
 		if nil != err {
@@ -159,10 +177,6 @@ func parseSearchRequest(values url.Values) (searchRequest, error) {
 	}
 	req.scope = scope
 
-	if values.Has("locked") {
-		return req, &customError{message: "locked filter is not available"}
-	}
-
 	entryType := values.Get("type")
 	if "" != entryType && "file" != entryType && "directory" != entryType {
 		return req, &customError{message: "type must be file or directory"}
@@ -205,6 +219,9 @@ func parseSearchRequest(values url.Values) (searchRequest, error) {
 		return req, err
 	}
 	if req.filter.erasure, err = parseOptionalBool(values, "erasure"); nil != err {
+		return req, err
+	}
+	if req.filter.locked, err = parseOptionalBool(values, "locked"); nil != err {
 		return req, err
 	}
 

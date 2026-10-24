@@ -22,8 +22,6 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -39,6 +37,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go/http3"
@@ -52,11 +52,18 @@ import (
 	"github.com/ebogdum/callfs/v2/backends/localfs"
 	"github.com/ebogdum/callfs/v2/backends/noop"
 	"github.com/ebogdum/callfs/v2/backends/s3"
+	"github.com/ebogdum/callfs/v2/cluster"
+	"github.com/ebogdum/callfs/v2/cluster/localbus"
+	"github.com/ebogdum/callfs/v2/cluster/natsbus"
+	"github.com/ebogdum/callfs/v2/cluster/natsbytes"
+	"github.com/ebogdum/callfs/v2/cluster/natscounter"
 	"github.com/ebogdum/callfs/v2/config"
 	"github.com/ebogdum/callfs/v2/core"
 	"github.com/ebogdum/callfs/v2/erasure"
 	"github.com/ebogdum/callfs/v2/health"
 	"github.com/ebogdum/callfs/v2/internal/buildinfo"
+	"github.com/ebogdum/callfs/v2/internal/diskspace"
+	"github.com/ebogdum/callfs/v2/internal/peertls"
 	"github.com/ebogdum/callfs/v2/jobs"
 	"github.com/ebogdum/callfs/v2/links"
 	"github.com/ebogdum/callfs/v2/locks"
@@ -112,7 +119,6 @@ var validateCmd = &cobra.Command{
 }
 
 var configFilePath string
-var joinInternalSecret string
 
 const exitCodeRestart = 75
 
@@ -156,7 +162,7 @@ func runHealthcheck(cmd *cobra.Command, args []string) error {
 
 	scheme := "http"
 	client := &http.Client{Timeout: 5 * time.Second}
-	if cfg.Server.CertFile != "" && cfg.Server.KeyFile != "" {
+	if "http" != cfg.Server.Protocol && "" != cfg.Server.CertFile && "" != cfg.Server.KeyFile {
 		scheme = "https"
 		client.Transport = &http.Transport{
 			TLSClientConfig: &tls.Config{
@@ -271,7 +277,7 @@ func initLockManager(ctx context.Context, cfg *config.AppConfig, natsServer *nat
 		if nil == natsServer {
 			return nil, errors.New("dlm.type=nats requires nats.enabled=true")
 		}
-		manager, err := locks.NewNATSManager(ctx, natsServer.JetStream(), cfg.NATS.ServerName, cfg.NATS.Locks.TTL, logger)
+		manager, err := locks.NewNATSManager(ctx, natsServer.JetStream(), cfg.NATS.ServerName, cfg.NATS.Locks.TTL, cfg.NATS.Locks.QueueStale, logger)
 		if nil != err {
 			return nil, fmt.Errorf("failed to initialize nats lock manager: %w", err)
 		}
@@ -303,7 +309,7 @@ func initLockManager(ctx context.Context, cfg *config.AppConfig, natsServer *nat
 	}
 }
 
-func initBackends(cfg *config.AppConfig, logger *zap.Logger) (localFS, s3Back, proxyBack backends.Storage, proxyAdapter *internalproxy.InternalProxyAdapter, err error) {
+func initBackends(cfg *config.AppConfig, natsServer *natsrv.Server, logger *zap.Logger) (localFS, s3Back, proxyBack backends.Storage, proxyAdapter *internalproxy.InternalProxyAdapter, err error) {
 	if cfg.Backend.LocalFSRootPath != "" {
 		logger.Info("Initializing LocalFS backend", zap.String("root_path", cfg.Backend.LocalFSRootPath))
 		ack, ackErr := backends.ParseWriteAck(cfg.Backend.LocalFSAck)
@@ -335,11 +341,23 @@ func initBackends(cfg *config.AppConfig, logger *zap.Logger) (localFS, s3Back, p
 
 	if len(cfg.InstanceDiscovery.PeerEndpoints) > 0 {
 		logger.Info("Initializing internal proxy backend", zap.Int("peer_count", len(cfg.InstanceDiscovery.PeerEndpoints)))
+		var proxyOpts []internalproxy.Option
+		if nil != natsServer {
+			nodeClient, clientErr := natsbytes.NewClient(natsServer.Conn(), cfg.InstanceDiscovery.InstanceID, natsbytes.ClientOptions{RPCTimeout: cfg.NATS.RPCTimeout})
+			if nil != clientErr {
+				return nil, nil, nil, nil, fmt.Errorf("failed to initialize node transport: %w", clientErr)
+			}
+			proxyOpts = append(proxyOpts, internalproxy.WithControl(nodeClient))
+			if config.NATSBytesChunked == cfg.NATS.Bytes {
+				proxyOpts = append(proxyOpts, internalproxy.WithByteTransport(nodeClient))
+			}
+		}
 		adapter, adapterErr := internalproxy.NewInternalProxyAdapter(
 			cfg.InstanceDiscovery.PeerEndpoints,
 			cfg.Auth.InternalProxySecret,
 			cfg.Backend.InternalProxySkipTLSVerify,
-			logger)
+			logger,
+			proxyOpts...)
 		if adapterErr != nil {
 			return nil, nil, nil, nil, fmt.Errorf("failed to initialize internal proxy backend: %w", adapterErr)
 		}
@@ -384,7 +402,7 @@ func initErasureManager(cfg *config.AppConfig, metadataStore metadata.Store, loc
 	), nil
 }
 
-func buildHTTPHandler(cfg *config.AppConfig, coreEngine *core.Engine, metadataStore metadata.Store, localFSBackend backends.Storage, lockManager locks.Manager, hub *telemetry.Hub, runner *jobs.Runner, restart func(reason string) error, logger *zap.Logger) (http.Handler, *server.RouterResources, error) {
+func buildHTTPHandler(ctx context.Context, cfg *config.AppConfig, natsServer *natsrv.Server, presence cluster.Presence, coreEngine *core.Engine, metadataStore metadata.Store, localFSBackend backends.Storage, lockManager locks.Manager, hub *telemetry.Hub, runner *jobs.Runner, restart func(reason string) error, logger *zap.Logger) (http.Handler, *server.RouterResources, error) {
 	logger.Info("Initializing authentication and authorization")
 	if len(cfg.Auth.APIKeys) > 0 {
 		logger.Warn("auth.api_keys assigns user IDs by list position (api-user-N); removing or reordering a key reassigns those IDs and transfers ownership of existing files to the next key holder. Use auth.api_key_users to bind each key to a stable identity.",
@@ -393,6 +411,7 @@ func buildHTTPHandler(cfg *config.AppConfig, coreEngine *core.Engine, metadataSt
 	authenticator := auth.NewAPIKeyAuthenticator(cfg.Auth.APIKeys, cfg.Auth.APIKeyUsers, cfg.Auth.InternalProxySecret)
 	authorizer := auth.NewUnixAuthorizer(metadataStore, authenticator)
 	admins := auth.NewAdminSet(cfg.Auth.AdminUsers)
+	authorizer.SetAdmins(admins)
 	sessionKey, err := auth.DeriveSessionKey(cfg.Auth.InternalProxySecret)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive session key: %w", err)
@@ -400,7 +419,7 @@ func buildHTTPHandler(cfg *config.AppConfig, coreEngine *core.Engine, metadataSt
 	sessions := auth.NewSessionManager(sessionKey, cfg.UI.SessionTTL)
 
 	logger.Info("Initializing link manager")
-	linkManager, err := links.NewLinkManager(metadataStore, cfg.Auth.SingleUseLinkSecret, logger)
+	linkManager, err := links.NewLinkManager(metadataStore, cfg.Auth.SingleUseLinkSecret, cfg.Server.RateLimit.MaxActiveLinksPerUser, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize link manager: %w", err)
 	}
@@ -408,6 +427,38 @@ func buildHTTPHandler(cfg *config.AppConfig, coreEngine *core.Engine, metadataSt
 	rateLimits, err := newRateLimits(cfg, logger)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	natsStore, _ := metadataStore.(*natsmeta.Store)
+	var natsConn *nats.Conn
+	var natsJS jetstream.JetStream
+	if nil != natsServer {
+		natsConn = natsServer.Conn()
+		natsJS = natsServer.JetStream()
+	}
+	if nil != natsJS {
+		revocations, revokeErr := natsbus.NewSessionRevocations(ctx, natsJS, sessions.AcceptRevocation)
+		if nil != revokeErr {
+			return nil, nil, fmt.Errorf("failed to initialize session revocations: %w", revokeErr)
+		}
+		sessions.SetRevocationPublisher(revocations)
+		go func() {
+			<-ctx.Done()
+			revocations.Close()
+		}()
+	}
+	if cfg.NATS.Enabled && cfg.NATS.Counters && nil != natsConn {
+		counters, counterErr := natscounter.New(natsConn, natscounter.Options{
+			Replicas:    cfg.NATS.Streams.Replicas,
+			ClusterSize: len(clusterPeers(cfg)) + 1,
+			Timeout:     cfg.NATS.RPCTimeout,
+			Logger:      logger,
+		})
+		if nil != counterErr {
+			return nil, nil, fmt.Errorf("failed to initialize cluster counters: %w", counterErr)
+		}
+		rateLimits.SetCounters(counters)
+		handlers.SetWebSocketSlotCounters(counters)
 	}
 
 	var trash *core.Trash
@@ -445,7 +496,25 @@ func buildHTTPHandler(cfg *config.AppConfig, coreEngine *core.Engine, metadataSt
 		return nil, nil, fmt.Errorf("failed to initialize metrics sampler: %w", err)
 	}
 
-	checker := buildHealthChecker(cfg, coreEngine, metadataStore, lockManager, hub, runner)
+	var metaLog health.MetadataLog
+	natsConnected := func() bool { return false }
+	if nil != natsStore {
+		metaLog = natsStore
+	}
+	if nil != natsConn {
+		natsConnected = natsConn.IsConnected
+	}
+	checker := buildHealthChecker(cfg, coreEngine, metadataStore, lockManager, hub, runner, metaLog, natsConnected)
+
+	var deadTasks cluster.DeadTasks
+	if nil != natsJS {
+		deadTasks = natsbus.NewDeadTasks(natsJS)
+	}
+
+	var clusterLog admin.ClusterMetadataLog
+	if nil != natsStore {
+		clusterLog = natsStore
+	}
 
 	api := admin.NewAPI(admin.Deps{
 		Engine:        coreEngine,
@@ -465,6 +534,13 @@ func buildHTTPHandler(cfg *config.AppConfig, coreEngine *core.Engine, metadataSt
 		Trash:         trash,
 		Uploads:       uploads,
 		Health:        checker,
+		Transfers:     transferSource{},
+		ClusterLog:    clusterLog,
+		NATS:          natsConn,
+		JetStream:     natsJS,
+		ClusterName:   cfg.NATS.ClusterName,
+		Presence:      presence,
+		DeadTasks:     deadTasks,
 		Restart:       restart,
 		Logger:        logger,
 	})
@@ -476,6 +552,8 @@ func buildHTTPHandler(cfg *config.AppConfig, coreEngine *core.Engine, metadataSt
 
 	logger.Info("Initializing HTTP router")
 	nodeDirectory, err := nodes.New(nodes.Config{
+		Presence:       presence,
+		Leader:         fileIndexLeader(natsStore),
 		SelfID:         cfg.InstanceDiscovery.InstanceID,
 		SelfEndpoint:   cfg.Server.ExternalURL,
 		Peers:          clusterPeers(cfg),
@@ -516,7 +594,11 @@ func buildHTTPHandler(cfg *config.AppConfig, coreEngine *core.Engine, metadataSt
 	internalMux := http.NewServeMux()
 
 	if cfg.Erasure.Enabled {
-		registerErasureRoutes(internalMux, localFSBackend, cfg.Auth.InternalProxySecret, logger)
+		shardRoot, err := erasure.ValidateShardPath(cfg.Erasure.ShardPath)
+		if nil != err {
+			return nil, nil, err
+		}
+		registerErasureRoutes(internalMux, localFSBackend, shardRoot, cfg.Auth.InternalProxySecret, logger)
 	}
 
 	handler, err := webui.Mount(routeInternalPaths(internalMux, router), web.Assets, web.Embedded, cfg.UI.Enabled, logger)
@@ -566,7 +648,7 @@ func newRateLimits(cfg *config.AppConfig, logger *zap.Logger) (*middleware.RateL
 	return registry, nil
 }
 
-func buildHealthChecker(cfg *config.AppConfig, coreEngine *core.Engine, metadataStore metadata.Store, lockManager locks.Manager, hub *telemetry.Hub, runner *jobs.Runner) *health.Checker {
+func buildHealthChecker(cfg *config.AppConfig, coreEngine *core.Engine, metadataStore metadata.Store, lockManager locks.Manager, hub *telemetry.Hub, runner *jobs.Runner, metaLog health.MetadataLog, natsConnected func() bool) *health.Checker {
 	return health.NewChecker([]health.Probe{
 		health.FileIndexProbe(func(ctx context.Context) error {
 			_, err := metadataStore.Get(ctx, "/")
@@ -575,7 +657,9 @@ func buildHealthChecker(cfg *config.AppConfig, coreEngine *core.Engine, metadata
 		health.LocksProbe(lockManager, cfg.InstanceDiscovery.InstanceID),
 		health.StorageProbe("storage.localfs", "" != cfg.Backend.LocalFSRootPath, storageCheck(coreEngine, "localfs")),
 		health.StorageProbe("storage.s3", "" != cfg.Backend.S3BucketName, storageCheck(coreEngine, "s3")),
-		health.StorageProbe("storage.internal_proxy", 0 < len(clusterPeers(cfg)), storageCheck(coreEngine, "internal_proxy")),
+		health.PeerStorageProbe("storage.internal_proxy", 0 < len(clusterPeers(cfg)), storageCheck(coreEngine, "internal_proxy")),
+		health.NATSProbe(cfg.NATS.Enabled, natsConnected),
+		health.MetadataLogProbe(cfg.NATS.Enabled, metaLog),
 		health.ErasureProbe(cfg.Erasure.Enabled, nil != coreEngine.GetErasureManager()),
 		health.TLSProbe(cfg.Server.Protocol, cfg.Server.CertFile, time.Now),
 		health.DiskProbe(cfg.Backend.LocalFSRootPath, diskSpace),
@@ -621,12 +705,11 @@ func linkCleanupLastRun(runner *jobs.Runner) func() (time.Time, error) {
 }
 
 func diskSpace(path string) (uint64, uint64, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(path, &stat); err != nil {
-		return 0, 0, fmt.Errorf("failed to read disk space for %s: %w", path, err)
+	usage, err := diskspace.Of(path)
+	if nil != err {
+		return 0, 0, err
 	}
-	blockSize := uint64(stat.Bsize)
-	return uint64(stat.Bavail) * blockSize, uint64(stat.Blocks) * blockSize, nil
+	return usage.Free, usage.Total, nil
 }
 
 const linkRetention = 24 * time.Hour
@@ -636,19 +719,24 @@ func registerWorkers(runner *jobs.Runner, cfg *config.AppConfig, metadataStore m
 		name     string
 		interval time.Duration
 		run      jobs.WorkerFunc
+		cluster  bool
 	}
 	workers := []scheduledWorker{
-		{name: "link_cleanup", interval: 5 * time.Minute, run: linkCleanupWorker(metadataStore)},
+		{name: "link_cleanup", interval: 5 * time.Minute, run: linkCleanupWorker(metadataStore), cluster: true},
 		{name: "upload_cleanup", interval: 10 * time.Minute, run: uploadCleanupWorker(uploads)},
 		{name: "instance_prober", interval: 30 * time.Second, run: api.InstanceProberWorker},
 		{name: "metrics_sampler", interval: cfg.UI.MetricsSampleInterval, run: metricsSamplerWorker(sampler)},
-		{name: "usage_refresh", interval: 10 * time.Minute, run: api.UsageRefreshWorker},
+		{name: "usage_refresh", interval: 10 * time.Minute, run: api.UsageRefreshWorker, cluster: true},
 	}
 	if nil != trash {
-		workers = append(workers, scheduledWorker{name: "trash_cleanup", interval: 10 * time.Minute, run: trashCleanupWorker(trash, cfg.Trash.Retention)})
+		workers = append(workers, scheduledWorker{name: "trash_cleanup", interval: 10 * time.Minute, run: trashCleanupWorker(trash, cfg.Trash.Retention), cluster: true})
 	}
 	for _, w := range workers {
-		if err := runner.RegisterWorker(w.name, w.interval, w.run); err != nil {
+		register := runner.RegisterWorker
+		if w.cluster {
+			register = runner.RegisterClusterWorker
+		}
+		if err := register(w.name, w.interval, w.run); err != nil {
 			return fmt.Errorf("failed to register worker %s: %w", w.name, err)
 		}
 	}
@@ -656,7 +744,7 @@ func registerWorkers(runner *jobs.Runner, cfg *config.AppConfig, metadataStore m
 }
 
 func primeGauges(ctx context.Context, runner *jobs.Runner, store metadata.Store, logger *zap.Logger) {
-	if _, err := runner.RunNow("usage_refresh", "callfs"); nil != err {
+	if _, err := runner.RunNow("usage_refresh", "callfs"); nil != err && !errors.Is(err, jobs.ErrWorkerElsewhere) {
 		logger.Warn("Startup usage refresh did not start", zap.Error(err))
 	}
 	if _, err := links.RefreshActiveLinks(ctx, store, time.Now()); nil != err {
@@ -716,10 +804,10 @@ func routeInternalPaths(internalMux *http.ServeMux, router http.Handler) http.Ha
 	})
 }
 
-func registerErasureRoutes(mux *http.ServeMux, localFSBackend backends.Storage, internalSecret string, logger *zap.Logger) {
-	storeShard := handlers.InternalStoreShardHandler(localFSBackend, internalSecret, logger)
-	getShard := handlers.InternalGetShardHandler(localFSBackend, internalSecret, logger)
-	deleteShard := handlers.InternalDeleteShardHandler(localFSBackend, internalSecret, logger)
+func registerErasureRoutes(mux *http.ServeMux, localFSBackend backends.Storage, shardRoot, internalSecret string, logger *zap.Logger) {
+	storeShard := handlers.InternalStoreShardHandler(localFSBackend, shardRoot, internalSecret, logger)
+	getShard := handlers.InternalGetShardHandler(localFSBackend, shardRoot, internalSecret, logger)
+	deleteShard := handlers.InternalDeleteShardHandler(localFSBackend, shardRoot, internalSecret, logger)
 	mux.HandleFunc("/v1/internal/shards/", recoverMiddleware(logger, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPut:
@@ -732,12 +820,6 @@ func registerErasureRoutes(mux *http.ServeMux, localFSBackend backends.Storage, 
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	}))
-}
-
-func secretMatches(presented, expected string) bool {
-	presentedDigest := sha256.Sum256([]byte(presented))
-	expectedDigest := sha256.Sum256([]byte(expected))
-	return hmac.Equal(presentedDigest[:], expectedDigest[:])
 }
 
 func startServer(srv *http.Server, cfg *config.AppConfig, logger *zap.Logger) <-chan error {
@@ -876,6 +958,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+	if err := peertls.Configure(cfg.Backend.InternalProxyCAFile, cfg.Backend.InternalProxySkipTLSVerify); nil != err {
+		return fmt.Errorf("failed to set up server-to-server TLS: %w", err)
+	}
 
 	hub, err := telemetry.NewHub(telemetry.Config{
 		InstanceID:   cfg.InstanceDiscovery.InstanceID,
@@ -940,7 +1025,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Initialize backend adapters
 	logger.Info("Initializing backend adapters")
-	localFSBackend, s3Backend, internalProxyBackend, internalProxyAdapter, err := initBackends(&cfg, logger)
+	localFSBackend, s3Backend, internalProxyBackend, internalProxyAdapter, err := initBackends(&cfg, natsServer, logger)
 	if err != nil {
 		return err
 	}
@@ -965,6 +1050,113 @@ func runServer(cmd *cobra.Command, args []string) error {
 		logger)
 	defer coreEngine.Close()
 	coreEngine.SetStrict(cfg.Performance.Strict())
+	coreEngine.SetTrueOverwrite(cfg.Backend.LocalFSTrueOverwrite, cfg.Backend.LocalFSTmpSaveMaxSize.Int64())
+	if err := coreEngine.RecoverOverwrites(context.Background()); nil != err {
+		return fmt.Errorf("failed to recover overwrites: %w", err)
+	}
+	coreEngine.SetReplicationFailureRecorder(hub.Replication.Record)
+	coreEngine.SetReplicationOutcomeRecorder(hub.Outcomes.Record)
+	runNATSStore, _ := metadataStore.(*natsmeta.Store)
+	if natsLocks, ok := lockManager.(*locks.NATSManager); ok && nil != runNATSStore {
+		runNATSStore.SetFenceSource(func(path string) (uint64, bool) {
+			return natsLocks.FenceToken("path:" + path)
+		})
+	}
+	self := cluster.Member{
+		ID:          cfg.InstanceDiscovery.InstanceID,
+		ServerName:  cfg.NATS.ServerName,
+		APIEndpoint: cfg.Server.ExternalURL,
+		Version:     buildinfo.Version,
+		StartedAt:   time.Now().UTC(),
+	}
+	var presence cluster.Presence
+	var lease cluster.Lease
+	var bus cluster.Bus
+	if nil != natsServer {
+		natsPresence, presenceErr := natsbus.NewPresence(ctx, natsServer.JetStream(), self, presenceTTL)
+		if nil != presenceErr {
+			return fmt.Errorf("failed to announce node presence: %w", presenceErr)
+		}
+		defer func() {
+			closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer closeCancel()
+			if closeErr := natsPresence.Close(closeCtx); nil != closeErr {
+				logger.Warn("Node presence did not close cleanly", zap.Error(closeErr))
+			}
+		}()
+		natsBus := natsbus.NewBus(natsServer.Conn(), self.ID, logger)
+		defer func() {
+			if closeErr := natsBus.Close(); nil != closeErr {
+				logger.Warn("Cluster bus did not close cleanly", zap.Error(closeErr))
+			}
+		}()
+		if root := cfg.Backend.LocalFSRootPath; "" != root {
+			natsPresence.OnBeat(func(member *cluster.Member) {
+				if free, total, diskErr := diskSpace(root); nil == diskErr {
+					member.DiskFree, member.DiskTotal = free, total
+				}
+			})
+		}
+		presence, lease, bus = natsPresence, natsbus.NewLease(natsServer.JetStream(), self.ID), natsBus
+		coreEngine.UseTaskQueue(natsbus.NewQueue(natsServer.JetStream(), natsServer.Conn(), self.ID, cfg.NATS.Streams.TasksMaxDeliver, cfg.NATS.Streams.TasksBackoff, logger))
+		go cluster.Singleton(ctx, lease, "dlq", jobs.DefaultLeaseTTL, func(heldCtx context.Context) error {
+			stop, dlqErr := natsbus.StartDLQ(heldCtx, natsServer.JetStream(), natsServer.Conn(), logger)
+			if nil != dlqErr {
+				return dlqErr
+			}
+			<-heldCtx.Done()
+			stop()
+			return nil
+		}, func(err error) {
+			logger.Warn("Dead letter handling did not start", zap.Error(err))
+		})
+		stopLogs, logsErr := telemetry.StartLogStream(ctx, natsServer.Conn(), natsServer.JetStream(), hub.Logs, cfg.NATS.Streams.LogsLevel, logger)
+		if nil != logsErr {
+			return fmt.Errorf("failed to start cluster log stream: %w", logsErr)
+		}
+		defer stopLogs()
+	} else {
+		local := localbus.New(localbus.Options{Self: self})
+		defer func() {
+			if closeErr := local.Close(); nil != closeErr {
+				logger.Warn("Local bus did not close cleanly", zap.Error(closeErr))
+			}
+		}()
+		presence, lease, bus = local, local, local
+	}
+	if err := runner.UseCluster(jobs.Cluster{Self: self.ID, Lease: lease, Bus: bus}); nil != err {
+		return fmt.Errorf("failed to set up cluster workers: %w", err)
+	}
+	if nil != natsServer {
+		fsServer, fsErr := natsbytes.NewServer(natsServer.Conn(), cfg.InstanceDiscovery.InstanceID, localFSBackend, natsbytes.ServerOptions{
+			Hooks: natsbytes.Hooks{
+				Move: func(ctx context.Context, req natsbytes.MoveRequest) error {
+					moveErr := coreEngine.Move(ctx, req.Source, req.Destination, core.MoveOptions{Backend: req.Backend, Instance: req.Instance, Overwrite: req.Overwrite, CreateParents: req.CreateParents})
+					var invalid *core.ErrInvalidRename
+					var unsupported *core.ErrUnsupportedMove
+					if errors.As(moveErr, &invalid) || errors.As(moveErr, &unsupported) {
+						return natsbytes.BadRequest(moveErr.Error())
+					}
+					return moveErr
+				},
+				Delete: func(ctx context.Context, path string, recursive bool) error {
+					if recursive {
+						_, _, deleteErr := coreEngine.DeleteDirectoryRecursive(ctx, path)
+						return deleteErr
+					}
+					deleteErr := coreEngine.DeleteFile(ctx, path)
+					if errors.Is(deleteErr, core.ErrDirectoryNotEmpty) {
+						return natsbytes.ErrNotEmpty
+					}
+					return deleteErr
+				},
+			},
+		}, logger)
+		if nil != fsErr {
+			return fmt.Errorf("failed to start node fs service: %w", fsErr)
+		}
+		defer fsServer.Close()
+	}
 	coreEngine.SetMetadataCacheTTL(cfg.Server.MetadataCacheTTL)
 	coreEngine.SetMetadataCacheSize(cfg.Server.MetadataCacheSize)
 
@@ -998,7 +1190,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	rootHandler, routerResources, err := buildHTTPHandler(&cfg, coreEngine, metadataStore, localFSBackend, lockManager, hub, runner, restart, logger)
+	rootHandler, routerResources, err := buildHTTPHandler(ctx, &cfg, natsServer, presence, coreEngine, metadataStore, localFSBackend, lockManager, hub, runner, restart, logger)
 	if err != nil {
 		return err
 	}
@@ -1140,19 +1332,24 @@ func clusterPeers(cfg *config.AppConfig) map[string]string {
 
 func startNATS(ctx context.Context, cfg *config.AppConfig, logger *zap.Logger) (*natsrv.Server, error) {
 	peers := clusterPeers(cfg)
-	logger.Info("Starting embedded NATS", zap.String("server_name", cfg.NATS.ServerName), zap.Int("peers", len(peers)))
+	logger.Info("Starting NATS", zap.String("mode", cfg.NATS.Mode), zap.String("server_name", cfg.NATS.ServerName), zap.Int("peers", len(peers)))
 	natsServer, err := natsrv.Start(ctx, cfg.NATS, cfg.Auth.InternalProxySecret, peers, logger)
 	if nil != err {
-		return nil, fmt.Errorf("failed to start embedded NATS: %w", err)
+		return nil, fmt.Errorf("failed to start NATS: %w", err)
 	}
-	replicas := min(len(peers)+1, max(cfg.NATS.Metadata.Replicas, cfg.NATS.Locks.Replicas, cfg.NATS.Streams.Replicas))
+	replicas := max(cfg.NATS.Metadata.Replicas, cfg.NATS.Locks.Replicas, cfg.NATS.Streams.Replicas)
+	if config.NATSModeEmbedded == cfg.NATS.Mode {
+		replicas = min(len(peers)+1, replicas)
+	}
 	if err := provisionNATS(ctx, natsServer, natsrv.DesiredTopology(cfg.NATS, replicas), logger); nil != err {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stopCancel()
 		return nil, errors.Join(fmt.Errorf("failed to provision NATS streams: %w", err), natsServer.Shutdown(stopCtx))
 	}
-	if err := prometheus.Register(natsrv.NewCollector(natsServer.Embedded())); nil != err {
-		logger.Warn("NATS metrics collector not registered", zap.Error(err))
+	if nil != natsServer.Embedded() {
+		if err := prometheus.Register(natsrv.NewCollector(natsServer.Embedded())); nil != err {
+			logger.Warn("NATS metrics collector not registered", zap.Error(err))
+		}
 	}
 	return natsServer, nil
 }
@@ -1175,5 +1372,35 @@ func provisionNATS(ctx context.Context, natsServer *natsrv.Server, top natsrv.To
 			return ctx.Err()
 		case <-time.After(time.Second):
 		}
+	}
+}
+
+type transferSource struct{}
+
+func (transferSource) ActiveTransfers() []admin.Transfer {
+	snapshot := telemetry.Transfers.Snapshot()
+	items := make([]admin.Transfer, 0, len(snapshot))
+	for _, t := range snapshot {
+		items = append(items, admin.Transfer{
+			ID: t.ID, UserID: t.UserID, Kind: t.Kind, Path: t.Path,
+			BytesDone: t.BytesDone, BytesTotal: t.BytesTotal,
+			StartedAt: t.StartedAt, Client: t.Client,
+		})
+	}
+	return items
+}
+
+const presenceTTL = 15 * time.Second
+
+func fileIndexLeader(store *natsmeta.Store) func(ctx context.Context) (string, error) {
+	if nil == store {
+		return nil
+	}
+	return func(ctx context.Context) (string, error) {
+		info, err := store.LogInfo(ctx)
+		if nil != err {
+			return "", err
+		}
+		return info.Leader, nil
 	}
 }
