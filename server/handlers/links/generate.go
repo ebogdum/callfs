@@ -23,6 +23,7 @@ type GenerateLinkRequest struct {
 
 // GenerateLinkResponse represents the response payload containing the generated link.
 type GenerateLinkResponse struct {
+	ID      int64     `json:"id" example:"42"`
 	URL     string    `json:"url" example:"https://localhost:8443/download/token123"`
 	Token   string    `json:"token" example:"token123"`
 	Expires time.Time `json:"expires" example:"2025-07-13T13:34:56Z"`
@@ -73,12 +74,14 @@ func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorize
 		}
 
 		enginePath := pathInfo.FullPath
-		if pathInfo.IsDirectory && enginePath != "/" {
-			enginePath = strings.TrimSuffix(enginePath, "/")
-		}
 
 		if err := authorizer.Authorize(ctx, userID, enginePath, auth.ReadPerm); err != nil {
 			handlers.SendErrorResponse(w, logger, err, http.StatusForbidden)
+			return
+		}
+
+		if pathInfo.IsDirectory {
+			handlers.SendErrorResponse(w, logger, errors.New("links work for files only"), http.StatusBadRequest)
 			return
 		}
 
@@ -91,7 +94,11 @@ func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorize
 		expiryDuration := time.Duration(req.ExpirySeconds) * time.Second
 
 		// Generate single-use link
-		token, err := manager.GenerateLink(ctx, enginePath, expiryDuration)
+		link, err := manager.GenerateOwnedLink(ctx, userID, enginePath, expiryDuration)
+		if nil != err && errors.Is(err, links.ErrTooManyActiveLinks) {
+			handlers.SendErrorResponse(w, logger, err, http.StatusTooManyRequests)
+			return
+		}
 		if err != nil {
 			logger.Error("Failed to generate single-use link",
 				zap.String("path", enginePath),
@@ -100,6 +107,7 @@ func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorize
 			handlers.SendErrorResponse(w, logger, errors.New("failed to generate download link"), http.StatusInternalServerError)
 			return
 		}
+		token := link.Token
 
 		// Build full download URL from the configured external URL
 		sanitizedHost := strings.TrimSpace(apiHost)
@@ -117,6 +125,7 @@ func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorize
 
 		// Prepare response
 		response := GenerateLinkResponse{
+			ID:      link.ID,
 			URL:     downloadURL,
 			Token:   token,
 			Expires: time.Now().Add(expiryDuration),
@@ -134,8 +143,7 @@ func V1GenerateLinkHandler(manager *links.LinkManager, authorizer auth.Authorize
 		logger.Info("Generated single-use download link",
 			zap.String("path", enginePath),
 			zap.String("user_id", userID),
-			zap.String("token", links.TruncateToken(token)),
-			zap.String("url", downloadURL),
+			zap.String("token", links.TokenPrefix(token)),
 			zap.Duration("expiry", expiryDuration))
 	}
 }

@@ -1,4 +1,4 @@
-basePath: /v1
+basePath: /
 definitions:
   handlers.CrossServerConflictResponse:
     properties:
@@ -11,8 +11,6 @@ definitions:
       instance_id:
         type: string
       suggestion:
-        type: string
-      update_url:
         type: string
     type: object
   handlers.DirectoryListingResponse:
@@ -512,7 +510,7 @@ paths:
       - links
 securityDefinitions:
   BearerAuth:
-    description: Type "Bearer" followed by a space and JWT token.
+    description: Type "Bearer" followed by a space and a static API key.
     in: header
     name: Authorization
     type: apiKey

@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +13,7 @@ import (
 
 	"github.com/ebogdum/callfs/auth"
 	"github.com/ebogdum/callfs/erasure"
+	"github.com/ebogdum/callfs/metadata"
 	"github.com/ebogdum/callfs/server/middleware"
 )
 
@@ -61,7 +60,7 @@ func V1GetShard(em *erasure.Manager, authorizer auth.Authorizer, logger *zap.Log
 			return
 		}
 
-		data, err := em.GetShard(r.Context(), filePath, index)
+		rc, size, err := em.OpenShard(r.Context(), filePath, index)
 		if err != nil {
 			statusCode := http.StatusInternalServerError
 			if errors.Is(err, erasure.ErrShardNotFound) {
@@ -70,40 +69,49 @@ func V1GetShard(em *erasure.Manager, authorizer auth.Authorizer, logger *zap.Log
 			SendErrorResponse(w, logger, err, statusCode)
 			return
 		}
+		defer rc.Close()
 
 		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-		if _, err := w.Write(data); err != nil {
-			logger.Error("Failed to write shard data", zap.Error(err))
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		buf := getCopyBuffer()
+		defer putCopyBuffer(buf)
+		if _, err := io.CopyBuffer(w, rc, *buf); err != nil {
+			logger.Error("Failed to stream shard data", zap.Error(err))
 		}
 	}
 }
 
-// HandleErasureManifest writes the chunk manifest as JSON when ?manifest=true on an erasure-coded file.
-func HandleErasureManifest(w http.ResponseWriter, r *http.Request, em *erasure.Manager, path string, logger *zap.Logger) {
-	manifest, err := em.GetManifest(r.Context(), path)
-	if err != nil {
-		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(manifest); err != nil {
-		logger.Error("Failed to encode manifest", zap.Error(err))
-	}
-}
-
 // HandleErasureDownload performs server-side reassembly and streams the file.
-func HandleErasureDownload(w http.ResponseWriter, r *http.Request, em *erasure.Manager, path string, size int64, logger *zap.Logger) {
-	data, err := em.RetrieveFile(r.Context(), path)
+func HandleErasureDownload(w http.ResponseWriter, r *http.Request, em *erasure.Manager, path string, md *metadata.Metadata, logger *zap.Logger) {
+	if handleValidators(w, r, md) {
+		return
+	}
+	offset, length, partial, ok := resolveRange(w, r, md)
+	if !ok {
+		return
+	}
+
+	n, err := erasure.RangeLength(md.Size, offset, length)
 	if err != nil {
 		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 		return
 	}
+	rc, err := em.OpenRangeReader(r.Context(), path, offset, length)
+	if err != nil {
+		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+		return
+	}
+	defer rc.Close()
 
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	if _, err := io.Copy(w, bytes.NewReader(data)); err != nil {
+	w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+	if partial {
+		w.Header().Set("Content-Range", contentRangeHeader(offset, n, md.Size))
+		w.WriteHeader(http.StatusPartialContent)
+	}
+	buf := getCopyBuffer()
+	defer putCopyBuffer(buf)
+	if _, err := io.CopyBuffer(w, rc, *buf); err != nil {
 		logger.Error("Failed to stream reassembled file", zap.Error(err))
 	}
 }

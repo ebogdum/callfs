@@ -8,9 +8,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// TestEvictBatchDropsStaleEntriesFirst checks that entries past their TTL are
-// reclaimed before any live entry is touched.
-func TestEvictBatchDropsStaleEntriesFirst(t *testing.T) {
+func TestEvictStaleDropsStaleEntriesKeepsLive(t *testing.T) {
 	p := &perIPRateLimiter{
 		limiters: make(map[string]*limiterEntry),
 		rate:     rate.Limit(10),
@@ -21,29 +19,25 @@ func TestEvictBatchDropsStaleEntriesFirst(t *testing.T) {
 	stale := time.Now().Add(-2 * rateLimiterEntryTTL)
 	live := time.Now()
 	for i := 0; i < 100; i++ {
-		p.limiters[fmt.Sprintf("stale-%d", i)] = &limiterEntry{limiter: rate.NewLimiter(p.rate, p.burst), lastSeen: stale}
+		p.limiters[fmt.Sprintf("stale-%d", i)] = newLimiterEntry(rate.NewLimiter(p.rate, p.burst), stale)
 	}
 	for i := 0; i < 50; i++ {
-		p.limiters[fmt.Sprintf("live-%d", i)] = &limiterEntry{limiter: rate.NewLimiter(p.rate, p.burst), lastSeen: live}
+		p.limiters[fmt.Sprintf("live-%d", i)] = newLimiterEntry(rate.NewLimiter(p.rate, p.burst), live)
 	}
 
-	p.evictBatch()
+	p.evictStale()
 
-	if len(p.limiters) != 50 {
-		t.Errorf("after evictBatch got %d entries, want 50 (all stale dropped, all live kept)", len(p.limiters))
+	if 50 != len(p.limiters) {
+		t.Errorf("after evictStale got %d entries, want 50 (all stale dropped, all live kept)", len(p.limiters))
 	}
 	for i := 0; i < 50; i++ {
 		if _, ok := p.limiters[fmt.Sprintf("live-%d", i)]; !ok {
-			t.Fatalf("evictBatch dropped live entry live-%d while stale entries existed", i)
+			t.Fatalf("evictStale dropped live entry live-%d", i)
 		}
 	}
 }
 
-// TestEvictBatchFreesBatchWhenAllLive is the regression guard for the eviction
-// cost. When nothing is stale, a single eviction must free a whole batch, not
-// one entry — otherwise every request from a new IP pays a full scan of the map
-// under the mutex once it is full, which an IP-rotating client can hold open.
-func TestEvictBatchFreesBatchWhenAllLive(t *testing.T) {
+func TestEvictStaleKeepsAllLiveEntries(t *testing.T) {
 	p := &perIPRateLimiter{
 		limiters: make(map[string]*limiterEntry),
 		rate:     rate.Limit(10),
@@ -54,35 +48,21 @@ func TestEvictBatchFreesBatchWhenAllLive(t *testing.T) {
 	now := time.Now()
 	const total = 5_000
 	for i := 0; i < total; i++ {
-		// Older index => older lastSeen, all still well inside the TTL.
-		p.limiters[fmt.Sprintf("ip-%d", i)] = &limiterEntry{
-			limiter:  rate.NewLimiter(p.rate, p.burst),
-			lastSeen: now.Add(time.Duration(i) * time.Millisecond),
-		}
+		p.limiters[fmt.Sprintf("ip-%d", i)] = newLimiterEntry(rate.NewLimiter(p.rate, p.burst), now.Add(time.Duration(i)*time.Millisecond))
 	}
 
-	p.evictBatch()
+	p.evictStale()
 
-	want := total - rateLimiterEvictBatch
-	if len(p.limiters) != want {
-		t.Errorf("after evictBatch got %d entries, want %d (a full batch must be freed)", len(p.limiters), want)
+	if total != len(p.limiters) {
+		t.Errorf("after evictStale got %d entries, want %d (no live entry may be evicted)", len(p.limiters), total)
 	}
-
-	// The evicted entries must be the oldest ones.
-	for i := 0; i < rateLimiterEvictBatch; i++ {
-		if _, ok := p.limiters[fmt.Sprintf("ip-%d", i)]; ok {
-			t.Fatalf("evictBatch kept ip-%d, which is among the oldest %d entries", i, rateLimiterEvictBatch)
-		}
-	}
-	for i := rateLimiterEvictBatch; i < total; i++ {
+	for i := 0; i < total; i++ {
 		if _, ok := p.limiters[fmt.Sprintf("ip-%d", i)]; !ok {
-			t.Fatalf("evictBatch dropped ip-%d, which is newer than the batch it should have evicted", i)
+			t.Fatalf("evictStale dropped live entry ip-%d", i)
 		}
 	}
 }
 
-// TestGetLimiterStaysUnderCap checks the map never exceeds its configured cap
-// and that repeated distinct IPs keep working.
 func TestGetLimiterStaysUnderCap(t *testing.T) {
 	p := &perIPRateLimiter{
 		limiters: make(map[string]*limiterEntry),
@@ -93,10 +73,7 @@ func TestGetLimiterStaysUnderCap(t *testing.T) {
 
 	now := time.Now()
 	for i := 0; i < rateLimiterMaxEntries; i++ {
-		p.limiters[fmt.Sprintf("ip-%d", i)] = &limiterEntry{
-			limiter:  rate.NewLimiter(p.rate, p.burst),
-			lastSeen: now.Add(time.Duration(i) * time.Microsecond),
-		}
+		p.limiters[fmt.Sprintf("ip-%d", i)] = newLimiterEntry(rate.NewLimiter(p.rate, p.burst), now.Add(time.Duration(i)*time.Microsecond))
 	}
 
 	for i := 0; i < 10; i++ {
@@ -109,8 +86,6 @@ func TestGetLimiterStaysUnderCap(t *testing.T) {
 	}
 }
 
-// TestGetLimiterReusesEntryPerIP confirms an IP keeps the same limiter across
-// calls, so its budget is actually enforced rather than reset each request.
 func TestGetLimiterReusesEntryPerIP(t *testing.T) {
 	p := newPerIPRateLimiter(rate.Limit(1), 1)
 	defer p.stop()

@@ -1,10 +1,15 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,10 +18,10 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/auth"
+	"github.com/ebogdum/callfs/config"
 	"github.com/ebogdum/callfs/core"
 	"github.com/ebogdum/callfs/core/log"
 	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/metrics"
 	"github.com/ebogdum/callfs/server/middleware"
 )
 
@@ -27,8 +32,44 @@ type DirectoryListingResponse struct {
 	Recursive bool       `json:"recursive"`
 	MaxDepth  int        `json:"max_depth,omitempty"`
 	Count     int        `json:"count"`
+	Truncated bool       `json:"truncated,omitempty"`
 	Items     []FileInfo `json:"items"`
 }
+
+type DirectoryPageItem struct {
+	FileInfo
+	ETag         string `json:"etag"`
+	Storage      string `json:"storage"`
+	InstanceID   string `json:"instance_id"`
+	ErasureCoded bool   `json:"erasure_coded"`
+	Locked       bool   `json:"locked"`
+}
+
+type DirectoryPageResponse struct {
+	Path       string              `json:"path"`
+	Type       string              `json:"type"`
+	Count      int                 `json:"count"`
+	Total      int                 `json:"total"`
+	Items      []DirectoryPageItem `json:"items"`
+	NextCursor *string             `json:"next_cursor"`
+	Partial    bool                `json:"partial"`
+}
+
+type directoryPageQuery struct {
+	limit         int
+	offset        int
+	sortKey       string
+	descending    bool
+	entryType     string
+	nameFilter    string
+	includeHidden bool
+}
+
+const maxDirectoryListItems = 10000
+
+const maxDirectoryPageLimit = 1000
+
+var directorySortKeys = []string{"name", "size", "mtime", "type"}
 
 // ListDirectory handles GET /api/directories/{path} requests
 // @Summary List directory contents
@@ -59,30 +100,202 @@ func parseMaxDepth(r *http.Request) int {
 	return parsed
 }
 
+func fileInfoOf(child *metadata.Metadata) FileInfo {
+	return FileInfo{
+		Name:  child.Name,
+		Path:  child.Path,
+		Type:  child.Type,
+		Size:  child.Size,
+		Mode:  child.Mode,
+		Owner: child.Owner,
+		MTime: child.MTime.Format("2006-01-02T15:04:05Z07:00"),
+	}
+}
+
 func metadataToFileInfos(children []*metadata.Metadata) []FileInfo {
 	fileInfos := make([]FileInfo, 0, len(children))
 	for _, child := range children {
-		fileInfos = append(fileInfos, FileInfo{
-			Name:  child.Name,
-			Path:  child.Path,
-			Type:  child.Type,
-			Size:  child.Size,
-			Mode:  child.Mode,
-			Owner: child.Owner,
-			MTime: child.MTime.Format("2006-01-02T15:04:05Z07:00"),
-		})
+		fileInfos = append(fileInfos, fileInfoOf(child))
 	}
 	return fileInfos
 }
 
-func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *zap.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		defer func() {
-			metrics.HTTPRequestDuration.WithLabelValues(r.Method, "/v1/directories/*").Observe(time.Since(start).Seconds())
-		}()
+func parseDirectoryPageQuery(values url.Values) (directoryPageQuery, error) {
+	query := directoryPageQuery{
+		sortKey:       "name",
+		includeHidden: true,
+	}
 
-		metadataCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	limit, err := strconv.Atoi(values.Get("limit"))
+	if nil != err || 1 > limit {
+		return query, fmt.Errorf("invalid limit")
+	}
+	query.limit = min(limit, maxDirectoryPageLimit)
+
+	if cursor := values.Get("cursor"); "" != cursor {
+		offset, cursorErr := decodeDirectoryCursor(cursor)
+		if nil != cursorErr {
+			return query, cursorErr
+		}
+		query.offset = offset
+	}
+
+	if sortKey := values.Get("sort"); "" != sortKey {
+		if !slices.Contains(directorySortKeys, sortKey) {
+			return query, fmt.Errorf("invalid sort")
+		}
+		query.sortKey = sortKey
+	}
+
+	switch values.Get("order") {
+	case "", "asc":
+	case "desc":
+		query.descending = true
+	default:
+		return query, fmt.Errorf("invalid order")
+	}
+
+	switch entryType := values.Get("type"); entryType {
+	case "", "file", "directory":
+		query.entryType = entryType
+	default:
+		return query, fmt.Errorf("invalid type")
+	}
+
+	query.nameFilter = strings.ToLower(values.Get("q"))
+
+	switch values.Get("include_hidden") {
+	case "", "true":
+	case "false":
+		query.includeHidden = false
+	default:
+		return query, fmt.Errorf("invalid include_hidden")
+	}
+
+	return query, nil
+}
+
+func decodeDirectoryCursor(cursor string) (int, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if nil != err {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	offset, err := strconv.Atoi(string(raw))
+	if nil != err || 0 > offset {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	return offset, nil
+}
+
+func encodeDirectoryCursor(offset int) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+func filterDirectoryChildren(children []*metadata.Metadata, query directoryPageQuery) []*metadata.Metadata {
+	matched := make([]*metadata.Metadata, 0, len(children))
+	for _, child := range children {
+		if "" != query.entryType && child.Type != query.entryType {
+			continue
+		}
+		if !query.includeHidden && strings.HasPrefix(child.Name, ".") {
+			continue
+		}
+		if "" != query.nameFilter && !strings.Contains(strings.ToLower(child.Name), query.nameFilter) {
+			continue
+		}
+		matched = append(matched, child)
+	}
+	return matched
+}
+
+func compareDirectoryChildren(a, b *metadata.Metadata, query directoryPageQuery) int {
+	if "name" == query.sortKey && a.Type != b.Type {
+		if "directory" == a.Type {
+			return -1
+		}
+		return 1
+	}
+
+	result := 0
+	switch query.sortKey {
+	case "size":
+		result = cmp.Compare(a.Size, b.Size)
+	case "mtime":
+		result = a.MTime.Compare(b.MTime)
+	case "type":
+		result = strings.Compare(a.Type, b.Type)
+	}
+	if 0 == result {
+		result = strings.Compare(a.Name, b.Name)
+	}
+	if query.descending {
+		return -result
+	}
+	return result
+}
+
+func serveDirectoryPage(ctx context.Context, w http.ResponseWriter, values url.Values, engine *core.Engine, path string, logger *zap.Logger) {
+	query, err := parseDirectoryPageQuery(values)
+	if nil != err {
+		SendErrorResponse(w, logger, err, http.StatusBadRequest)
+		return
+	}
+
+	children, err := engine.ListDirectory(ctx, path)
+	if nil != err {
+		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+		return
+	}
+	partial := maxDirectoryListItems < len(children)
+	if partial {
+		children = children[:maxDirectoryListItems]
+	}
+
+	matched := filterDirectoryChildren(children, query)
+	slices.SortStableFunc(matched, func(a, b *metadata.Metadata) int {
+		return compareDirectoryChildren(a, b, query)
+	})
+
+	total := len(matched)
+	start := min(query.offset, total)
+	end := min(start+query.limit, total)
+	var nextCursor *string
+	if end < total {
+		encoded := encodeDirectoryCursor(end)
+		nextCursor = &encoded
+	}
+
+	currentInstanceID := engine.GetCurrentInstanceID()
+	page := matched[start:end]
+	items := make([]DirectoryPageItem, 0, len(page))
+	for _, child := range page {
+		items = append(items, DirectoryPageItem{
+			FileInfo:     fileInfoOf(child),
+			ETag:         etagField(child.ETag),
+			Storage:      child.BackendType,
+			InstanceID:   owningInstanceID(child, currentInstanceID),
+			ErasureCoded: child.ErasureCoded,
+		})
+	}
+
+	SendJSONResponse(w, DirectoryPageResponse{
+		Path:       path,
+		Type:       "directory",
+		Count:      len(items),
+		Total:      total,
+		Items:      items,
+		NextCursor: nextCursor,
+		Partial:    partial,
+	})
+}
+
+func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *zap.Logger) http.HandlerFunc {
+	return V1ListDirectoryWithConfig(engine, authorizer, &config.ServerConfig{MetadataOpTimeout: 30 * time.Second}, logger)
+}
+
+func V1ListDirectoryWithConfig(engine *core.Engine, authorizer auth.Authorizer, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		metadataCtx, cancel := context.WithTimeout(r.Context(), cfg.MetadataOpTimeout)
 		defer cancel()
 
 		pathParam := chi.URLParam(r, "*")
@@ -109,14 +322,23 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 			enginePath = strings.TrimSuffix(enginePath, "/")
 		}
 
-		if err := authorizer.Authorize(metadataCtx, userID, enginePath, auth.ReadPerm); err != nil {
-			SendErrorResponse(w, logger, err, http.StatusForbidden)
+		md, mdErr := engine.GetMetadata(metadataCtx, enginePath)
+		if nil != mdErr && !errors.Is(mdErr, metadata.ErrNotFound) {
+			SendErrorResponse(w, logger, mdErr, http.StatusInternalServerError)
 			return
 		}
 
-		md, err := engine.GetMetadata(metadataCtx, enginePath)
-		if err != nil {
-			SendErrorResponse(w, logger, err, http.StatusNotFound)
+		if err := authorizer.AuthorizeWithMetadata(metadataCtx, userID, enginePath, md, auth.ReadPerm); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, auth.ErrPermissionDenied) {
+				status = http.StatusForbidden
+			}
+			SendErrorResponse(w, logger, err, status)
+			return
+		}
+
+		if nil == md {
+			SendErrorResponse(w, logger, mdErr, http.StatusNotFound)
 			return
 		}
 
@@ -125,12 +347,18 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 			return
 		}
 
+		if values := r.URL.Query(); values.Has("limit") {
+			serveDirectoryPage(metadataCtx, w, values, engine, enginePath, logger)
+			return
+		}
+
 		recursive := r.URL.Query().Get("recursive") == "true"
 		maxDepth := parseMaxDepth(r)
 
 		var children []*metadata.Metadata
+		var err error
 		if recursive {
-			children, err = engine.ListDirectoryRecursive(metadataCtx, enginePath, maxDepth)
+			children, err = engine.ListDirectoryRecursiveLimited(metadataCtx, enginePath, maxDepth, maxDirectoryListItems+1)
 		} else {
 			children, err = engine.ListDirectory(metadataCtx, enginePath)
 		}
@@ -139,22 +367,22 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 			return
 		}
 
+		truncated := maxDirectoryListItems < len(children)
+		if truncated {
+			children = children[:maxDirectoryListItems]
+		}
+
 		fileInfos := metadataToFileInfos(children)
 		response := DirectoryListingResponse{
 			Path:      enginePath,
 			Type:      "directory",
 			Recursive: recursive,
 			Count:     len(fileInfos),
+			Truncated: truncated,
 			Items:     fileInfos,
 		}
 		if recursive {
 			response.MaxDepth = maxDepth
-		}
-
-		jsonBytes, marshalErr := json.Marshal(response)
-		if marshalErr != nil {
-			SendErrorResponse(w, logger, marshalErr, http.StatusInternalServerError)
-			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -162,21 +390,23 @@ func V1ListDirectory(engine *core.Engine, authorizer auth.Authorizer, logger *za
 		w.Header().Set("X-CallFS-Count", fmt.Sprintf("%d", len(fileInfos)))
 		w.Header().Set("X-CallFS-Recursive", fmt.Sprintf("%t", recursive))
 
-		if _, err := w.Write(jsonBytes); err != nil {
+		if err := json.NewEncoder(w).Encode(response); err != nil {
 			logger.Error("Failed to write directory listing response", zap.Error(err))
 		}
 
-		logFields := log.LogFields{
-			Path:      pathInfo.FullPath,
-			UserID:    userID,
-			Operation: "list_directory",
-		}.Sanitize()
+		if ce := logger.Check(zap.InfoLevel, "Directory listed via API"); nil != ce {
+			logFields := log.LogFields{
+				Path:      pathInfo.FullPath,
+				UserID:    userID,
+				Operation: "list_directory",
+			}.Sanitize()
 
-		logger.Info("Directory listed via API",
-			zap.String("path", logFields.Path),
-			zap.String("user_id", logFields.UserID),
-			zap.Bool("recursive", recursive),
-			zap.Int("max_depth", maxDepth),
-			zap.Int("items_count", len(children)))
+			ce.Write(
+				zap.String("path", logFields.Path),
+				zap.String("user_id", logFields.UserID),
+				zap.Bool("recursive", recursive),
+				zap.Int("max_depth", maxDepth),
+				zap.Int("items_count", len(children)))
+		}
 	}
 }

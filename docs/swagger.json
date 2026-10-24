@@ -16,7 +16,7 @@
         "version": "1.6.0"
     },
     "host": "localhost:8443",
-    "basePath": "/v1",
+    "basePath": "/",
     "paths": {
         "/download/{token}": {
             "get": {
@@ -769,7 +769,7 @@
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Type \"Bearer\" followed by a space and JWT token.",
+            "description": "Type \"Bearer\" followed by a space and a static API key.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

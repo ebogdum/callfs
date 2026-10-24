@@ -362,6 +362,9 @@ paths:
           $ref: '#/components/responses/InternalError'
 
   /download/{token}:
+    servers:
+      - url: https://localhost:8443
+        description: Local development server
     parameters:
       - name: token
         in: path

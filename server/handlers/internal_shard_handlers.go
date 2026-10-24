@@ -1,18 +1,22 @@
 package handlers
 
 import (
-	"bytes"
+	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/backends"
 	"github.com/ebogdum/callfs/internal/pathutil"
+	"github.com/ebogdum/callfs/metadata"
 )
 
 // InternalStoreShardHandler handles PUT /v1/internal/shards/{path}/{index}
@@ -30,26 +34,29 @@ func InternalStoreShardHandler(localBackend backends.Storage, internalSecret str
 			return
 		}
 
-		// Limit shard size to 256 MB and buffer body to allow retry
 		const maxShardBytes = 256 << 20
-		r.Body = http.MaxBytesReader(w, r.Body, maxShardBytes)
-		data, readErr := io.ReadAll(r.Body)
-		if readErr != nil {
-			http.Error(w, "failed to read shard body", http.StatusBadRequest)
+		if r.ContentLength < 0 {
+			http.Error(w, "content length required", http.StatusLengthRequired)
 			return
 		}
-		dataSize := int64(len(data))
+		if r.ContentLength > maxShardBytes {
+			http.Error(w, "shard too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxShardBytes)
 
-		if err := localBackend.Create(r.Context(), shardPath, bytes.NewReader(data), dataSize); err != nil {
-			// Try update if create fails (shard already exists)
-			if updateErr := localBackend.Update(r.Context(), shardPath, bytes.NewReader(data), dataSize); updateErr != nil {
-				logger.Error("Failed to store shard", zap.String("path", shardPath), zap.Error(err))
-				http.Error(w, "failed to store shard", http.StatusInternalServerError)
-				return
-			}
+		created, err := storeShard(r.Context(), localBackend, shardPath, r.Body, r.ContentLength)
+		if err != nil {
+			logger.Error("Failed to store shard", zap.String("path", shardPath), zap.Error(err))
+			http.Error(w, "failed to store shard", http.StatusInternalServerError)
+			return
 		}
 
-		w.WriteHeader(http.StatusCreated)
+		if created {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	}
 }
 
@@ -70,13 +77,20 @@ func InternalGetShardHandler(localBackend backends.Storage, internalSecret strin
 
 		reader, err := localBackend.Open(r.Context(), shardPath)
 		if err != nil {
-			http.Error(w, "shard not found", http.StatusNotFound)
+			if errors.Is(err, metadata.ErrNotFound) {
+				http.Error(w, "shard not found", http.StatusNotFound)
+				return
+			}
+			logger.Error("Failed to open shard", zap.String("path", shardPath), zap.Error(err))
+			http.Error(w, "failed to open shard", http.StatusInternalServerError)
 			return
 		}
 		defer reader.Close()
 
 		w.Header().Set("Content-Type", "application/octet-stream")
-		if _, err := io.Copy(w, reader); err != nil {
+		buf := getCopyBuffer()
+		defer putCopyBuffer(buf)
+		if _, err := io.CopyBuffer(w, reader, *buf); err != nil {
 			logger.Error("Failed to stream shard", zap.String("path", shardPath), zap.Error(err))
 		}
 	}
@@ -97,11 +111,34 @@ func InternalDeleteShardHandler(localBackend backends.Storage, internalSecret st
 			return
 		}
 
-		if err := localBackend.Delete(r.Context(), shardPath); err != nil {
-			logger.Warn("Failed to delete shard", zap.String("path", shardPath), zap.Error(err))
+		if err := localBackend.Delete(r.Context(), shardPath); err != nil && !errors.Is(err, metadata.ErrNotFound) {
+			logger.Error("Failed to delete shard", zap.String("path", shardPath), zap.Error(err))
+			http.Error(w, "failed to delete shard", http.StatusInternalServerError)
+			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+var copyBufferPool = sync.Pool{New: func() any {
+	buf := make([]byte, 256<<10)
+	return &buf
+}}
+
+func getCopyBuffer() *[]byte { return copyBufferPool.Get().(*[]byte) }
+
+func putCopyBuffer(buf *[]byte) { copyBufferPool.Put(buf) }
+
+func storeShard(ctx context.Context, backend backends.Storage, shardPath string, body io.Reader, size int64) (bool, error) {
+	_, statErr := backend.Stat(ctx, shardPath)
+	switch {
+	case nil == statErr:
+		return false, backend.Update(ctx, shardPath, body, size)
+	case errors.Is(statErr, metadata.ErrNotFound):
+		return true, backend.Create(ctx, shardPath, body, size)
+	default:
+		return false, statErr
 	}
 }
 
@@ -111,7 +148,9 @@ func authorizeInternal(r *http.Request, secret string) bool {
 	}
 	auth := r.Header.Get("Authorization")
 	token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-	return subtle.ConstantTimeCompare([]byte(token), []byte(secret)) == 1
+	tokenDigest := sha256.Sum256([]byte(token))
+	secretDigest := sha256.Sum256([]byte(secret))
+	return subtle.ConstantTimeCompare(tokenDigest[:], secretDigest[:]) == 1
 }
 
 // parseShardPath extracts the shard storage path and index from a URL like
@@ -131,6 +170,9 @@ func parseShardPath(urlPath string) (string, int, error) {
 
 	filePath := trimmed[:lastSlash]
 	indexStr := trimmed[lastSlash+1:]
+	if 0 == len(indexStr) || "" != strings.TrimLeft(indexStr, "0123456789") {
+		return "", 0, fmt.Errorf("invalid shard index: must be a non-negative integer")
+	}
 	index, err := strconv.Atoi(indexStr)
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid shard index: %w", err)

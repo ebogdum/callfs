@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,15 +37,32 @@ import (
 // @Router /v1/files/{path} [put]
 // putResolveTarget handles metadata lookup and decides whether to create, proxy, or update locally.
 // Returns the resolved metadata, the HTTP status code, and whether the response was already written.
-func putResolveTarget(w http.ResponseWriter, r *http.Request, engine *core.Engine, backendConfig *config.BackendConfig, enginePath string, pathInfo PathInfo, userID string, size int64, countReader *CountingReader, logger *zap.Logger) (*metadata.Metadata, int, bool) {
-	existingMd, err := engine.GetMetadata(r.Context(), enginePath)
+func sendWriteError(w http.ResponseWriter, logger *zap.Logger, err error, defaultStatusCode int) {
+	var maxBytesErr *http.MaxBytesError
+	if !errors.As(err, &maxBytesErr) {
+		SendErrorResponse(w, logger, err, defaultStatusCode)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusRequestEntityTooLarge)
+	jsonBytes, marshalErr := json.Marshal(ErrorResponse{Code: "PAYLOAD_TOO_LARGE", Message: maxBytesErr.Error()})
+	if marshalErr != nil {
+		logger.Error("Failed to marshal error response", zap.Error(marshalErr))
+		return
+	}
+	if _, writeErr := w.Write(jsonBytes); writeErr != nil {
+		logger.Error("Failed to write error response", zap.Error(writeErr))
+	}
+	logger.Debug("Error response sent",
+		zap.String("error_code", "PAYLOAD_TOO_LARGE"),
+		zap.Int("status_code", http.StatusRequestEntityTooLarge),
+		zap.Error(err))
+}
+
+func putResolveTarget(w http.ResponseWriter, r *http.Request, engine *core.Engine, backendConfig *config.BackendConfig, enginePath string, pathInfo PathInfo, userID string, existingMd *metadata.Metadata, size int64, countReader *CountingReader, ifMatch string, ifNoneMatch bool, logger *zap.Logger) (*metadata.Metadata, int, bool) {
 	currentInstanceID := engine.GetCurrentInstanceID()
 
-	if err != nil {
-		if !errors.Is(err, metadata.ErrNotFound) {
-			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
-			return nil, 0, true
-		}
+	if nil == existingMd {
 		newMd := &metadata.Metadata{
 			Name:        pathInfo.Name,
 			Type:        "file",
@@ -54,11 +73,15 @@ func putResolveTarget(w http.ResponseWriter, r *http.Request, engine *core.Engin
 			MTime:       time.Now(),
 			CTime:       time.Now(),
 		}
-		if err := engine.CreateFile(r.Context(), enginePath, r.Body, size, newMd); err != nil {
-			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+		committedMd, created, putErr := engine.PutFile(r.Context(), enginePath, r.Body, size, newMd, ifMatch, ifNoneMatch)
+		if putErr != nil {
+			sendWriteError(w, logger, putErr, http.StatusInternalServerError)
 			return nil, 0, true
 		}
-		return newMd, http.StatusCreated, false
+		if !created {
+			return committedMd, http.StatusOK, false
+		}
+		return committedMd, http.StatusCreated, false
 	}
 
 	if existingMd.Type != "file" {
@@ -68,23 +91,28 @@ func putResolveTarget(w http.ResponseWriter, r *http.Request, engine *core.Engin
 		return nil, 0, true
 	}
 	if existingMd.CallFSInstanceID != nil && *existingMd.CallFSInstanceID != currentInstanceID {
-		handleCrossServerPut(w, r, engine, existingMd, enginePath, pathInfo, userID, size, countReader, logger)
+		handleCrossServerPut(w, r, engine, existingMd, enginePath, pathInfo, userID, size, countReader, ifMatch, ifNoneMatch, logger)
 		return nil, 0, true
 	}
-	if err := engine.UpdateFile(r.Context(), enginePath, r.Body, size, existingMd); err != nil {
-		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+	if ifMatch == "*" {
+		ifMatch = existingMd.ETag
+	}
+	committedMd, _, putErr := engine.PutFile(r.Context(), enginePath, r.Body, size, existingMd, ifMatch, ifNoneMatch)
+	if putErr != nil {
+		sendWriteError(w, logger, putErr, http.StatusInternalServerError)
 		return nil, 0, true
 	}
-	return existingMd, http.StatusOK, false
+	return committedMd, http.StatusOK, false
 }
 
-func handleCrossServerPut(w http.ResponseWriter, r *http.Request, engine *core.Engine, existingMd *metadata.Metadata, enginePath string, pathInfo PathInfo, userID string, size int64, countReader *CountingReader, logger *zap.Logger) {
-	if err := engine.UpdateFileOnInstance(r.Context(), *existingMd.CallFSInstanceID, enginePath, r.Body, size); err != nil {
+func handleCrossServerPut(w http.ResponseWriter, r *http.Request, engine *core.Engine, existingMd *metadata.Metadata, enginePath string, pathInfo PathInfo, userID string, size int64, countReader *CountingReader, ifMatch string, ifNoneMatch bool, logger *zap.Logger) {
+	etag, err := engine.UpdateFileOnInstance(r.Context(), *existingMd.CallFSInstanceID, enginePath, r.Body, size, ifMatch, ifNoneMatch)
+	if err != nil {
 		logger.Error("Failed to update file via cross-server proxy",
 			zap.String("instance_id", *existingMd.CallFSInstanceID),
 			zap.String("path", enginePath),
 			zap.Error(err))
-		SendErrorResponse(w, logger, fmt.Errorf("failed to update file on remote server: %w", err), http.StatusBadGateway)
+		sendWriteError(w, logger, fmt.Errorf("failed to update file on remote server: %w", err), http.StatusBadGateway)
 		return
 	}
 
@@ -93,21 +121,31 @@ func handleCrossServerPut(w http.ResponseWriter, r *http.Request, engine *core.E
 		proxySize = countReader.BytesRead()
 	}
 
-	existingMd.Size = proxySize
-	existingMd.MTime = time.Now()
-	existingMd.UpdatedAt = time.Now()
-	if updateErr := engine.UpdateMetadataOnly(r.Context(), existingMd); updateErr != nil {
-		logger.Warn("Failed to update metadata after cross-server proxy write",
-			zap.String("path", enginePath),
-			zap.Error(updateErr))
+	if etag != "" {
+		w.Header().Set("ETag", quotedETag(etag))
 	}
-
 	w.WriteHeader(http.StatusOK)
 	logger.Info("File updated via cross-server proxy",
 		zap.String("path", pathInfo.FullPath),
 		zap.String("user_id", userID),
 		zap.String("target_instance", *existingMd.CallFSInstanceID),
 		zap.Int64("size", proxySize))
+}
+
+func parseWriteConditions(r *http.Request) (string, bool, error) {
+	ifMatch := strings.TrimSpace(r.Header.Get("If-Match"))
+	if ifMatch != "" && ifMatch != "*" {
+		ifMatch = strings.Trim(strings.TrimPrefix(ifMatch, "W/"), `"`)
+	}
+
+	switch strings.TrimSpace(r.Header.Get("If-None-Match")) {
+	case "":
+		return ifMatch, false, nil
+	case "*":
+		return ifMatch, true, nil
+	default:
+		return "", false, errors.New(`If-None-Match only supports "*"`)
+	}
 }
 
 func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendConfig *config.BackendConfig, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc {
@@ -134,6 +172,12 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 
 		enginePath := pathInfo.FullPath
 
+		ifMatch, ifNoneMatch, condErr := parseWriteConditions(r)
+		if condErr != nil {
+			sendBadRequest(w, logger, condErr.Error())
+			return
+		}
+
 		const maxUploadBytes int64 = 10 << 30
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 
@@ -149,37 +193,30 @@ func V1PutFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendC
 			r.Body = io.NopCloser(countReader)
 		}
 
-		if err := authorizer.Authorize(r.Context(), userID, enginePath, auth.WritePerm); err != nil {
+		existingMd, mdErr := engine.GetMetadata(r.Context(), enginePath)
+		if nil != mdErr && !errors.Is(mdErr, metadata.ErrNotFound) {
+			SendErrorResponse(w, logger, mdErr, http.StatusInternalServerError)
+			return
+		}
+
+		if err := authorizer.AuthorizeWithMetadata(r.Context(), userID, enginePath, existingMd, auth.WritePerm); err != nil {
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
 			return
 		}
 
-		existingMd, statusCode, done := putResolveTarget(w, r, engine, backendConfig, enginePath, pathInfo, userID, size, countReader, logger)
+		committedMd, statusCode, done := putResolveTarget(w, r, engine, backendConfig, enginePath, pathInfo, userID, existingMd, size, countReader, ifMatch, ifNoneMatch, logger)
 		if done {
 			return
 		}
 
-		if countReader != nil {
-			actualSize := countReader.BytesRead()
-			if actualSize != size {
-				existingMd.Size = actualSize
-				existingMd.MTime = time.Now()
-				existingMd.UpdatedAt = time.Now()
-				if updateErr := engine.UpdateMetadataOnly(r.Context(), existingMd); updateErr != nil {
-					logger.Warn("Failed to correct metadata size after chunked upload",
-						zap.String("path", enginePath),
-						zap.Int64("actual_size", actualSize),
-						zap.Error(updateErr))
-				}
-				size = actualSize
-			}
+		if committedMd.ETag != "" {
+			w.Header().Set("ETag", quotedETag(committedMd.ETag))
 		}
-
 		w.WriteHeader(statusCode)
-		logger.Info("File updated locally",
+		logger.Debug("File updated locally",
 			zap.String("path", pathInfo.FullPath),
 			zap.String("user_id", userID),
-			zap.Int64("size", size),
+			zap.Int64("size", committedMd.Size),
 			zap.Int("status_code", statusCode))
 	}
 }

@@ -4,17 +4,33 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/auth"
+	"github.com/ebogdum/callfs/backends/localfs"
+	"github.com/ebogdum/callfs/erasure"
+	"github.com/ebogdum/callfs/links"
+	"github.com/ebogdum/callfs/locks"
 	"github.com/ebogdum/callfs/metadata"
 )
 
 // ErrorResponse represents a standardized error response
 type ErrorResponse struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+var clientErrorCodes = map[int]string{
+	http.StatusBadRequest:                   "BAD_REQUEST",
+	http.StatusNotFound:                     "NOT_FOUND",
+	http.StatusConflict:                     "CONFLICT",
+	http.StatusPreconditionFailed:           "PRECONDITION_FAILED",
+	http.StatusRequestEntityTooLarge:        "PAYLOAD_TOO_LARGE",
+	http.StatusRequestedRangeNotSatisfiable: "RANGE_NOT_SATISFIABLE",
+	http.StatusTooManyRequests:              "RATE_LIMIT_EXCEEDED",
 }
 
 // customError is a simple error type for custom error messages
@@ -32,32 +48,67 @@ func SendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, def
 
 	var statusCode int
 	var errorCode string
+	var message string
 
-	// Map specific errors to HTTP status codes and error codes (using errors.Is for wrapped errors)
 	switch {
 	case errors.Is(err, metadata.ErrNotFound):
 		statusCode = http.StatusNotFound
 		errorCode = "FILE_NOT_FOUND"
+		message = "file not found"
 	case errors.Is(err, metadata.ErrAlreadyExists):
 		statusCode = http.StatusConflict
 		errorCode = "FILE_ALREADY_EXISTS"
+		message = "file already exists"
+	case errors.Is(err, metadata.ErrSubtreeTooLarge):
+		statusCode = http.StatusRequestEntityTooLarge
+		errorCode = "SUBTREE_TOO_LARGE"
+		message = "directory subtree too large"
+	case errors.Is(err, metadata.ErrNameTooLong):
+		statusCode = http.StatusBadRequest
+		errorCode = "NAME_TOO_LONG"
+		message = "file or directory name too long"
+	case errors.Is(err, localfs.ErrInsufficientStorage):
+		statusCode = http.StatusInsufficientStorage
+		errorCode = "INSUFFICIENT_STORAGE"
+		message = "insufficient storage space"
+	case errors.Is(err, metadata.ErrPrecondition):
+		statusCode = http.StatusPreconditionFailed
+		errorCode = "PRECONDITION_FAILED"
+		message = "precondition failed"
+	case errors.Is(err, locks.ErrLockHeld):
+		statusCode = http.StatusConflict
+		errorCode = "RESOURCE_LOCKED"
+		message = "resource is locked, retry"
 	case errors.Is(err, auth.ErrAuthenticationFailed):
 		statusCode = http.StatusUnauthorized
 		errorCode = "AUTHENTICATION_FAILED"
+		message = "authentication failed"
 	case errors.Is(err, auth.ErrPermissionDenied):
 		statusCode = http.StatusForbidden
 		errorCode = "PERMISSION_DENIED"
+		message = "permission denied"
+	case errors.Is(err, erasure.ErrShardNotFound):
+		statusCode = http.StatusNotFound
+		errorCode = "SHARD_NOT_FOUND"
+		message = "shard not found"
+	case errors.Is(err, links.ErrLinkNotFound):
+		statusCode = defaultStatusCode
+		errorCode = "LINK_NOT_FOUND"
+		message = err.Error()
+	case errors.Is(err, links.ErrLinkExpired):
+		statusCode = defaultStatusCode
+		errorCode = "LINK_EXPIRED"
+		message = err.Error()
+	case errors.Is(err, links.ErrLinkInvalid):
+		statusCode = defaultStatusCode
+		errorCode = "LINK_INVALID"
+		message = err.Error()
 	default:
 		statusCode = defaultStatusCode
-		errorCode = "INTERNAL_ERROR"
+		errorCode, message = genericErrorFields(statusCode, err)
 	}
 
 	w.WriteHeader(statusCode)
-
-	message := err.Error()
-	if errorCode == "INTERNAL_ERROR" {
-		message = "an internal error occurred"
-	}
 
 	response := ErrorResponse{
 		Code:    errorCode,
@@ -73,7 +124,7 @@ func SendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, def
 		logger.Error("Failed to write error response", zap.Error(writeErr))
 	}
 
-	logLevel := logger.Info
+	logLevel := logger.Debug
 	if statusCode >= 500 {
 		logLevel = logger.Error
 	}
@@ -83,17 +134,30 @@ func SendErrorResponse(w http.ResponseWriter, logger *zap.Logger, err error, def
 		zap.Error(err))
 }
 
-// SendJSONResponse sends a JSON response with any data structure.
-// Marshals to a buffer first so that encoding errors don't produce malformed responses.
 func SendJSONResponse(w http.ResponseWriter, data interface{}) {
 	buf, err := json.Marshal(data)
-	if err != nil {
+	if nil != err {
+		zap.L().Error("Failed to marshal JSON response", zap.Error(err))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"Failed to encode response"}`))
+		_, _ = w.Write([]byte(`{"code":"INTERNAL_ERROR","message":"an internal error occurred"}` + "\n"))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(buf)
 	_, _ = w.Write([]byte("\n"))
+}
+
+func genericErrorFields(statusCode int, err error) (string, string) {
+	if 500 <= statusCode && http.StatusBadGateway != statusCode {
+		return "INTERNAL_ERROR", "an internal error occurred"
+	}
+	errorCode, known := clientErrorCodes[statusCode]
+	if !known {
+		errorCode = strings.ToUpper(strings.ReplaceAll(http.StatusText(statusCode), " ", "_"))
+	}
+	if nil == err {
+		return errorCode, http.StatusText(statusCode)
+	}
+	return errorCode, err.Error()
 }

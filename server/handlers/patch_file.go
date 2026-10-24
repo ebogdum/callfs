@@ -26,6 +26,8 @@ type renameMoveRequest struct {
 	Instance      string `json:"instance"`
 	Overwrite     bool   `json:"overwrite"`
 	CreateParents bool   `json:"create_parents"`
+	Mode          string `json:"mode"`
+	Owner         string `json:"owner"`
 }
 
 // V1PatchFileEnhanced handles PATCH /files/{path} for first-class rename and move.
@@ -44,7 +46,7 @@ type renameMoveRequest struct {
 // @Failure 409 {object} ErrorResponse "Conflict"
 // @Failure 502 {object} ErrorResponse "Bad Gateway (cross-server proxy error)"
 // @Router /v1/files/{path} [patch]
-func V1PatchFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backendConfig *config.BackendConfig, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc {
+func V1PatchFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, admins *auth.AdminSet, backendConfig *config.BackendConfig, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		urlPath := chi.URLParam(r, "*")
 		pathInfo := ParseFilePath(urlPath)
@@ -75,6 +77,15 @@ func V1PatchFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backen
 			req.Overwrite = true
 		}
 
+		if "" != req.Mode || "" != req.Owner {
+			if "" != req.Name || "" != req.Destination {
+				sendBadRequest(w, logger, "mode or owner cannot be combined with name or destination")
+				return
+			}
+			patchFileAttributes(w, r, engine, admins, userID, srcPath, req, logger)
+			return
+		}
+
 		isRename := req.Name != ""
 		isMove := req.Destination != ""
 		if isRename == isMove {
@@ -90,6 +101,10 @@ func V1PatchFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backen
 		}
 
 		// A move is a delete at the source plus a create at the destination.
+		if isMove && !isAdminAppUser(userID) && ("" != req.Backend || "" != req.Instance) {
+			SendErrorResponse(w, logger, &customError{message: "moving to a different backend or instance requires admin"}, http.StatusForbidden)
+			return
+		}
 		if err := authorizer.Authorize(r.Context(), userID, srcPath, auth.DeletePerm); err != nil {
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
 			return
@@ -102,7 +117,7 @@ func V1PatchFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, backen
 		if isRename {
 			err = engine.Rename(r.Context(), srcPath, req.Name)
 		} else {
-			err = engine.Move(r.Context(), srcPath, req.Destination, core.MoveOptions{
+			err = engine.Move(r.Context(), srcPath, dstPath, core.MoveOptions{
 				Backend:       req.Backend,
 				Instance:      req.Instance,
 				Overwrite:     req.Overwrite,
@@ -172,15 +187,106 @@ func canonicalDestination(dst string) (string, error) {
 func writeMoveError(w http.ResponseWriter, logger *zap.Logger, err error) {
 	var invalid *core.ErrInvalidRename
 	var unsupported *core.ErrUnsupportedMove
+	var proxyFailed *core.ErrProxyFailed
 	switch {
 	case errors.As(err, &invalid):
 		sendBadRequest(w, logger, invalid.Error())
 	case errors.As(err, &unsupported):
 		sendBadRequest(w, logger, unsupported.Error())
+	case errors.As(err, &proxyFailed):
+		SendErrorResponse(w, logger, proxyFailed, http.StatusBadGateway)
 	default:
 		// SendErrorResponse maps ErrNotFound→404, ErrAlreadyExists→409,
 		// auth errors→401/403; everything else falls back to 500.
 		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+	}
+}
+
+const maxOwnerLength = 255
+
+type fileAttributesResponse struct {
+	Path  string `json:"path"`
+	Mode  string `json:"mode"`
+	Owner string `json:"owner"`
+}
+
+func patchFileAttributes(w http.ResponseWriter, r *http.Request, engine *core.Engine, admins *auth.AdminSet, userID, path string, req renameMoveRequest, logger *zap.Logger) {
+	isAdmin := isAdminAppUser(userID) || admins.IsAdmin(userID)
+	if "" != req.Owner && !isAdmin {
+		sendCodedError(w, logger, http.StatusForbidden, "ADMIN_REQUIRED", "Only admins can do this.")
+		return
+	}
+	if "" != req.Owner && (maxOwnerLength < len(req.Owner) || req.Owner != strings.TrimSpace(req.Owner)) {
+		sendBadRequest(w, logger, "owner must be a user ID of at most 255 characters without surrounding spaces")
+		return
+	}
+
+	mode := ""
+	if "" != req.Mode {
+		normalized, ok := normalizeFileMode(req.Mode)
+		if !ok {
+			sendBadRequest(w, logger, "mode must be an octal permission such as 0640")
+			return
+		}
+		mode = normalized
+	}
+
+	md, err := engine.GetMetadata(r.Context(), path)
+	if nil != err {
+		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+		return
+	}
+	if !isAdmin && md.Owner != userID {
+		SendErrorResponse(w, logger, auth.ErrPermissionDenied, http.StatusForbidden)
+		return
+	}
+
+	updated := *md
+	if "" != mode {
+		updated.Mode = mode
+	}
+	if "" != req.Owner {
+		updated.Owner = req.Owner
+	}
+	if err := engine.UpdateMetadataOnly(r.Context(), &updated); nil != err {
+		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+		return
+	}
+
+	SendJSONResponse(w, fileAttributesResponse{Path: path, Mode: updated.Mode, Owner: updated.Owner})
+	logger.Info("File mode or owner updated",
+		zap.String("path", path),
+		zap.String("user_id", userID),
+		zap.String("mode", updated.Mode),
+		zap.String("owner", updated.Owner))
+}
+
+func normalizeFileMode(raw string) (string, bool) {
+	digits := raw
+	if 4 == len(raw) && '0' == raw[0] {
+		digits = raw[1:]
+	}
+	if 3 != len(digits) {
+		return "", false
+	}
+	for i := 0; i < len(digits); i++ {
+		if '0' > digits[i] || '7' < digits[i] {
+			return "", false
+		}
+	}
+	return "0" + digits, true
+}
+
+func sendCodedError(w http.ResponseWriter, logger *zap.Logger, status int, code, message string) {
+	buf, err := json.Marshal(ErrorResponse{Code: code, Message: message})
+	if err != nil {
+		logger.Error("Failed to marshal error response", zap.Error(err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if _, err := w.Write(buf); err != nil {
+		logger.Error("Failed to write error response", zap.Error(err))
 	}
 }
 

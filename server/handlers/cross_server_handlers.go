@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -50,16 +51,29 @@ func V1DeleteFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logge
 			enginePath = strings.TrimSuffix(enginePath, "/")
 		}
 
-		// Authorize delete access FIRST
-		if err := authorizer.Authorize(r.Context(), userID, enginePath, auth.DeletePerm); err != nil {
+		md, mdErr := engine.GetMetadata(r.Context(), enginePath)
+		if nil != mdErr && !errors.Is(mdErr, metadata.ErrNotFound) {
+			SendErrorResponse(w, logger, mdErr, http.StatusInternalServerError)
+			return
+		}
+
+		if err := authorizer.AuthorizeWithMetadata(r.Context(), userID, enginePath, md, auth.DeletePerm); err != nil {
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
 			return
 		}
 
-		// Get metadata to check if it exists and determine location
-		md, err := engine.GetMetadata(r.Context(), enginePath)
-		if err != nil {
-			SendErrorResponse(w, logger, err, http.StatusNotFound)
+		if nil == md {
+			SendErrorResponse(w, logger, mdErr, http.StatusNotFound)
+			return
+		}
+
+		if "true" == r.URL.Query().Get("dry_run") {
+			plan, planErr := engine.PlanDelete(r.Context(), enginePath)
+			if planErr != nil {
+				SendErrorResponse(w, logger, planErr, http.StatusInternalServerError)
+				return
+			}
+			SendJSONResponse(w, plan)
 			return
 		}
 
@@ -68,7 +82,15 @@ func V1DeleteFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logge
 		// Check if file/directory is on this instance or needs cross-server proxy
 		if md.CallFSInstanceID != nil && *md.CallFSInstanceID != currentInstanceID {
 			// Resource is on another server - proxy the request
-			if err := engine.DeleteFileOnInstance(r.Context(), *md.CallFSInstanceID, enginePath); err != nil {
+			proxyDelete := engine.DeleteFileOnInstance
+			if "directory" == md.Type && "true" == r.URL.Query().Get("recursive") {
+				proxyDelete = engine.DeleteTreeOnInstance
+			}
+			if err := proxyDelete(r.Context(), *md.CallFSInstanceID, enginePath); err != nil {
+				if errors.Is(err, core.ErrDirectoryNotEmpty) {
+					SendErrorResponse(w, logger, errFolderNotEmpty, http.StatusConflict)
+					return
+				}
 				logger.Error("Failed to proxy DELETE request",
 					zap.String("instance_id", *md.CallFSInstanceID),
 					zap.String("path", enginePath),
@@ -79,10 +101,9 @@ func V1DeleteFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logge
 
 			// Proxy successful — now remove local metadata so it doesn't
 			// point at a deleted remote file (orphan metadata).
-			if delErr := engine.DeleteMetadataOnly(r.Context(), enginePath); delErr != nil {
-				logger.Warn("Failed to delete local metadata after cross-server proxy DELETE",
-					zap.String("path", enginePath),
-					zap.Error(delErr))
+			if delErr := engine.DeleteMetadataOnly(r.Context(), enginePath); nil != delErr && !errors.Is(delErr, metadata.ErrNotFound) {
+				SendErrorResponse(w, logger, fmt.Errorf("remote file deleted but local metadata removal failed: %w", delErr), http.StatusInternalServerError)
+				return
 			}
 
 			w.WriteHeader(http.StatusNoContent)
@@ -95,7 +116,25 @@ func V1DeleteFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logge
 		}
 
 		// Resource exists on this instance - delete locally
+		if md.Type == "directory" && r.URL.Query().Get("recursive") == "true" {
+			deletedFiles, deletedDirs, delErr := engine.DeleteDirectoryRecursive(r.Context(), enginePath)
+			if delErr != nil {
+				SendErrorResponse(w, logger, delErr, http.StatusInternalServerError)
+				return
+			}
+			SendJSONResponse(w, recursiveDeleteResponse{Deleted: deletedFiles, DeletedFiles: deletedFiles, DeletedDirectories: deletedDirs})
+			logger.Info("Directory deleted recursively locally",
+				zap.String("path", pathInfo.FullPath),
+				zap.String("user_id", userID),
+				zap.Int("deleted_files", deletedFiles), zap.Int("deleted_directories", deletedDirs))
+			return
+		}
+
 		if err := engine.DeleteFile(r.Context(), enginePath); err != nil {
+			if errors.Is(err, core.ErrDirectoryNotEmpty) {
+				SendErrorResponse(w, logger, errFolderNotEmpty, http.StatusConflict)
+				return
+			}
 			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 			return
 		}
@@ -150,51 +189,29 @@ func V1HeadFileEnhanced(engine *core.Engine, authorizer auth.Authorizer, logger 
 			enginePath = strings.TrimSuffix(enginePath, "/")
 		}
 
-		// Authorize read access FIRST
-		if err := authorizer.Authorize(r.Context(), userID, enginePath, auth.ReadPerm); err != nil {
+		md, mdErr := engine.GetMetadata(r.Context(), enginePath)
+		if nil != mdErr && !errors.Is(mdErr, metadata.ErrNotFound) {
+			SendErrorResponse(w, logger, mdErr, http.StatusInternalServerError)
+			return
+		}
+
+		if err := authorizer.AuthorizeWithMetadata(r.Context(), userID, enginePath, md, auth.ReadPerm); err != nil {
 			SendErrorResponse(w, logger, err, http.StatusForbidden)
 			return
 		}
 
-		// Get metadata to check location
-		md, err := engine.GetMetadata(r.Context(), enginePath)
-		if err != nil {
-			SendErrorResponse(w, logger, err, http.StatusNotFound)
+		if nil == md {
+			SendErrorResponse(w, logger, mdErr, http.StatusNotFound)
 			return
 		}
 
-		currentInstanceID := engine.GetCurrentInstanceID()
-
-		// Check if file/directory is on this instance or needs cross-server proxy
-		if md.CallFSInstanceID != nil && *md.CallFSInstanceID != currentInstanceID {
-			// Resource is on another server - proxy the request to get metadata
-			remoteMd, err := engine.StatFileOnInstance(r.Context(), *md.CallFSInstanceID, enginePath)
-			if err != nil {
-				logger.Error("Failed to proxy HEAD request",
-					zap.String("instance_id", *md.CallFSInstanceID),
-					zap.String("path", enginePath),
-					zap.Error(err))
-				SendErrorResponse(w, logger, fmt.Errorf("failed to proxy request to owning server: %w", err), http.StatusBadGateway)
-				return
-			}
-
-			// Set headers from remote metadata and add instance info
-			setMetadataHeaders(w, remoteMd)
-			w.Header().Set("X-CallFS-Instance-ID", *md.CallFSInstanceID)
-			w.WriteHeader(http.StatusOK)
-
-			logger.Info("File metadata retrieved via cross-server proxy",
-				zap.String("path", pathInfo.FullPath),
-				zap.String("user_id", userID),
-				zap.String("target_instance", *md.CallFSInstanceID))
-			return
-		}
-
-		// Resource exists on this instance - return metadata headers
 		setMetadataHeaders(w, md)
+		if "" != md.ETag {
+			w.Header().Set("ETag", quotedETag(md.ETag))
+		}
 		w.WriteHeader(http.StatusOK)
 
-		logger.Info("File metadata retrieved locally",
+		logger.Info("File metadata retrieved",
 			zap.String("path", pathInfo.FullPath),
 			zap.String("user_id", userID),
 			zap.String("type", md.Type))

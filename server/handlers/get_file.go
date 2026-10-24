@@ -3,11 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -16,6 +16,7 @@ import (
 	"github.com/ebogdum/callfs/config"
 	"github.com/ebogdum/callfs/core"
 	"github.com/ebogdum/callfs/core/log"
+	"github.com/ebogdum/callfs/erasure"
 	"github.com/ebogdum/callfs/metadata"
 	"github.com/ebogdum/callfs/metrics"
 	"github.com/ebogdum/callfs/server/middleware"
@@ -49,61 +50,114 @@ type FileInfo struct {
 // @Failure 404 {object} ErrorResponse "Not Found"
 // @Failure 500 {object} ErrorResponse "Internal Server Error"
 // @Router /v1/files/{path} [get]
-func serveFileContent(w http.ResponseWriter, r *http.Request, engine *core.Engine, md *metadata.Metadata, metadataCtx, fileCtx context.Context, enginePath string, pathInfo PathInfo, userID string, logger *zap.Logger) {
+func serveFileContent(w http.ResponseWriter, r *http.Request, engine *core.Engine, md *metadata.Metadata, fromCache bool, metadataCtx, fileCtx context.Context, enginePath string, pathInfo PathInfo, userID string, logger *zap.Logger) {
 	if md.ErasureCoded {
 		em := engine.GetErasureManager()
 		if em != nil {
 			if r.URL.Query().Get("manifest") == "true" {
-				HandleErasureManifest(w, r, em, enginePath, logger)
+				serveErasureManifest(w, r, em, enginePath, userID, logger)
 				return
 			}
-			HandleErasureDownload(w, r, em, enginePath, md.Size, logger)
+			HandleErasureDownload(w, r.WithContext(fileCtx), em, enginePath, md, logger)
 			metrics.FileOperationsTotal.WithLabelValues("read", "erasure").Inc()
 			return
 		}
 	}
 
 	currentInstanceID := engine.GetCurrentInstanceID()
-	if md.CallFSInstanceID != nil && *md.CallFSInstanceID != currentInstanceID {
-		if freshMd, freshErr := engine.GetMetadataUncached(metadataCtx, enginePath); freshErr == nil {
-			md = freshMd
+	if fromCache && md.CallFSInstanceID != nil && *md.CallFSInstanceID != currentInstanceID {
+		freshMd, freshErr := engine.GetMetadataUncached(metadataCtx, enginePath)
+		if nil != freshErr {
+			SendErrorResponse(w, logger, freshErr, http.StatusInternalServerError)
+			return
 		}
+		md = freshMd
 	}
 
-	reader, err := engine.GetFile(fileCtx, enginePath)
+	if handleValidators(w, r, md) {
+		return
+	}
+	offset, length, partial, ok := resolveRange(w, r, md)
+	if !ok {
+		return
+	}
+
+	var reader io.ReadCloser
+	var err error
+	if partial {
+		reader, err = engine.OpenFileRange(fileCtx, md, enginePath, offset, length)
+	} else {
+		reader, err = engine.OpenFile(fileCtx, md, enginePath)
+	}
 	if err != nil {
 		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
 		return
 	}
 	defer reader.Close()
 
+	contentLength := md.Size
+	if partial {
+		contentLength = length
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", md.Size))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
+	if partial {
+		w.Header().Set("Content-Range", contentRangeHeader(offset, length, md.Size))
+	}
 	w.Header().Set("X-CallFS-Type", "file")
 	w.Header().Set("X-CallFS-Size", fmt.Sprintf("%d", md.Size))
 	w.Header().Set("X-CallFS-Mode", md.Mode)
 	w.Header().Set("X-CallFS-Owner", md.Owner)
 	w.Header().Set("X-CallFS-MTime", md.MTime.Format("2006-01-02T15:04:05Z07:00"))
+	if partial {
+		w.WriteHeader(http.StatusPartialContent)
+	}
 
-	if _, err := io.Copy(w, reader); err != nil {
+	if _, err := io.Copy(w, reader); nil != err {
 		logger.Error("Failed to stream file content", zap.Error(err))
+		return
 	}
 
 	metrics.FileOperationsTotal.WithLabelValues("read", md.BackendType).Inc()
 
-	logFields := log.LogFields{
-		Path:      pathInfo.FullPath,
-		UserID:    userID,
-		Backend:   md.BackendType,
-		Size:      md.Size,
-		Operation: "download",
-	}.Sanitize()
+	if ce := logger.Check(zap.InfoLevel, "File downloaded"); nil != ce {
+		logFields := log.LogFields{
+			Path:      pathInfo.FullPath,
+			UserID:    userID,
+			Backend:   md.BackendType,
+			Size:      md.Size,
+			Operation: "download",
+		}.Sanitize()
 
-	logger.Info("File downloaded",
-		zap.String("path", logFields.Path),
-		zap.String("user_id", logFields.UserID),
-		zap.String("backend", logFields.Backend),
-		zap.Int64("size", logFields.Size))
+		ce.Write(
+			zap.String("path", logFields.Path),
+			zap.String("user_id", logFields.UserID),
+			zap.String("backend", logFields.Backend),
+			zap.Int64("size", logFields.Size))
+	}
+}
+
+func isAdminAppUser(userID string) bool {
+	return "root" == userID || "internal-proxy" == userID
+}
+
+func serveErasureManifest(w http.ResponseWriter, r *http.Request, em *erasure.Manager, path, userID string, logger *zap.Logger) {
+	manifest, err := em.GetManifest(r.Context(), path)
+	if err != nil {
+		SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+		return
+	}
+
+	if !isAdminAppUser(userID) {
+		for i := range manifest.Shards {
+			manifest.Shards[i].Endpoint = ""
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(manifest); err != nil {
+		logger.Error("Failed to encode manifest", zap.Error(err))
+	}
 }
 
 func serveDirectoryListing(w http.ResponseWriter, engine *core.Engine, md *metadata.Metadata, metadataCtx context.Context, enginePath string, pathInfo PathInfo, userID string, logger *zap.Logger) {
@@ -133,34 +187,26 @@ func serveDirectoryListing(w http.ResponseWriter, engine *core.Engine, md *metad
 	w.Header().Set("X-CallFS-Owner", md.Owner)
 	w.Header().Set("X-CallFS-MTime", md.MTime.Format("2006-01-02T15:04:05Z07:00"))
 
-	jsonBytes, marshalErr := json.Marshal(fileInfos)
-	if marshalErr != nil {
-		SendErrorResponse(w, logger, marshalErr, http.StatusInternalServerError)
-		return
-	}
-	if _, err := w.Write(jsonBytes); err != nil {
+	if err := json.NewEncoder(w).Encode(fileInfos); err != nil {
 		logger.Error("Failed to write directory listing", zap.Error(err))
 	}
 
-	logFields := log.LogFields{
-		Path:      pathInfo.FullPath,
-		UserID:    userID,
-		Operation: "list",
-	}.Sanitize()
+	if ce := logger.Check(zap.InfoLevel, "Directory listed"); nil != ce {
+		logFields := log.LogFields{
+			Path:      pathInfo.FullPath,
+			UserID:    userID,
+			Operation: "list",
+		}.Sanitize()
 
-	logger.Info("Directory listed",
-		zap.String("path", logFields.Path),
-		zap.String("user_id", logFields.UserID),
-		zap.Int("children_count", len(children)))
+		ce.Write(
+			zap.String("path", logFields.Path),
+			zap.String("user_id", logFields.UserID),
+			zap.Int("children_count", len(children)))
+	}
 }
 
 func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.ServerConfig, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		defer func() {
-			metrics.HTTPRequestDuration.WithLabelValues(r.Method, "/files/*").Observe(time.Since(start).Seconds())
-		}()
-
 		metadataCtx, metadataCancel := context.WithTimeout(r.Context(), cfg.MetadataOpTimeout)
 		defer metadataCancel()
 
@@ -185,20 +231,25 @@ func V1GetFile(engine *core.Engine, authorizer auth.Authorizer, cfg *config.Serv
 			enginePath = strings.TrimSuffix(enginePath, "/")
 		}
 
-		if err := authorizer.Authorize(metadataCtx, userID, enginePath, auth.ReadPerm); err != nil {
-			SendErrorResponse(w, logger, err, http.StatusForbidden)
+		md, fromCache, mdErr := engine.GetMetadataWithSource(metadataCtx, enginePath)
+		if nil != mdErr && !errors.Is(mdErr, metadata.ErrNotFound) {
+			SendErrorResponse(w, logger, mdErr, http.StatusInternalServerError)
 			return
 		}
 
-		md, err := engine.GetMetadata(metadataCtx, enginePath)
-		if err != nil {
-			SendErrorResponse(w, logger, err, http.StatusNotFound)
+		if err := authorizer.AuthorizeWithMetadata(metadataCtx, userID, enginePath, md, auth.ReadPerm); err != nil {
+			SendErrorResponse(w, logger, err, http.StatusInternalServerError)
+			return
+		}
+
+		if nil == md {
+			SendErrorResponse(w, logger, mdErr, http.StatusNotFound)
 			return
 		}
 
 		switch md.Type {
 		case "file":
-			serveFileContent(w, r, engine, md, metadataCtx, fileCtx, enginePath, pathInfo, userID, logger)
+			serveFileContent(w, r, engine, md, fromCache, metadataCtx, fileCtx, enginePath, pathInfo, userID, logger)
 		case "directory":
 			serveDirectoryListing(w, engine, md, metadataCtx, enginePath, pathInfo, userID, logger)
 		default:
