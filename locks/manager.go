@@ -2,18 +2,46 @@ package locks
 
 import (
 	"context"
+	"errors"
+	"time"
 )
 
-// Manager defines the interface for distributed locking operations
+var ErrLockHeld = errors.New("lock is held by another owner")
+
+type Lease interface {
+	Release(ctx context.Context) error
+}
+
 type Manager interface {
-	// Acquire attempts to acquire a distributed lock for the given key
-	// Returns true if the lock was acquired, false if it was already held by another process
-	Acquire(ctx context.Context, key string) (bool, error)
+	Acquire(ctx context.Context, key string) (Lease, error)
 
-	// Release releases a previously acquired lock for the given key
-	// Only the process that acquired the lock can release it
-	Release(ctx context.Context, key string) error
-
-	// Close closes the lock manager and releases any resources
 	Close() error
 }
+
+type HeldLock struct {
+	Key        string
+	Backend    string
+	Holder     string
+	AcquiredAt time.Time
+	ExpiresAt  time.Time
+}
+
+type LockStats struct {
+	Acquired    uint64
+	Timeouts    uint64
+	Cancelled   uint64
+	Errors      uint64
+	LostLeases  uint64
+	RenewErrors uint64
+}
+
+type Inspector interface {
+	Snapshot(ctx context.Context) ([]HeldLock, error)
+	Stats() LockStats
+	ForceRelease(ctx context.Context, key string) (bool, error)
+}
+
+var (
+	_ Inspector = (*LocalManager)(nil)
+	_ Inspector = (*RedisManager)(nil)
+)

@@ -2,141 +2,200 @@ package locks
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
+	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	localLockTTL             = 30 * time.Second
 	localLockCleanupInterval = time.Minute
+	defaultWaitTimeout       = 30 * time.Second
+	localLockShardCount      = 64
+	localBackendName         = "local"
 )
 
 type lockEntry struct {
-	expiry  time.Time
-	ownerID string
+	expiry     time.Time
+	acquiredAt time.Time
+	ownerToken string
 }
 
-// LocalManager provides in-process lock management for local/single-node deployments.
-// Each lock tracks an ownerID to prevent releasing another holder's lock after TTL expiry.
-//
-// LIMITATION: Release cannot verify ownership since the Manager interface
-// does not return a token from Acquire. If an operation exceeds the TTL (30s)
-// and another goroutine re-acquires the same lock, Release may incorrectly
-// delete the new holder's lock. This is acceptable because:
-//   - Operations are expected to complete within FileOpTimeout (10s)
-//   - Multi-node deployments use RedisManager which has proper Lua-based ownership
+type lockShard struct {
+	mu       sync.Mutex
+	locks    map[string]lockEntry
+	released chan struct{}
+}
+
+func (s *lockShard) releaseLocked(key string) {
+	delete(s.locks, key)
+	activeLocks.Dec()
+	close(s.released)
+	s.released = make(chan struct{})
+}
+
 type LocalManager struct {
-	mu         sync.Mutex
-	locks      map[string]lockEntry
-	instanceID string
-	stopChan   chan struct{}
+	lockCounters
+	shards      [localLockShardCount]lockShard
+	waitTimeout atomic.Int64
+	stopChan    chan struct{}
+	closeOnce   sync.Once
 }
 
-// NewLocalManager creates a new in-memory lock manager.
+type localLease struct {
+	shard      *lockShard
+	key        string
+	ownerToken string
+}
+
 func NewLocalManager() *LocalManager {
 	m := &LocalManager{
-		locks:      make(map[string]lockEntry),
-		instanceID: mustGenerateID(),
-		stopChan:   make(chan struct{}),
+		stopChan: make(chan struct{}),
+	}
+	m.waitTimeout.Store(int64(defaultWaitTimeout))
+	for i := range m.shards {
+		m.shards[i].locks = make(map[string]lockEntry)
+		m.shards[i].released = make(chan struct{})
 	}
 	go m.cleanupLoop()
 	return m
 }
 
-// Acquire acquires a lock if it is currently free or expired.
-func (m *LocalManager) Acquire(ctx context.Context, key string) (bool, error) {
-	select {
-	case <-ctx.Done():
-		return false, ctx.Err()
-	default:
+func (m *LocalManager) SetWaitTimeout(d time.Duration) {
+	m.waitTimeout.Store(int64(d))
+}
+
+func (m *LocalManager) shardFor(key string) *lockShard {
+	var h uint32 = 2166136261
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= 16777619
 	}
+	return &m.shards[h%localLockShardCount]
+}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if entry, exists := m.locks[key]; exists {
-		if time.Now().Before(entry.expiry) {
-			return false, nil // Lock is still held
-		}
-		// Lock expired, allow re-acquisition
-	}
-
-	ownerID, err := generateOwnerID()
+func (m *LocalManager) Acquire(ctx context.Context, key string) (Lease, error) {
+	ownerToken, err := generateOwnerToken()
 	if err != nil {
-		return false, fmt.Errorf("failed to generate lock owner ID: %w", err)
+		return nil, err
 	}
 
-	m.locks[key] = lockEntry{
-		expiry:  time.Now().Add(localLockTTL),
-		ownerID: ownerID,
+	shard := m.shardFor(key)
+	return waitForLock(ctx, time.Duration(m.waitTimeout.Load()), &m.lockCounters, func() (Lease, error) {
+		return m.tryAcquire(shard, key, ownerToken)
+	}, func() <-chan struct{} {
+		shard.mu.Lock()
+		defer shard.mu.Unlock()
+		return shard.released
+	})
+}
+
+func (m *LocalManager) tryAcquire(shard *lockShard, key, ownerToken string) (Lease, error) {
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	now := time.Now()
+	if entry, exists := shard.locks[key]; exists {
+		if now.Before(entry.expiry) {
+			return nil, nil
+		}
+		m.recordLost()
+		activeLocks.Dec()
 	}
+
+	shard.locks[key] = lockEntry{
+		expiry:     now.Add(localLockTTL),
+		acquiredAt: now,
+		ownerToken: ownerToken,
+	}
+	return &localLease{shard: shard, key: key, ownerToken: ownerToken}, nil
+}
+
+func (l *localLease) Release(_ context.Context) error {
+	shard := l.shard
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	if entry, exists := shard.locks[l.key]; exists && entry.ownerToken == l.ownerToken {
+		shard.releaseLocked(l.key)
+		lockOperations.WithLabelValues("release", "ok").Inc()
+	}
+	return nil
+}
+
+func (m *LocalManager) Snapshot(_ context.Context) ([]HeldLock, error) {
+	now := time.Now()
+	var held []HeldLock
+	for i := range m.shards {
+		shard := &m.shards[i]
+		shard.mu.Lock()
+		for key, entry := range shard.locks {
+			if now.Before(entry.expiry) {
+				held = append(held, HeldLock{
+					Key:        key,
+					Backend:    localBackendName,
+					Holder:     holderHint(entry.ownerToken),
+					AcquiredAt: entry.acquiredAt,
+					ExpiresAt:  entry.expiry,
+				})
+			}
+		}
+		shard.mu.Unlock()
+	}
+	sort.Slice(held, func(i, j int) bool {
+		return held[i].Key < held[j].Key
+	})
+	return held, nil
+}
+
+func (m *LocalManager) ForceRelease(_ context.Context, key string) (bool, error) {
+	shard := m.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	entry, exists := shard.locks[key]
+	if !exists || !time.Now().Before(entry.expiry) {
+		return false, nil
+	}
+	shard.releaseLocked(key)
+	lockOperations.WithLabelValues("force_release", "ok").Inc()
 	return true, nil
 }
 
-// Release releases a previously acquired lock only if it hasn't been re-acquired by another holder.
-func (m *LocalManager) Release(_ context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	entry, exists := m.locks[key]
-	if !exists {
-		return nil // Already released or expired
-	}
-
-	// If the lock has expired, another holder may have re-acquired it. Don't delete.
-	if time.Now().After(entry.expiry) {
-		return nil
-	}
-
-	delete(m.locks, key)
-	return nil
-}
-
-// Close stops the background cleanup goroutine and clears all local locks.
 func (m *LocalManager) Close() error {
-	close(m.stopChan)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.locks = make(map[string]lockEntry)
+	m.closeOnce.Do(func() { close(m.stopChan) })
+	for i := range m.shards {
+		shard := &m.shards[i]
+		shard.mu.Lock()
+		activeLocks.Sub(float64(len(shard.locks)))
+		shard.locks = make(map[string]lockEntry)
+		shard.mu.Unlock()
+	}
 	return nil
 }
 
-// cleanupLoop periodically removes expired lock entries to prevent unbounded map growth.
 func (m *LocalManager) cleanupLoop() {
 	ticker := time.NewTicker(localLockCleanupInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			m.mu.Lock()
-			now := time.Now()
-			for key, entry := range m.locks {
-				if now.After(entry.expiry) {
-					delete(m.locks, key)
+			for i := range m.shards {
+				shard := &m.shards[i]
+				shard.mu.Lock()
+				now := time.Now()
+				for key, entry := range shard.locks {
+					if now.After(entry.expiry) {
+						delete(shard.locks, key)
+						m.recordLost()
+						activeLocks.Dec()
+					}
 				}
+				shard.mu.Unlock()
 			}
-			m.mu.Unlock()
 		case <-m.stopChan:
 			return
 		}
 	}
-}
-
-func generateOwnerID() (string, error) {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
-func mustGenerateID() string {
-	id, err := generateOwnerID()
-	if err != nil {
-		return "local"
-	}
-	return id
 }
