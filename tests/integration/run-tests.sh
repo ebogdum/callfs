@@ -44,9 +44,23 @@ cleanup() {
     cd "${SCRIPT_DIR}" && docker compose down -v --remove-orphans 2>/dev/null || true
     # Clean up any ephemeral containers from config/env tests
     docker rm -f callfs-config-test callfs-env-test 2>/dev/null || true
+    rm -rf "${SCRIPT_DIR}/certs"
   fi
 }
 trap cleanup EXIT
+
+# ---------- Test certificates ----------
+CERT_DIR="${SCRIPT_DIR}/certs"
+rm -rf "${CERT_DIR}"
+mkdir -p "${CERT_DIR}"
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=callfs-test-ca" \
+  -keyout "${CERT_DIR}/ca.key" -out "${CERT_DIR}/ca.pem" >/dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes -subj "/CN=callfs-test-node" \
+  -keyout "${CERT_DIR}/node.key" -out "${CERT_DIR}/node.csr" >/dev/null 2>&1
+printf 'subjectAltName=DNS:node1,DNS:node2,DNS:node3,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth\n' > "${CERT_DIR}/node.ext"
+openssl x509 -req -in "${CERT_DIR}/node.csr" -CA "${CERT_DIR}/ca.pem" -CAkey "${CERT_DIR}/ca.key" \
+  -CAcreateserial -days 2 -extfile "${CERT_DIR}/node.ext" -out "${CERT_DIR}/node.pem" >/dev/null 2>&1
+chmod 644 "${CERT_DIR}"/*
 
 # ---------- Start infrastructure ----------
 echo "==> Starting infrastructure (postgres, redis)..."
@@ -57,72 +71,27 @@ docker compose exec -T postgres sh -c 'i=0; until pg_isready -U callfs -d callfs
 docker compose exec -T redis sh -c 'i=0; until redis-cli ping 2>/dev/null | grep -q PONG; do i=$((i+1)); [ "$i" -ge 60 ] && exit 1; sleep 1; done' 2>/dev/null || { echo "ERROR: redis not ready after 60s"; exit 1; }
 echo "==> Infrastructure ready"
 
-# ---------- Start 3-node Raft cluster ----------
+# ---------- Start 3-node NATS cluster ----------
 echo "==> Starting 3-node CallFS cluster..."
 docker compose up -d node1 node2 node3
 
-wait_for_raft_leader() {
+wait_for_ready() {
   local url="$1"
-  local deadline=$((SECONDS + 60))
-  until docker run --rm --network callfs-test-network alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 -sf "${url}/health" 2>/dev/null | grep -Eq '"leader_id":"[^"]+"'; do
+  local deadline=$((SECONDS + 90))
+  until docker run --rm --network callfs-test-network -v "${CERT_DIR}:/certs:ro" -e CURL_CA_BUNDLE=/certs/ca.pem alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 -sf "${url}/health/ready" >/dev/null 2>&1; do
     if [ "$SECONDS" -ge "$deadline" ]; then
-      echo "ERROR: ${url} has no raft leader after 60s"
+      echo "ERROR: ${url} not ready after 90s"
       return 1
     fi
     sleep 2
   done
 }
 
-echo "==> Waiting for nodes to become healthy..."
+echo "==> Waiting for nodes to become ready..."
 for node in node1 node2 node3; do
-  elapsed=0
-  while [ $elapsed -lt 90 ]; do
-    if docker compose exec -T "$node" /callfs healthcheck --config /config.yaml 2>/dev/null; then
-      echo "  ${node}: ready"
-      break
-    fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-  if [ $elapsed -ge 90 ]; then
-    echo "ERROR: ${node} not ready after 90s"
-    docker compose logs "$node" | tail -30
-    exit 1
-  fi
+  wait_for_ready "https://${node}:8443" || { docker compose logs "$node" | tail -30; exit 1; }
+  echo "  ${node}: ready"
 done
-
-# Give raft time to elect leader on node1, create root dir, and take snapshot
-echo "==> Waiting for Raft leader election and initial snapshot..."
-wait_for_raft_leader "http://node1:8443" || exit 1
-
-# Join node2 and node3 to the Raft cluster via the internal API.
-# After joining, the leader's snapshot will be installed on followers.
-INTERNAL_SECRET="test-internal-secret-0123456789"
-join_raft_node() {
-  node_name="$1"
-  node_json="$2"
-  join_body=$(docker run --rm --network callfs-test-network alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 \
-    curl -s -X POST \
-      -H "Authorization: Bearer ${INTERNAL_SECRET}" \
-      -H "Content-Type: application/json" \
-      -d "${node_json}" \
-      http://node1:8443/v1/internal/raft/join) || { echo "ERROR: ${node_name} join request failed"; exit 1; }
-  case "${join_body}" in
-    *'"status":"joined"'*|*already_member*) echo "  ${node_name}: joined" ;;
-    *) echo "ERROR: ${node_name} join failed: ${join_body}"; exit 1 ;;
-  esac
-}
-
-echo "==> Joining node2 to Raft cluster..."
-join_raft_node node2 '{"node_id":"node-2","raft_addr":"node2:7000","api_endpoint":"http://node2:8443"}'
-
-echo "==> Joining node3 to Raft cluster..."
-join_raft_node node3 '{"node_id":"node-3","raft_addr":"node3:7000","api_endpoint":"http://node3:8443"}'
-
-# Wait for followers to install snapshot and stabilize
-echo "==> Waiting for Raft cluster to stabilize..."
-wait_for_raft_leader "http://node2:8443" || exit 1
-wait_for_raft_leader "http://node3:8443" || exit 1
 echo "==> Cluster ready"
 
 # ---------- Counters ----------
@@ -143,6 +112,8 @@ run_test_external() {
 
   if docker run --rm \
     --network callfs-test-network \
+    -v "${CERT_DIR}:/certs:ro" \
+    -e CURL_CA_BUNDLE=/certs/ca.pem \
     -v "${SCRIPT_DIR}/lib.sh:/tests/lib.sh:ro" \
     -v "${test_file}:/tests/tests/test.sh:ro" \
     alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 \
@@ -225,7 +196,7 @@ if [ -z "$FILTER" ] || echo "13-metadata-backends" | grep -q "$FILTER"; then
     fi
 
     # Run node1 with the specific config. Use --network-alias node1 so the test's
-    # NODE1="http://node1:8443" resolves to this container within the Docker network.
+    # NODE1 resolves to this container within the Docker network.
     docker run -d \
       --name callfs-meta-test \
       --network callfs-test-network \
@@ -261,6 +232,7 @@ if [ -z "$FILTER" ] || echo "13-metadata-backends" | grep -q "$FILTER"; then
     # Run the metadata backend test suite
     if docker run --rm \
       --network callfs-test-network \
+      -e CALLFS_SCHEME=http \
       -v "${SCRIPT_DIR}/lib.sh:/tests/lib.sh:ro" \
       -v "${SCRIPT_DIR}/tests/13-metadata-backends.sh:/tests/tests/test.sh:ro" \
       alpine/curl@sha256:ba0b29b383a3f387587b24a058c55f103b71733263faecd5ebd0d51f1f4c0014 \
@@ -284,6 +256,9 @@ if [ -z "$FILTER" ] || echo "13-metadata-backends" | grep -q "$FILTER"; then
   echo ""
   echo "--- Restarting 3-node cluster ---"
   docker compose up -d node1 node2 node3 2>/dev/null || true
+  for node in node1 node2 node3; do
+    wait_for_ready "https://${node}:8443" || exit 1
+  done
 fi
 
 # ==========================================================

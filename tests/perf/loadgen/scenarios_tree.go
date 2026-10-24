@@ -23,8 +23,6 @@ const (
 )
 
 type treePage struct {
-	Count      int     `json:"count"`
-	Total      int     `json:"total"`
 	NextCursor *string `json:"next_cursor"`
 }
 
@@ -41,7 +39,6 @@ type treeSearchResult struct {
 		Path string `json:"path"`
 	} `json:"items"`
 	NextCursor string `json:"next_cursor"`
-	Scanned    int    `json:"scanned"`
 }
 
 type treeBatchResponse struct {
@@ -442,7 +439,11 @@ func treeSearchStep(ctx context.Context, env *Env, w *Worker) error {
 		values.Set("limit", "10")
 	case 7:
 		op = "search.storage"
-		values.Set("storage", "localfs")
+		storage := "localfs"
+		if env.Features.S3 {
+			storage = "s3"
+		}
+		values.Set("storage", storage)
 		values.Set("erasure", "false")
 		values.Set("q", "image")
 	default:
@@ -657,7 +658,11 @@ func treeBatchJob(ctx context.Context, env *Env, w *Worker) error {
 		case "succeeded":
 			return nil
 		case "partial", "failed", "cancelled":
-			return fmt.Errorf("batch job %s ended %s", submit.JobID, job.State)
+			detail := ""
+			if nil != job.Error {
+				detail = ": " + *job.Error
+			}
+			return fmt.Errorf("batch job %s ended %s%s", submit.JobID, job.State, detail)
 		}
 		if err := treeSleep(ctx, treeJobPollWait); nil != err {
 			return err

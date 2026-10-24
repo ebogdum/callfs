@@ -15,8 +15,7 @@ OVERSIZE_FILE="${_TMPDIR}/ws-oversize.bin"
 generate_zero_binary "$OVERSIZE_FILE" 105906176
 
 test_name "WebSocket upload over 100 MB is rejected and no file is created"
-WS_HOST="${NODE1#http://}"
-websocat --binary "ws://${WS_HOST}/v1/files/ws/ws-oversize.txt?mode=upload" \
+websocat -k --binary "${WS_BASE}/v1/files/ws/ws-oversize.txt?mode=upload" \
   --header "Authorization: Bearer ${API_KEY}" < "$OVERSIZE_FILE" >/dev/null 2>&1 || true
 download_file "$NODE1" "/ws-oversize.txt" >/dev/null
 _read_status

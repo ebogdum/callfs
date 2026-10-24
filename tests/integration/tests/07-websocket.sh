@@ -18,8 +18,7 @@ assert_status "201"
 pass
 
 test_name "WebSocket download returns correct content"
-WS_HOST="${NODE1#http://}"
-WS_BODY=$(websocat "ws://${WS_HOST}/v1/files/ws/ws-download.txt?mode=download" \
+WS_BODY=$(websocat -k "${WS_BASE}/v1/files/ws/ws-download.txt?mode=download" \
   --header "Authorization: Bearer ${API_KEY}" 2>/dev/null) || true
 if echo "$WS_BODY" | grep -qF "websocket test content"; then
   pass
@@ -28,8 +27,7 @@ else
 fi
 
 test_name "WebSocket upload then verify via GET"
-WS_HOST="${NODE1#http://}"
-echo "ws uploaded data" | websocat "ws://${WS_HOST}/v1/files/ws/ws-upload.txt?mode=upload" \
+echo "ws uploaded data" | websocat -k "${WS_BASE}/v1/files/ws/ws-upload.txt?mode=upload" \
   --header "Authorization: Bearer ${API_KEY}" 2>/dev/null || true
 BODY=$(download_file "$NODE1" "/ws-upload.txt")
 _read_status

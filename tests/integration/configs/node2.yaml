@@ -1,7 +1,9 @@
 server:
   listen_addr: ":8443"
-  protocol: "http"
-  external_url: "http://node2:8443"
+  protocol: "https"
+  cert_file: "/certs/node.pem"
+  key_file: "/certs/node.key"
+  external_url: "https://node2:8443"
   read_timeout: "30s"
   write_timeout: "30s"
   file_op_timeout: "30s"
@@ -16,37 +18,36 @@ auth:
 backend:
   default_backend: "localfs"
   localfs_root_path: "/data"
+  internal_proxy_ca_file: "/certs/ca.pem"
 
 metadata_store:
-  type: "raft"
+  type: "nats"
 
-raft:
+nats:
   enabled: true
-  node_id: "node-2"
-  bind_addr: "node2:7000"
-  data_dir: "/raft-data"
-  bootstrap: false
-  peers:
-    node-1: "node1:7000"
-    node-3: "node3:7000"
-  api_peer_endpoints:
-    node-1: "http://node1:8443"
-    node-3: "http://node3:8443"
-  apply_timeout: "10s"
-  forward_timeout: "10s"
-  snapshot_interval: "60s"
-  snapshot_threshold: 256
-  retain_snapshot_count: 2
+  mode: "embedded"
+  server_name: "node-2"
+  cluster_name: "callfs-test"
+  cluster_listen: "0.0.0.0:6222"
+  routes_from_peers: false
+  routes:
+    - "nats-route://node1:6222"
+    - "nats-route://node3:6222"
+  jetstream:
+    store_dir: "/nats-data"
+  tls:
+    cert_file: "/certs/node.pem"
+    key_file: "/certs/node.key"
+    ca_file: "/certs/ca.pem"
 
 dlm:
-  type: "redis"
-  redis_addr: "redis:6379"
+  type: "nats"
 
 instance_discovery:
   instance_id: "node-2"
   peer_endpoints:
-    node-1: "http://node1:8443"
-    node-3: "http://node3:8443"
+    node-1: "https://node1:8443"
+    node-3: "https://node3:8443"
 
 erasure:
   enabled: true

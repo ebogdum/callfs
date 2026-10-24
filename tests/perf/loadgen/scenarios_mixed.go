@@ -97,7 +97,6 @@ type mixedPart struct {
 func setupMixed(ctx context.Context, env *Env) error {
 	parts := []mixedPart{}
 	total := 0
-	var errs []error
 	for _, entry := range mixedWeights {
 		s, ok := lookupScenario(entry.name)
 		if !ok || (nil != s.Needs && !s.Needs(env.Features)) {
@@ -105,15 +104,14 @@ func setupMixed(ctx context.Context, env *Env) error {
 		}
 		if nil != s.Setup {
 			if err := s.Setup(ctx, env); nil != err {
-				errs = append(errs, fmt.Errorf("%s: %w", entry.name, err))
-				continue
+				return fmt.Errorf("%s: %w", entry.name, err)
 			}
 		}
 		parts = append(parts, mixedPart{scenario: s, weight: entry.weight})
 		total += entry.weight
 	}
 	if 0 == total {
-		return errors.Join(append(errs, errors.New("no mixed parts available"))...)
+		return errors.New("no mixed parts available")
 	}
 	env.Put(mixedKey, parts)
 	return nil

@@ -47,6 +47,7 @@ services:
     image: callfs:test
     volumes:
       - ./configs/node1.yaml:/config.yaml:ro
+      - ./certs:/certs:ro
     command: ["server", "--config", "/config.yaml"]
     depends_on:
       redis:
@@ -58,12 +59,13 @@ services:
       retries: 30
     tmpfs:
       - /data
-      - /raft-data
+      - /nats-data
 
   node2:
     image: callfs:test
     volumes:
       - ./configs/node2.yaml:/config.yaml:ro
+      - ./certs:/certs:ro
     command: ["server", "--config", "/config.yaml"]
     depends_on:
       redis:
@@ -77,12 +79,13 @@ services:
       retries: 30
     tmpfs:
       - /data
-      - /raft-data
+      - /nats-data
 
   node3:
     image: callfs:test
     volumes:
       - ./configs/node3.yaml:/config.yaml:ro
+      - ./certs:/certs:ro
     command: ["server", "--config", "/config.yaml"]
     depends_on:
       redis:
@@ -96,7 +99,7 @@ services:
       retries: 30
     tmpfs:
       - /data
-      - /raft-data
+      - /nats-data
 
   node-s3:
     image: callfs:test

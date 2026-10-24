@@ -54,22 +54,6 @@ else
   pass
 fi
 
-test_name "POST /v1/internal/raft/join without auth returns 401"
-callfs_curl_noauth POST "${NODE1}/v1/internal/raft/join" \
-  -H "Content-Type: application/json" \
-  -d '{"node_id":"fake","addr":"fake:8443"}' >/dev/null
-_read_status
-assert_status "401"
-pass
-
-test_name "POST /v1/internal/raft/metadata/apply without auth returns 401"
-callfs_curl_noauth POST "${NODE1}/v1/internal/raft/metadata/apply" \
-  -H "Content-Type: application/json" \
-  -d '{"op":"set","key":"test","value":"test"}' >/dev/null
-_read_status
-assert_status "401"
-pass
-
 # --- Cleanup ---
 
 test_name "Cleanup internal endpoint test artifacts"

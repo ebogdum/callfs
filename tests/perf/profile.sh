@@ -430,7 +430,7 @@ fi
 
 mkdir -p "$OUT"
 LOG="$WORK/loadgen.out"
-CALLFS_PERF_ADMIN_KEY="$ADMIN_KEY" CALLFS_PERF_USER_KEYS="$USER_KEYS" "$LOADGEN" \
+CALLFS_LOADGEN_ADMIN_KEY="$ADMIN_KEY" CALLFS_LOADGEN_USER_KEYS="$USER_KEYS" "$LOADGEN" \
 	-url "$URL" -pprof "$PPROF" -peers "$PEERS" -features "$FEATURES" \
 	-scenarios "$SCENARIOS" ${GROUP:+-group "$GROUP"} -duration "$DURATION" \
 	-concurrency "$CONCURRENCY" -large "$LARGE" -files "$FILES" -out "$OUT" $SESSIONS \

@@ -74,8 +74,8 @@ func main() {
 func parseFlags() options {
 	var o options
 	flag.StringVar(&o.url, "url", "http://127.0.0.1:8090", "callfs base URL")
-	flag.StringVar(&o.key, "key", os.Getenv("CALLFS_PERF_ADMIN_KEY"), "admin API key")
-	flag.StringVar(&o.userKeys, "user-keys", os.Getenv("CALLFS_PERF_USER_KEYS"), "comma-separated non-admin API keys")
+	flag.StringVar(&o.key, "key", "", "admin API key (default CALLFS_LOADGEN_ADMIN_KEY)")
+	flag.StringVar(&o.userKeys, "user-keys", "", "comma-separated non-admin API keys (default CALLFS_LOADGEN_USER_KEYS)")
 	flag.StringVar(&o.peers, "peers", "", "comma-separated base URLs of other cluster instances")
 	flag.StringVar(&o.pprof, "pprof", "http://127.0.0.1:9091", "comma-separated metrics base URLs serving /debug/pprof; empty skips profiles")
 	flag.StringVar(&o.scenarios, "scenarios", "all", "comma-separated scenario names, or all")
@@ -92,12 +92,18 @@ func parseFlags() options {
 	flag.BoolVar(&o.list, "list", false, "list scenarios and exit")
 	flag.BoolVar(&o.sessions, "sessions", false, "use browser sessions with CSRF instead of API keys for user clients")
 	flag.Parse()
+	if "" == o.key {
+		o.key = os.Getenv("CALLFS_LOADGEN_ADMIN_KEY")
+	}
+	if "" == o.userKeys {
+		o.userKeys = os.Getenv("CALLFS_LOADGEN_USER_KEYS")
+	}
 	return o
 }
 
 func run(ctx context.Context, opts options) error {
 	if "" == opts.key {
-		return errors.New("admin key is required (-key or CALLFS_PERF_ADMIN_KEY)")
+		return errors.New("admin key is required (-key or CALLFS_LOADGEN_ADMIN_KEY)")
 	}
 	if 0 >= opts.duration || time.Duration(maxProfileSeconds)*time.Second < opts.duration {
 		return fmt.Errorf("duration must be between 1s and %ds", maxProfileSeconds)

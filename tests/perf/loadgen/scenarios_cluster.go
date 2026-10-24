@@ -77,7 +77,7 @@ func init() {
 	register(Scenario{
 		Name:     "cluster-writes",
 		Group:    clusterGroup,
-		Needs:    func(f Features) bool { return f.Cluster },
+		Needs:    func(f Features) bool { return f.Cluster && f.NATS },
 		Setup:    clusterWritesSetup,
 		Step:     clusterWritesStep,
 		Teardown: func(ctx context.Context, env *Env) error { return clusterTeardown(ctx, env, "cluster-writes") },
@@ -595,63 +595,63 @@ func clusterWritesStep(ctx context.Context, env *Env, w *Worker) error {
 	reader := targets[w.Pick(len(targets))]
 
 	dir := env.Path(scenario, "w", w.Name("d"))
-	if _, err := writer.Do(ctx, Request{Op: "raft.mkdir", Method: http.MethodPost, Path: clusterFile(dir) + "/", Expect: []int{http.StatusCreated}}); nil != err {
-		return fmt.Errorf("raft mkdir: %w", err)
+	if _, err := writer.Do(ctx, Request{Op: "cluster.mkdir", Method: http.MethodPost, Path: clusterFile(dir) + "/", Expect: []int{http.StatusCreated}}); nil != err {
+		return fmt.Errorf("cluster mkdir: %w", err)
 	}
 	first := dir + "/f1"
 	second := dir + "/f2"
 	if _, err := writer.Do(ctx, Request{
-		Op: "raft.create", Method: http.MethodPut, Path: clusterFile(first),
+		Op: "cluster.create", Method: http.MethodPut, Path: clusterFile(first),
 		Body: Payload(env.Sizes.Small, w.Iter), Size: env.Sizes.Small, Expect: []int{http.StatusCreated},
 	}); nil != err {
-		return fmt.Errorf("raft create: %w", err)
+		return fmt.Errorf("cluster create: %w", err)
 	}
 	if _, err := writer.Do(ctx, Request{
-		Op: "raft.create", Method: http.MethodPut, Path: clusterFile(second),
+		Op: "cluster.create", Method: http.MethodPut, Path: clusterFile(second),
 		Body: Payload(env.Sizes.Small, w.Iter+1), Size: env.Sizes.Small, Expect: []int{http.StatusCreated},
 	}); nil != err {
-		return fmt.Errorf("raft create second: %w", err)
+		return fmt.Errorf("cluster create second: %w", err)
 	}
 	if _, err := writer.Do(ctx, Request{
-		Op: "raft.rename", Method: http.MethodPatch, Path: clusterFile(first),
+		Op: "cluster.rename", Method: http.MethodPatch, Path: clusterFile(first),
 		JSON: map[string]any{"name": "f1r"}, Expect: []int{http.StatusOK},
 	}); nil != err {
-		return fmt.Errorf("raft rename: %w", err)
+		return fmt.Errorf("cluster rename: %w", err)
 	}
-	if _, err := reader.Do(ctx, Request{Op: "raft.stat_other", Method: http.MethodGet, Path: "/v1/stat" + dir + "/f1r", Expect: []int{http.StatusOK}}); nil != err {
-		return fmt.Errorf("raft stat on other node: %w", err)
+	if _, err := reader.Do(ctx, Request{Op: "cluster.stat_other", Method: http.MethodGet, Path: "/v1/stat" + dir + "/f1r", Expect: []int{http.StatusOK}}); nil != err {
+		return fmt.Errorf("cluster stat on other node: %w", err)
 	}
-	if _, err := reader.Do(ctx, Request{Op: "raft.list_other", Method: http.MethodGet, Path: "/v1/directories" + dir, Expect: []int{http.StatusOK}}); nil != err {
-		return fmt.Errorf("raft list on other node: %w", err)
+	if _, err := reader.Do(ctx, Request{Op: "cluster.list_other", Method: http.MethodGet, Path: "/v1/directories" + dir, Expect: []int{http.StatusOK}}); nil != err {
+		return fmt.Errorf("cluster list on other node: %w", err)
 	}
 	if _, err := writer.Do(ctx, Request{
-		Op: "raft.move", Method: http.MethodPatch, Path: clusterFile(second),
+		Op: "cluster.move", Method: http.MethodPatch, Path: clusterFile(second),
 		JSON: map[string]any{"destination": dir + "/sub/f2m", "create_parents": true}, Expect: []int{http.StatusOK},
 	}); nil != err {
-		return fmt.Errorf("raft move: %w", err)
+		return fmt.Errorf("cluster move: %w", err)
 	}
-	if _, err := reader.Do(ctx, Request{Op: "raft.stat_moved", Method: http.MethodGet, Path: "/v1/stat" + dir + "/sub/f2m", Expect: []int{http.StatusOK}}); nil != err {
-		return fmt.Errorf("raft stat moved on other node: %w", err)
+	if _, err := reader.Do(ctx, Request{Op: "cluster.stat_moved", Method: http.MethodGet, Path: "/v1/stat" + dir + "/sub/f2m", Expect: []int{http.StatusOK}}); nil != err {
+		return fmt.Errorf("cluster stat moved on other node: %w", err)
 	}
 	if _, err := writer.Do(ctx, Request{
-		Op: "raft.delete_tree", Method: http.MethodDelete, Path: clusterFile(dir) + "/?recursive=true",
+		Op: "cluster.delete_tree", Method: http.MethodDelete, Path: clusterFile(dir) + "/?recursive=true",
 		Expect: []int{http.StatusOK, http.StatusNoContent},
 	}); nil != err {
-		return fmt.Errorf("raft delete tree: %w", err)
+		return fmt.Errorf("cluster delete tree: %w", err)
 	}
 	if 0 == w.Iter%5 {
 		status := []struct{ op, path string }{
-			{"raft.admin_cluster", "/v1/admin/cluster"},
-			{"raft.admin_state_stats", "/v1/admin/cluster/state-stats"},
-			{"raft.admin_snapshots", "/v1/admin/cluster/snapshots"},
+			{"cluster.admin_cluster", "/v1/admin/cluster"},
+			{"cluster.admin_state_stats", "/v1/admin/cluster/state-stats"},
+			{"cluster.admin_snapshots", "/v1/admin/cluster/snapshots"},
 		}
 		for _, s := range status {
 			if _, err := reader.Do(ctx, Request{Op: s.op, Method: http.MethodGet, Path: s.path, Expect: []int{http.StatusOK}}); nil != err {
 				return fmt.Errorf("%s: %w", s.op, err)
 			}
 		}
-		if _, err := reader.Do(ctx, Request{Op: "raft.health", Method: http.MethodGet, Path: "/health", Expect: []int{http.StatusOK}}); nil != err {
-			return fmt.Errorf("raft health: %w", err)
+		if _, err := reader.Do(ctx, Request{Op: "cluster.health", Method: http.MethodGet, Path: "/health", Expect: []int{http.StatusOK}}); nil != err {
+			return fmt.Errorf("cluster health: %w", err)
 		}
 	}
 	return nil
