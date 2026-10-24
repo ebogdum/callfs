@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // writeMinimalConfig writes a config file that satisfies every non-auth required
@@ -137,5 +138,35 @@ dlm:
 	}
 	if cfg.Auth.APIKeys[0] != "legacy-key-at-least-16-chars" {
 		t.Errorf("api_keys[0] = %q, order must be preserved", cfg.Auth.APIKeys[0])
+	}
+}
+
+func TestNewServerAndDLMKeysFromEnv(t *testing.T) {
+	configPath := writeMinimalConfig(t)
+	t.Setenv("CALLFS_AUTH__API_KEY_USERS__ALICE", "alice-key-at-least-16-chars")
+	t.Setenv("CALLFS_SERVER__METADATA_CACHE_TTL", "5s")
+	t.Setenv("CALLFS_SERVER__RATE_LIMIT__LINK_GENERATE_RPS", "50")
+	t.Setenv("CALLFS_SERVER__RATE_LIMIT__LINK_GENERATE_BURST", "3")
+	t.Setenv("CALLFS_SERVER__RATE_LIMIT__DOWNLOAD_RPS", "7.5")
+	t.Setenv("CALLFS_SERVER__RATE_LIMIT__DOWNLOAD_BURST", "9")
+	t.Setenv("CALLFS_DLM__WAIT_TIMEOUT", "45s")
+
+	cfg, err := LoadConfigFromFile(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfigFromFile: %v", err)
+	}
+
+	if cfg.Auth.APIKeyUsers["alice"] != "alice-key-at-least-16-chars" {
+		t.Errorf("api_key_users[alice] = %q, want env-supplied key", cfg.Auth.APIKeyUsers["alice"])
+	}
+	if cfg.Server.MetadataCacheTTL != 5*time.Second {
+		t.Errorf("metadata_cache_ttl = %v, want 5s", cfg.Server.MetadataCacheTTL)
+	}
+	rl := cfg.Server.RateLimit
+	if rl.LinkGenerateRPS != 50 || rl.LinkGenerateBurst != 3 || rl.DownloadRPS != 7.5 || rl.DownloadBurst != 9 {
+		t.Errorf("rate_limit = %+v, want env-supplied values", rl)
+	}
+	if cfg.DLM.WaitTimeout != 45*time.Second {
+		t.Errorf("dlm.wait_timeout = %v, want 45s", cfg.DLM.WaitTimeout)
 	}
 }

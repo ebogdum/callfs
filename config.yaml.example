@@ -33,6 +33,9 @@ log:
 metrics:
   listen_addr: ":9090"         # Separate unauthenticated metrics port
 
+performance:
+  mode: "fast"                 # fast | strict; both keep every acknowledged write
+
 backend:
   default_backend: "localfs"   # localfs | s3
   localfs_root_path: "/var/lib/callfs"
@@ -47,30 +50,77 @@ backend:
   internal_proxy_skip_tls_verify: false
 
 metadata_store:
-  type: "postgres"             # postgres | sqlite | redis | raft
-  dsn: "postgres://callfs:callfs@localhost/callfs?sslmode=disable"
+  type: "postgres"             # postgres | sqlite | redis | nats
+  dsn: "postgres://callfs:CHANGE_ME@localhost/callfs?sslmode=require"
   sqlite_path: "./callfs.sqlite3"
   redis_addr: "localhost:6379"
   redis_password: ""
   redis_db: 0
   redis_key_prefix: "callfs:"
 
-raft:
-  enabled: false
-  node_id: "callfs-node-1"
-  bind_addr: "127.0.0.1:7000"
-  data_dir: "./raft"
-  bootstrap: false
-  peers: {}                    # node_id -> raft TCP address (e.g., 10.0.0.2:7000)
-  api_peer_endpoints: {}       # node_id -> API endpoint (e.g., http://10.0.0.2:8443)
-  apply_timeout: "10s"
-  forward_timeout: "10s"
-  snapshot_interval: "60s"
-  snapshot_threshold: 256
-  retain_snapshot_count: 2
+nats:
+  enabled: false               # required whenever more than one node runs
+  mode: "embedded"             # embedded | external
+  server_name: ""              # defaults to instance_discovery.instance_id
+  cluster_name: "callfs"
+  client_listen: ""            # "" = in-process only; e.g. 127.0.0.1:4222 for the nats CLI
+  cluster_listen: "127.0.0.1:6222"  # non-loopback needs tls.cert_file, key_file and ca_file
+  routes: []                   # e.g. ["nats-route://10.0.0.2:6222"]
+  routes_from_peers: true      # derive routes from instance_discovery.peer_endpoints hosts
+  monitor_listen: ""           # optional NATS HTTP monitor, e.g. 127.0.0.1:8222
+  server_tags: {}              # e.g. {zone: a}
+  tls:
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+    client_cert_file: ""
+    client_key_file: ""
+  auth:
+    mode: "derived"            # derived | nkey | creds (external mode needs nkey or creds)
+    nkey_seed_file: ""
+    creds_file: ""
+    previous_secret: ""        # old auth.internal_proxy_secret, accepted during a rolling rotation
+  jetstream:
+    store_dir: "./data/nats"
+    max_memory: 256MiB
+    max_store: 0               # 0 = unlimited
+    sync: "always"             # always | interval
+    sync_interval: 2m
+    unique_tag: ""
+  external:
+    urls: []                   # nats://host:4222
+    js_domain: ""
+    tls_ca_file: ""
+  rpc_timeout: 10s
+  metadata:
+    replicas: 3
+    apply_timeout: 10s
+    read_barrier: "info"       # info | publish
+    miss_barrier: true
+    snapshot_interval: 5m
+    snapshot_every: 50000
+    retain_commands: 100000
+    retain_snapshots: 3
+    max_msg_size: 8MiB
+  locks:
+    replicas: 3
+    ttl: 15s
+    queue_stale: 3s
+  streams:
+    replicas: 3
+    events_max_age: 168h
+    events_max_bytes: 1GiB
+    audit_max_age: 2160h
+    logs_level: "warn"         # debug | info | warn | error
+    logs_max_age: 72h
+    tasks_max_deliver: 8
+    tasks_backoff: [1s, 5s, 30s, 2m, 10m]
+    dlq_max_age: 720h
+  bytes: "http"                # http | chunked
+  counters: false
 
 dlm:
-  type: "redis"                # redis | local
+  type: "redis"                # redis | local | nats
   redis_addr: "localhost:6379"
   redis_password: ""
 
@@ -83,9 +133,7 @@ erasure:
   enabled: false
   data_shards: 4
   parity_shards: 2
-  min_file_size: 1048576       # 1MB minimum
   shard_backend: "localfs"     # localfs | s3
-  shard_path: ""               # Base path for shard storage
 
 instance_discovery:
   instance_id: "callfs-instance-1"

@@ -2,9 +2,13 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/netip"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/knadh/koanf/parsers/json"
 	"github.com/knadh/koanf/parsers/yaml"
@@ -56,23 +60,39 @@ func LoadConfigFromFile(configFilePath string) (AppConfig, error) {
 	} else {
 		configFiles := []string{"config.yaml", "config.yml", "config.json"}
 		for _, configFile := range configFiles {
-			if _, err := os.Stat(configFile); err == nil {
-				if err := k.Load(file.Provider(configFile), parserForFile(configFile)); err != nil {
-					return AppConfig{}, fmt.Errorf("failed to load config file %s: %w", configFile, err)
+			_, err := os.Stat(configFile)
+			if nil != err {
+				if os.IsNotExist(err) {
+					continue
 				}
-				break
+				return AppConfig{}, fmt.Errorf("failed to access config file %s: %w", configFile, err)
 			}
+			if err := k.Load(file.Provider(configFile), parserForFile(configFile)); err != nil {
+				return AppConfig{}, fmt.Errorf("failed to load config file %s: %w", configFile, err)
+			}
+			break
 		}
 	}
 
 	// Load environment variables with CALLFS_ prefix
-	if err := k.Load(env.Provider("CALLFS_", ".", func(s string) string {
+	if err := k.Load(env.ProviderWithValue("CALLFS_", ".", func(s string, value string) (string, interface{}) {
 		key := strings.TrimPrefix(s, "CALLFS_")
+		const apiKeyUsersPrefix = "AUTH__API_KEY_USERS__"
+		if strings.HasPrefix(key, apiKeyUsersPrefix) {
+			return "auth.api_key_users." + strings.ToLower(strings.TrimPrefix(key, apiKeyUsersPrefix)), value
+		}
 		key = strings.ToLower(key)
 		key = strings.ReplaceAll(key, "__", ".")
-		return key
+		if commaListKeys[key] {
+			return key, splitCommaList(value)
+		}
+		return key, value
 	}), nil); err != nil {
 		return AppConfig{}, fmt.Errorf("failed to load environment variables: %w", err)
+	}
+
+	if err := rejectLegacyRaft(k); nil != err {
+		return AppConfig{}, err
 	}
 
 	// Unmarshal into config struct
@@ -119,6 +139,57 @@ func validateServerConfig(cfg *AppConfig) error {
 		}
 	}
 
+	if cfg.Server.ReadHeaderTimeout <= 0 {
+		return fmt.Errorf("server.read_header_timeout must be > 0")
+	}
+	if cfg.Server.IdleTimeout <= 0 {
+		return fmt.Errorf("server.idle_timeout must be > 0")
+	}
+	if cfg.Server.TransferTimeout <= 0 {
+		return fmt.Errorf("server.transfer_timeout must be > 0")
+	}
+	if 0 >= cfg.Server.ReadTimeout {
+		return fmt.Errorf("server.read_timeout must be > 0")
+	}
+	if 0 >= cfg.Server.WriteTimeout {
+		return fmt.Errorf("server.write_timeout must be > 0")
+	}
+	if 0 >= cfg.Server.FileOpTimeout {
+		return fmt.Errorf("server.file_op_timeout must be > 0")
+	}
+	if 0 >= cfg.Server.MetadataOpTimeout {
+		return fmt.Errorf("server.metadata_op_timeout must be > 0")
+	}
+	if cfg.Server.MetadataCacheTTL < 0 {
+		return fmt.Errorf("server.metadata_cache_ttl must be >= 0")
+	}
+	if 0 >= cfg.Server.MetadataCacheSize {
+		return fmt.Errorf("server.metadata_cache_size must be > 0")
+	}
+	if cfg.Server.RateLimit.LinkGenerateRPS <= 0 {
+		return fmt.Errorf("server.rate_limit.link_generate_rps must be > 0")
+	}
+	if cfg.Server.RateLimit.LinkGenerateBurst < 1 {
+		return fmt.Errorf("server.rate_limit.link_generate_burst must be >= 1")
+	}
+	if cfg.Server.RateLimit.DownloadRPS <= 0 {
+		return fmt.Errorf("server.rate_limit.download_rps must be > 0")
+	}
+	if cfg.Server.RateLimit.DownloadBurst < 1 {
+		return fmt.Errorf("server.rate_limit.download_burst must be >= 1")
+	}
+	if cfg.Server.RateLimit.SessionRPS <= 0 {
+		return fmt.Errorf("server.rate_limit.session_rps must be > 0")
+	}
+	if cfg.Server.RateLimit.SessionBurst < 1 {
+		return fmt.Errorf("server.rate_limit.session_burst must be >= 1")
+	}
+	for _, cidr := range cfg.Server.TrustedProxies {
+		if _, err := netip.ParsePrefix(cidr); nil != err {
+			return fmt.Errorf("server.trusted_proxies contains invalid CIDR %q: %w", cidr, err)
+		}
+	}
+
 	return nil
 }
 
@@ -132,6 +203,15 @@ func validateMetadataStoreConfig(cfg *AppConfig) error {
 		if cfg.MetadataStore.DSN == "" {
 			return fmt.Errorf("metadata_store.dsn is required when metadata_store.type=postgres")
 		}
+		if 0 >= cfg.MetadataStore.Postgres.MaxOpenConns {
+			return fmt.Errorf("metadata_store.postgres.max_open_conns must be > 0 when metadata_store.type=postgres")
+		}
+		if 0 > cfg.MetadataStore.Postgres.MaxIdleConns {
+			return fmt.Errorf("metadata_store.postgres.max_idle_conns must be >= 0 when metadata_store.type=postgres")
+		}
+		if 0 > cfg.MetadataStore.Postgres.ConnMaxLifetime {
+			return fmt.Errorf("metadata_store.postgres.conn_max_lifetime must be >= 0 when metadata_store.type=postgres")
+		}
 	case "sqlite":
 		if cfg.MetadataStore.SQLitePath == "" {
 			return fmt.Errorf("metadata_store.sqlite_path is required when metadata_store.type=sqlite")
@@ -140,44 +220,43 @@ func validateMetadataStoreConfig(cfg *AppConfig) error {
 		if cfg.MetadataStore.RedisAddr == "" {
 			return fmt.Errorf("metadata_store.redis_addr is required when metadata_store.type=redis")
 		}
-	case "raft":
-		if err := validateRaftConfig(cfg); err != nil {
-			return err
+	case "nats":
+		if !cfg.NATS.Enabled {
+			return fmt.Errorf("metadata_store.type=nats requires nats.enabled=true")
 		}
+	case "raft":
+		return ErrRaftRemoved
 	default:
-		return fmt.Errorf("metadata_store.type must be one of: postgres, sqlite, redis, raft")
+		return fmt.Errorf("metadata_store.type must be one of: postgres, sqlite, redis, nats")
 	}
 
 	return nil
 }
 
-func validateRaftConfig(cfg *AppConfig) error {
-	if !cfg.Raft.Enabled {
-		cfg.Raft.Enabled = true
+func isLoopbackBindAddr(bindAddr string) bool {
+	host, _, err := net.SplitHostPort(bindAddr)
+	if nil != err {
+		return false
 	}
-	if cfg.Raft.NodeID == "" {
-		return fmt.Errorf("raft.node_id is required when metadata_store.type=raft")
+	if "localhost" == host {
+		return true
 	}
-	if cfg.Raft.BindAddr == "" {
-		return fmt.Errorf("raft.bind_addr is required when metadata_store.type=raft")
+	addr, err := netip.ParseAddr(host)
+	if nil != err {
+		return false
 	}
-	if cfg.Raft.DataDir == "" {
-		return fmt.Errorf("raft.data_dir is required when metadata_store.type=raft")
-	}
-	if cfg.Raft.ApplyTimeout <= 0 {
-		return fmt.Errorf("raft.apply_timeout must be > 0 when metadata_store.type=raft")
-	}
-	if cfg.Raft.ForwardTimeout <= 0 {
-		return fmt.Errorf("raft.forward_timeout must be > 0 when metadata_store.type=raft")
-	}
-	if cfg.Raft.SnapshotInterval <= 0 {
-		return fmt.Errorf("raft.snapshot_interval must be > 0 when metadata_store.type=raft")
-	}
-	if cfg.Raft.SnapshotThreshold == 0 {
-		return fmt.Errorf("raft.snapshot_threshold must be > 0 when metadata_store.type=raft")
-	}
-	if cfg.Raft.RetainSnapshotCount <= 0 {
-		return fmt.Errorf("raft.retain_snapshot_count must be > 0 when metadata_store.type=raft")
+	return addr.IsLoopback()
+}
+
+func validatePeerEndpoints(field string, endpoints map[string]string) error {
+	for nodeID, endpoint := range endpoints {
+		parsed, err := url.Parse(endpoint)
+		if nil != err {
+			return fmt.Errorf("%s: endpoint for %q is not a valid URL: %w", field, nodeID, err)
+		}
+		if "https" != strings.ToLower(parsed.Scheme) && !isLoopbackEndpoint(parsed) {
+			return fmt.Errorf("%s: endpoint for %q must use https because the internal secret is sent to it", field, nodeID)
+		}
 	}
 	return nil
 }
@@ -192,9 +271,24 @@ func validateDLMConfig(cfg *AppConfig) error {
 		if cfg.DLM.RedisAddr == "" {
 			return fmt.Errorf("dlm.redis_addr is required when dlm.type=redis")
 		}
+		if 0 >= cfg.DLM.RedisPoolSize {
+			return fmt.Errorf("dlm.redis_pool_size must be > 0 when dlm.type=redis")
+		}
+		if 0 > cfg.DLM.RedisMinIdleConns {
+			return fmt.Errorf("dlm.redis_min_idle_conns must be >= 0 when dlm.type=redis")
+		}
 	case "local":
+		if cfg.NATS.Enabled && 0 < len(remotePeerEndpoints(cfg)) {
+			return fmt.Errorf("dlm.type=local cannot coordinate several nodes; set dlm.type to nats or redis")
+		}
+	case "nats":
+		if !cfg.NATS.Enabled {
+			return fmt.Errorf("dlm.type=nats requires nats.enabled=true")
+		}
+	case "raft":
+		return ErrRaftRemoved
 	default:
-		return fmt.Errorf("dlm.type must be one of: redis, local")
+		return fmt.Errorf("dlm.type must be one of: redis, local, nats")
 	}
 
 	return nil
@@ -207,9 +301,24 @@ func validateDLMConfig(cfg *AppConfig) error {
 // would let two different keys resolve to the same owner.
 var reservedUserIDPattern = regexp.MustCompile(`^api-user-\d+$`)
 
+var placeholderSecretMarkers = []string{"your-", "change-me", "a-strong-"}
+
+func isPlaceholderSecret(secret string) bool {
+	lowered := strings.ToLower(secret)
+	for _, marker := range placeholderSecretMarkers {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateAPIKey(source, key string) error {
 	if key == "default-api-key" {
 		return fmt.Errorf("auth.%s must not use default value 'default-api-key'", source)
+	}
+	if isPlaceholderSecret(key) {
+		return fmt.Errorf("auth.%s must not use an example placeholder value", source)
 	}
 	if len(key) < 16 {
 		return fmt.Errorf("auth.%s: each key must be at least 16 characters", source)
@@ -256,12 +365,25 @@ func validateAuthConfig(cfg *AppConfig) error {
 		return fmt.Errorf("auth.internal_proxy_secret must not be reused as an API key")
 	}
 
-	if cfg.Auth.InternalProxySecret == "" || cfg.Auth.InternalProxySecret == "change-me-internal-secret" {
+	if "" == cfg.Auth.InternalProxySecret || "change-me-internal-secret" == cfg.Auth.InternalProxySecret || isPlaceholderSecret(cfg.Auth.InternalProxySecret) {
 		return fmt.Errorf("auth.internal_proxy_secret must be set and not use default value")
 	}
+	if len(cfg.Auth.InternalProxySecret) < 16 {
+		return fmt.Errorf("auth.internal_proxy_secret must be at least 16 characters")
+	}
 
-	if cfg.Auth.SingleUseLinkSecret == "" || cfg.Auth.SingleUseLinkSecret == "change-me-link-secret" {
+	if "" == cfg.Auth.SingleUseLinkSecret || "change-me-link-secret" == cfg.Auth.SingleUseLinkSecret || isPlaceholderSecret(cfg.Auth.SingleUseLinkSecret) {
 		return fmt.Errorf("auth.single_use_link_secret must be set and not use default value")
+	}
+	if len(cfg.Auth.SingleUseLinkSecret) < 16 {
+		return fmt.Errorf("auth.single_use_link_secret must be at least 16 characters")
+	}
+
+	if cfg.Auth.InternalProxySecret == cfg.Auth.SingleUseLinkSecret {
+		return fmt.Errorf("auth.single_use_link_secret must not be the same as auth.internal_proxy_secret")
+	}
+	if _, dup := seenKeys[cfg.Auth.SingleUseLinkSecret]; dup {
+		return fmt.Errorf("auth.single_use_link_secret must not be reused as an API key")
 	}
 
 	return nil
@@ -292,28 +414,154 @@ func validateConfig(cfg *AppConfig) error {
 		return fmt.Errorf("instance_discovery.instance_id is required")
 	}
 
+	if err := validatePeerEndpoints("instance_discovery.peer_endpoints", cfg.InstanceDiscovery.PeerEndpoints); err != nil {
+		return err
+	}
+
 	if err := validateAuthConfig(cfg); err != nil {
+		return err
+	}
+
+	if err := validateNATSConfig(cfg); err != nil {
+		return err
+	}
+
+	if err := validateAdminUsers(cfg); err != nil {
+		return err
+	}
+
+	if err := validateUIConfig(cfg); err != nil {
+		return err
+	}
+
+	if err := validateTrashConfig(cfg); err != nil {
 		return err
 	}
 
 	if cfg.Erasure.Enabled {
 		if cfg.Erasure.DataShards < 2 {
-			cfg.Erasure.DataShards = 4
+			return fmt.Errorf("erasure.data_shards must be >= 2 (got %d)", cfg.Erasure.DataShards)
 		}
 		if cfg.Erasure.ParityShards < 1 {
-			cfg.Erasure.ParityShards = 2
+			return fmt.Errorf("erasure.parity_shards must be >= 1 (got %d)", cfg.Erasure.ParityShards)
 		}
 		if cfg.Erasure.DataShards+cfg.Erasure.ParityShards > 256 {
 			return fmt.Errorf("erasure.data_shards + erasure.parity_shards must not exceed 256")
 		}
 	}
 
-	switch strings.ToLower(strings.TrimSpace(cfg.Backend.DefaultBackend)) {
+	cfg.Backend.DefaultBackend = strings.ToLower(strings.TrimSpace(cfg.Backend.DefaultBackend))
+	switch cfg.Backend.DefaultBackend {
 	case "localfs", "s3", "":
-		// valid
 	default:
 		return fmt.Errorf("backend.default_backend must be one of: localfs, s3 (got %q)", cfg.Backend.DefaultBackend)
 	}
 
+	cfg.Backend.LocalFSSync = strings.ToLower(strings.TrimSpace(cfg.Backend.LocalFSSync))
+	switch cfg.Backend.LocalFSSync {
+	case "full", "barrier", "none", "":
+	default:
+		return fmt.Errorf("backend.localfs_sync must be one of: full, barrier, none (got %q)", cfg.Backend.LocalFSSync)
+	}
+	cfg.Performance.Mode = strings.ToLower(strings.TrimSpace(cfg.Performance.Mode))
+	switch cfg.Performance.Mode {
+	case PerformanceFast, PerformanceStrict:
+	case "":
+		cfg.Performance.Mode = PerformanceFast
+	default:
+		return fmt.Errorf("performance.mode must be one of: fast, strict (got %q)", cfg.Performance.Mode)
+	}
+	cfg.Backend.LocalFSAck = strings.ToLower(strings.TrimSpace(cfg.Backend.LocalFSAck))
+	switch cfg.Backend.LocalFSAck {
+	case "memory", "disk", "":
+	default:
+		return fmt.Errorf("backend.localfs_ack must be one of: memory, disk (got %q)", cfg.Backend.LocalFSAck)
+	}
+	if 0 > cfg.Backend.FlushWorkers {
+		return fmt.Errorf("backend.flush_workers must be >= 0 (0 means one per CPU)")
+	}
+	if 0 > cfg.Backend.FlushMaxPendingBytes {
+		return fmt.Errorf("backend.flush_max_pending_bytes must be >= 0")
+	}
+	if 0 > cfg.Backend.FlushMaxDelay {
+		return fmt.Errorf("backend.flush_max_delay must be >= 0")
+	}
+
 	return nil
+}
+
+func isConfiguredUserID(cfg *AppConfig, userID string) bool {
+	if "root" == userID {
+		return true
+	}
+	if _, ok := cfg.Auth.APIKeyUsers[userID]; ok {
+		return true
+	}
+	for i := range cfg.Auth.APIKeys {
+		if fmt.Sprintf("api-user-%d", i) == userID {
+			return true
+		}
+	}
+	return false
+}
+
+func validateAdminUsers(cfg *AppConfig) error {
+	for _, userID := range cfg.Auth.AdminUsers {
+		if !isConfiguredUserID(cfg, userID) {
+			return fmt.Errorf("auth.admin_users: %q is not a configured user", userID)
+		}
+	}
+	return nil
+}
+
+func validateUIConfig(cfg *AppConfig) error {
+	ui := cfg.UI
+	if ui.SessionTTL < 5*time.Minute || 720*time.Hour < ui.SessionTTL {
+		return fmt.Errorf("ui.session_ttl must be between 5m and 720h")
+	}
+	if ui.IdleTimeout < time.Minute || ui.SessionTTL < ui.IdleTimeout {
+		return fmt.Errorf("ui.idle_timeout must be between 1m and ui.session_ttl")
+	}
+	if ui.MetricsSampleInterval < time.Second || 60*time.Second < ui.MetricsSampleInterval {
+		return fmt.Errorf("ui.metrics_sample_interval must be between 1s and 60s")
+	}
+	if ui.MetricsRetention < time.Hour || 168*time.Hour < ui.MetricsRetention {
+		return fmt.Errorf("ui.metrics_retention must be between 1h and 168h")
+	}
+	if 100000 < ui.MetricsRetention/ui.MetricsSampleInterval {
+		return fmt.Errorf("ui.metrics_retention / ui.metrics_sample_interval must not exceed 100000 samples per series")
+	}
+	buffers := []struct {
+		field string
+		value int
+	}{
+		{"ui.log_buffer_entries", ui.LogBufferEntries},
+		{"ui.audit_buffer_entries", ui.AuditBufferEntries},
+		{"ui.event_buffer_entries", ui.EventBufferEntries},
+	}
+	for _, buffer := range buffers {
+		if buffer.value < 100 || 1000000 < buffer.value {
+			return fmt.Errorf("%s must be between 100 and 1000000", buffer.field)
+		}
+	}
+	return nil
+}
+
+func validateTrashConfig(cfg *AppConfig) error {
+	if cfg.Trash.Retention < time.Hour || 8760*time.Hour < cfg.Trash.Retention {
+		return fmt.Errorf("trash.retention must be between 1h and 8760h")
+	}
+	return nil
+}
+
+func isLoopbackEndpoint(u *url.URL) bool {
+	if "http" != strings.ToLower(u.Scheme) {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold("localhost", host) {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return nil != ip && ip.IsLoopback()
 }
