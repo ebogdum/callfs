@@ -30,13 +30,7 @@ curl -Lo callfs https://github.com/ebogdum/callfs/releases/latest/download/callf
   && sudo mv callfs /usr/local/bin/
 ```
 
-Verify the installation:
-
-```bash
-callfs version
-```
-
-You should see the version string printed to stdout. CallFS is now available system-wide.
+CallFS is now available system-wide.
 
 ---
 
@@ -190,7 +184,7 @@ Example response:
       "path": "projects/readme.txt",
       "type": "file",
       "size": 1024,
-      "mode": "-rw-r--r--",
+      "mode": "0644",
       "owner": "",
       "mtime": "2026-04-11T10:00:00Z"
     }

@@ -24,6 +24,12 @@ server:
   write_timeout: 30s
   file_op_timeout: 10s
   metadata_op_timeout: 5s
+  metadata_cache_ttl: 2s # must be >= 0
+  rate_limit:
+    link_generate_rps: 100 # sustained rate for POST /v1/links/generate
+    link_generate_burst: 1
+    download_rps: 10 # sustained rate for GET /download/{token}
+    download_burst: 5
 
 # Authentication and authorization
 auth:
@@ -97,6 +103,7 @@ dlm:
   type: "redis" # "redis" or "local"
   redis_addr: "localhost:6379"
   redis_password: "your-redis-password"
+  wait_timeout: 30s # how long to wait for a held lock
 
 # High availability content replication
 ha:
@@ -173,15 +180,14 @@ To add a new node to an existing Raft metadata cluster:
 ./callfs cluster join --config /path/to/config.yaml --leader http://raft-leader:8443
 ```
 
-Override auto-detected values if needed:
+Override auto-detected values if needed. The internal secret is read from `auth.internal_proxy_secret` in the config file (or `CALLFS_AUTH__INTERNAL_PROXY_SECRET`), so it never appears on the command line:
 
 ```bash
-./callfs cluster join \
+./callfs cluster join --config /path/to/config.yaml \
   --leader http://raft-leader:8443 \
   --node-id callfs-node-4 \
   --raft-addr 10.0.0.14:7000 \
-  --api-endpoint http://10.0.0.14:8443 \
-  --internal-secret your-internal-secret
+  --api-endpoint http://10.0.0.14:8443
 ```
 
 **Required Fields:**
@@ -189,7 +195,7 @@ Override auto-detected values if needed:
 - `server.protocol` (`http`, `https`, or `auto`)
 - `metadata_store.type`
 - `instance_discovery.instance_id`
-- `auth.api_keys` (must not be empty)
+- `auth.api_keys` or `auth.api_key_users` (at least one key must be configured)
 - `auth.internal_proxy_secret`
 - `auth.single_use_link_secret`
 

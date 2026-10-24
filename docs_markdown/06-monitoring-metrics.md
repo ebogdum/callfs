@@ -23,15 +23,10 @@ curl -H "Authorization: Bearer <api-key>" http://localhost:8443/metrics
 
 - **`callfs_http_requests_total` (Counter)**: Tracks the total number of HTTP requests, labeled by `method`, `path`, and `status_code`. Useful for monitoring request rates and error rates.
 - **`callfs_http_request_duration_seconds` (Histogram)**: Measures the latency of HTTP requests, labeled by `method` and `path`. Essential for tracking API performance and identifying slow endpoints.
-- **`callfs_backend_ops_total` (Counter)**: Counts operations performed on storage backends (`localfs`, `s3`, `internalproxy`), labeled by `backend_type` and `operation`. Helps in understanding backend usage patterns.
 - **`callfs_backend_op_duration_seconds` (Histogram)**: Measures the duration of backend operations, providing insight into storage performance.
-- **`callfs_metadata_db_queries_total` (Counter)**: Counts queries to the PostgreSQL metadata store, labeled by `operation`.
-- **`callfs_lock_operations_total` (Counter)**: Tracks distributed lock acquisitions and releases, labeled by `operation` and `status`. Critical for diagnosing concurrency issues.
-- **`callfs_active_locks` (Gauge)**: Shows the number of currently active distributed locks.
 - **`callfs_file_operations_total` (Counter)**: Counts file operations, labeled by `operation` (`create`, `read`, `update`, `delete`) and `backend_type`.
 - **`callfs_single_use_link_generations_total` (Counter)**: Total single-use links generated.
 - **`callfs_single_use_link_consumptions_total` (Counter)**: Total single-use links consumed, labeled by `status` (`success`, `expired`, `invalid`, `not_found`).
-- **`callfs_errors_total` (Counter)**: Total errors by `component` and `error_type`.
 
 ### Monitoring Setup
 
@@ -42,7 +37,7 @@ curl -H "Authorization: Bearer <api-key>" http://localhost:8443/metrics
         metrics_path: '/metrics'
         scheme: 'https'
         tls_config:
-          insecure_skip_verify: true # Use proper certs in production
+          ca_file: /etc/callfs/tls/ca.pem
         static_configs:
           - targets: ['your-callfs-host:8443']
     ```
@@ -112,7 +107,7 @@ By combining Prometheus metrics with Alertmanager, you can create a powerful ale
 - **Backend Errors**: Alert if a storage backend is consistently failing.
   ```yaml
   - alert: CallFSBackendFailure
-    expr: rate(callfs_backend_ops_total{status="failure"}[5m]) > 0
+    expr: rate(callfs_backend_op_failures_total[5m]) > 0
   ```
 - **Service Down**: Alert if the `up` metric for the CallFS job is 0.
   ```yaml

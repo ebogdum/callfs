@@ -34,7 +34,7 @@ We follow a branching model designed for collaboration and maintainability:
    cp config.yaml.example config.yaml
    
    # Generate self-signed certificates for development
-   go run cmd/main.go gencert
+   openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=localhost" -keyout server.key -out server.crt
    ```
 
 3. **Create a new branch** for your changes:

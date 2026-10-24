@@ -78,10 +78,11 @@ This method is ideal for developers who want to work on the CallFS source code.
 
 For production deployments, you can use pre-built binaries from the [GitHub Releases](https://github.com/ebogdum/callfs/releases) page.
 
-1.  **Download the appropriate binary** for your operating system and architecture.
-2.  **Make it executable:** `chmod +x callfs-linux-amd64`
-3.  **Create a `config.yaml` file** and place it in the same directory.
-4.  **Run the server:** `./callfs-linux-amd64 server --config ./config.yaml`
+1.  **Download the appropriate binary** and the `SHA256SUMS` file from the same release tag. Do not use a binary from an unpinned or "latest" download.
+2.  **Verify the checksum:** `shasum -a 256 -c SHA256SUMS --ignore-missing` must report `OK` for the binary. Stop if it reports `FAILED`.
+3.  **Make it executable:** `chmod +x callfs-linux-amd64`
+4.  **Create a `config.yaml` file** and place it in the same directory.
+5.  **Run the server:** `./callfs-linux-amd64 server --config ./config.yaml`
 
 ## Database & Lock Manager Setup
 
@@ -93,15 +94,29 @@ CallFS requires a dedicated database and user. Connect to your PostgreSQL instan
 
 ```sql
 CREATE DATABASE callfs;
+CREATE USER callfs_migrator WITH ENCRYPTED PASSWORD 'a-very-secure-migrator-password';
+GRANT ALL PRIVILEGES ON DATABASE callfs TO callfs_migrator;
 CREATE USER callfs_user WITH ENCRYPTED PASSWORD 'a-very-secure-password';
-GRANT ALL PRIVILEGES ON DATABASE callfs TO callfs_user;
+GRANT CONNECT ON DATABASE callfs TO callfs_user;
+GRANT USAGE ON SCHEMA public TO callfs_user;
+ALTER DEFAULT PRIVILEGES FOR ROLE callfs_migrator IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO callfs_user;
+ALTER DEFAULT PRIVILEGES FOR ROLE callfs_migrator IN SCHEMA public GRANT USAGE ON SEQUENCES TO callfs_user;
 ```
+
+The migrator role owns the schema and runs migrations; the runtime role gets DML only (no CREATE or ALTER). The server applies migrations at startup through `migration_dsn`.
 
 Update your `config.yaml` with the correct database DSN:
 ```yaml
 metadata_store:
-    type: "postgres"
-  dsn: "postgres://callfs_user:a-very-secure-password@localhost:5432/callfs?sslmode=disable"
+  type: "postgres"
+  dsn: "postgres://callfs_user@localhost:5432/callfs?sslmode=verify-full&sslrootcert=/etc/callfs/certs/postgres-ca.pem"
+  migration_dsn: "postgres://callfs_migrator@localhost:5432/callfs?sslmode=verify-full&sslrootcert=/etc/callfs/certs/postgres-ca.pem"
+```
+
+Keep the passwords out of `config.yaml`. Supply the full DSNs, including the passwords, through the environment instead:
+```bash
+export CALLFS_METADATA_STORE__DSN="postgres://callfs_user:${CALLFS_DB_PASSWORD}@localhost:5432/callfs?sslmode=verify-full&sslrootcert=/etc/callfs/certs/postgres-ca.pem"
+export CALLFS_METADATA_STORE__MIGRATION_DSN="postgres://callfs_migrator:${CALLFS_MIGRATOR_PASSWORD}@localhost:5432/callfs?sslmode=verify-full&sslrootcert=/etc/callfs/certs/postgres-ca.pem"
 ```
 
 ### Redis
@@ -109,7 +124,7 @@ metadata_store:
 Ensure your Redis instance is running and update `config.yaml` with the connection details:
 ```yaml
 dlm:
-    type: "redis"
+  type: "redis"
   redis_addr: "localhost:6379"
   redis_password: "your-redis-password" # Leave empty if no password
 ```
@@ -129,10 +144,11 @@ For production environments, it's best to run CallFS as a `systemd` service.
     ```bash
     sudo mkdir -p /opt/callfs
     sudo cp ./callfs /opt/callfs/
-    sudo cp ./config.yaml /opt/callfs/
+    sudo install -m 600 -o callfs -g callfs ./config.yaml /opt/callfs/config.yaml
     sudo cp ./certs/server.* /opt/callfs/
     sudo chown -R callfs:callfs /opt/callfs
     ```
+    `config.yaml` contains API keys and secrets, so it must not be world-readable; keep mode `600`.
 
 3.  **Create the systemd service file:**
     ```bash

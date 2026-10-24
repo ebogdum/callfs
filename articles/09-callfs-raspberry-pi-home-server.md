@@ -26,14 +26,6 @@ chmod +x callfs
 sudo mv callfs /usr/local/bin/
 ```
 
-Verify the installation:
-
-```bash
-callfs version
-```
-
-You should see the version string printed to stdout. The binary is now available system-wide.
-
 ---
 
 ## Prepare Storage
@@ -79,8 +71,10 @@ Paste the following configuration. This is a minimal home server setup using loc
 
 ```yaml
 server:
-  listen_addr: ":8443"
-  protocol: "http"
+  listen_addr: "192.168.1.100:8443"
+  protocol: "https"
+  cert_file: "/etc/callfs/tls/server.crt"
+  key_file: "/etc/callfs/tls/server.key"
   read_timeout: 30s
   write_timeout: 60s
 
@@ -107,8 +101,17 @@ instance_discovery:
 
 ### Configuration notes
 
-- **`listen_addr`** — `:8443` binds to all network interfaces on port 8443. You can use any unprivileged port (1024 and above).
-- **`protocol`** — `http` is fine on a trusted home network. If you later expose the server outside your LAN, switch this to `https` and provide `cert_file` and `key_file` paths.
+- **`listen_addr`** — `192.168.1.100:8443` binds only to the Pi's LAN address on port 8443. Replace the IP with your Pi's address. Use `127.0.0.1:8443` to restrict access to the Pi itself. Any unprivileged port (1024 and above) works.
+- **`protocol`** — `https` keeps bearer keys encrypted in transit. Create the self-signed certificate once before starting CallFS:
+
+```bash
+sudo mkdir -p /etc/callfs/tls
+sudo openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -keyout /etc/callfs/tls/server.key -out /etc/callfs/tls/server.crt \
+  -subj "/CN=192.168.1.100" -addext "subjectAltName=IP:192.168.1.100"
+```
+
+Clients must trust `server.crt` (`--cacert`) or skip verification with `-k` as shown in the examples below.
 - **`api_keys`** — replace the placeholder with a random string of at least 24 characters. This token must appear in the `Authorization: Bearer` header on every request. You can add multiple keys to support rotation without downtime.
 - **`internal_proxy_secret`** and **`single_use_link_secret`** — both fields are required even on a single-node home server. Replace the placeholders with unique random strings.
 - **`localfs_root_path`** — the directory on your storage drive where uploaded files land. Ensure it exists and is writable by the user running CallFS.
@@ -129,7 +132,7 @@ callfs server --config /etc/callfs/config.yaml
 You should see structured log output showing the server is listening. Leave this running and open a second terminal on the Pi to run a quick health check:
 
 ```bash
-curl http://localhost:8443/health
+curl -k https://192.168.1.100:8443/health
 ```
 
 Expected response:
@@ -151,7 +154,7 @@ From any other machine on your home network, replace `192.168.1.100` with the Pi
 ```bash
 curl -X POST \
   -H "Authorization: Bearer YOUR_API_KEY" \
-  http://192.168.1.100:8443/v1/files/photos/
+  https://192.168.1.100:8443/v1/files/photos/
 ```
 
 ### Upload a file
@@ -161,14 +164,14 @@ curl -X POST \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @vacation.jpg \
-  http://192.168.1.100:8443/v1/files/photos/vacation.jpg
+  https://192.168.1.100:8443/v1/files/photos/vacation.jpg
 ```
 
 ### Download a file
 
 ```bash
 curl -H "Authorization: Bearer YOUR_API_KEY" \
-  http://192.168.1.100:8443/v1/files/photos/vacation.jpg \
+  https://192.168.1.100:8443/v1/files/photos/vacation.jpg \
   -o vacation.jpg
 ```
 
@@ -176,7 +179,7 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
 
 ```bash
 curl -H "Authorization: Bearer YOUR_API_KEY" \
-  http://192.168.1.100:8443/v1/directories/photos/
+  https://192.168.1.100:8443/v1/directories/photos/
 ```
 
 The response is JSON and includes each entry's name, type, size, and modification time. Append `?recursive=true` to list all subdirectories in one call.
@@ -255,7 +258,7 @@ If you want files uploaded to your Pi to also go to cloud storage, CallFS suppor
 backend:
   default_backend: "s3"
   localfs_root_path: "/mnt/storage/callfs"
-  s3_bucket: "my-home-backup-bucket"
+  s3_bucket_name: "my-home-backup-bucket"
   s3_region: "us-east-1"
   s3_access_key: "YOUR_ACCESS_KEY"
   s3_secret_key: "YOUR_SECRET_KEY"
@@ -281,7 +284,7 @@ Create `/usr/local/bin/callfs-backup.sh` on the machine you want to back up:
 #!/usr/bin/env bash
 set -euo pipefail
 
-CALLFS_HOST="http://192.168.1.100:8443"
+CALLFS_HOST="https://192.168.1.100:8443"
 CALLFS_KEY="YOUR_API_KEY"
 SOURCE_DIR="$HOME/Documents"
 REMOTE_DIR="backups/documents"

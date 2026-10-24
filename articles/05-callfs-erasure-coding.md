@@ -35,7 +35,7 @@ When you download the file, CallFS fetches shards from all available nodes in pa
 
 ## Minimum File Size
 
-Erasure coding introduces per-shard overhead and is designed for files large enough to benefit from distributed storage. CallFS skips erasure coding for files below the configured minimum size and stores them as regular files instead. The default threshold is 1 MB.
+Erasure coding introduces per-shard overhead and is designed for files large enough to benefit from distributed storage. When erasure coding is enabled, CallFS applies it to every file it writes; no minimum file size is enforced.
 
 ---
 
@@ -48,7 +48,6 @@ erasure:
   enabled: true
   data_shards: 4
   parity_shards: 2
-  min_file_size: 1048576  # 1MB minimum — small files skip erasure coding
   shard_backend: "localfs"  # or "s3"
 ```
 
@@ -57,7 +56,6 @@ erasure:
 | `enabled` | `false` | Master switch for erasure coding. |
 | `data_shards` | `4` | Number of data fragments. Must be >= 2. |
 | `parity_shards` | `2` | Number of parity fragments. Must be >= 1. |
-| `min_file_size` | `1048576` | Files smaller than this are stored without erasure coding. |
 | `shard_backend` | `"localfs"` | Storage backend for shards on each node: `localfs` or `s3`. |
 
 The total shard count (`data_shards + parity_shards`) must not exceed 256. The validation is enforced at startup — CallFS will refuse to start with an invalid erasure configuration.
@@ -224,9 +222,8 @@ CallFS also supports high-availability replication (`ha.replication_enabled`), w
 - Files are small or access latency is your top priority. Reading from a local replica is always faster than reconstructing from shards.
 - Your cluster has fewer nodes than the total shard count requires.
 - You need the simplest possible failure model: a replica is a complete, immediately readable copy.
-- You are storing files that fall below the `min_file_size` threshold, where erasure coding is automatically bypassed anyway.
 
-The two features are not mutually exclusive at the cluster level — you can configure erasure coding for large files and standard storage for small files, using the `min_file_size` threshold to control the boundary automatically.
+The two features are not mutually exclusive at the cluster level; choose the one that fits each deployment's workload.
 
 ---
 

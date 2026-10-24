@@ -19,13 +19,14 @@ We will acknowledge your email within 48 hours and will send a more detailed res
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 1.6.x   | :white_check_mark: |
+| < 1.6   | :x:                |
 
 ## Security Measures
 
 CallFS implements several security measures:
 
-- API key authentication for all endpoints
+- API key authentication for all endpoints except `/health`, `/download/{token}` and the separate unauthenticated metrics port when `metrics.listen_addr` is set
 - Owner-based access control for files and directories
 - Rate limiting to prevent abuse
 - Input validation and sanitization

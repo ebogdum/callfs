@@ -30,7 +30,7 @@ If you're building a file management service, media pipeline, backup system, or 
 ### Storage & Data
 - **Multi-backend storage** -- local filesystem, Amazon S3, MinIO, and any S3-compatible object store
 - **Reed-Solomon erasure coding** -- configurable data/parity shards distributed across nodes for fault tolerance
-- **Streaming I/O** -- zero-copy file transfers without buffering entire files in memory
+- **Streaming I/O** -- file transfers stream to and from the backend; erasure-coded uploads are buffered in memory (up to 1 GiB)
 - **HA replication** -- optional synchronous or async replication between backends (configure via `ha` config section)
 
 ### Distributed Architecture
@@ -43,7 +43,7 @@ If you're building a file management service, media pipeline, backup system, or 
 - **API key authentication** -- static bearer tokens with constant-time comparison
 - **Owner-based permissions** -- app-level user ownership on every file and directory
 - **Single-use download links** -- time-limited, HMAC-signed tokens for secure file sharing
-- **Rate limiting** -- configurable per-endpoint rate limits (link generation: 100 req/s, downloads: 10 req/s)
+- **Rate limiting** -- configurable per-endpoint rate limits via `server.rate_limit` (defaults: link generation 100 req/s, downloads 10 req/s)
 - **TLS / HTTPS / HTTP/3 (QUIC)** support out of the box
 
 ### Operations & Observability
@@ -122,7 +122,7 @@ instance_discovery:
   instance_id: "node-1"
 ```
 
-> **Note:** All API keys must be at least 16 characters. The `internal_proxy_secret` and `single_use_link_secret` values are validated and must not use placeholder defaults. Run `callfs config validate` to check your configuration before starting the server.
+> **Note:** All API keys must be at least 16 characters. Placeholder sample values are rejected at startup, so generate `internal_proxy_secret` and `single_use_link_secret` with `openssl rand -hex 32`. Run `callfs config validate` to check your configuration before starting the server.
 
 ### Run
 
@@ -333,7 +333,7 @@ erasure:
   parity_shards: 2
 ```
 
-With 4 data + 2 parity shards, CallFS can reconstruct any file even if 2 nodes go down.
+With 4 data + 2 parity shards, CallFS can reconstruct any file even if 2 nodes go down, provided each node holds at most one shard. That requires six nodes: round-robin placement on a three-node cluster gives each node two shards, so losing two nodes removes four of the six shards and leaves only two of the four needed.
 
 ### Raft Consensus (No External Dependencies)
 

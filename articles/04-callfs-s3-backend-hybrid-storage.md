@@ -191,7 +191,7 @@ curl -X POST \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: text/plain" \
   --data-binary "hello from callfs" \
-  https://your-callfs-host:8443/files/test/hello.txt
+  https://your-callfs-host:8443/v1/files/test/hello.txt
 ```
 
 A `201 Created` response means the file was written to the primary backend and, if `require_replica_success: true`, confirmed in S3.
@@ -200,10 +200,10 @@ A `201 Created` response means the file was written to the primary backend and, 
 
 ```sh
 curl -H "Authorization: Bearer YOUR_API_KEY" \
-  https://your-callfs-host:8443/files/test/hello.txt
+  https://your-callfs-host:8443/v1/files/test/hello.txt
 ```
 
-You should receive the file content. The `X-Backend-Type` response header (when present in debug builds) shows which backend served the file.
+You should receive the file content.
 
 **Step 3: Verify the object in S3**
 

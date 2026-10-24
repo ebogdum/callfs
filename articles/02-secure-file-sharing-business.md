@@ -86,7 +86,7 @@ The response headers will include:
 ```
 X-CallFS-Owner: api-user-0
 X-CallFS-Size: 204800
-X-CallFS-Mode: -rw-r--r--
+X-CallFS-Mode: 0644
 X-CallFS-MTime: 2026-04-11T08:00:00Z
 ```
 

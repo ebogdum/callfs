@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### **New Features**
+- Lock waits with owner tokens and lease renewal, bounded by `dlm.wait_timeout`.
+- Conditional requests: `ETag` on GET, HEAD, PUT and POST responses; `If-Match` and `If-None-Match: *` on PUT and POST (`412 Precondition Failed`).
+- Range GET (`206 Partial Content`, `Content-Range`, `416 Range Not Satisfiable`).
+- `GET /v1/objects` with prefix and cursor paging, and `DELETE /v1/objects?prefix=` for bulk delete.
+- `DELETE /v1/files/<dir>?recursive=true` removes a directory tree.
+- `callfs cluster remove <node-id>` and `DELETE /internal/raft/servers/<id>`.
+- Configurable rate limits (`server.rate_limit`) and metadata cache TTL (`server.metadata_cache_ttl`).
+- Docker image ships a health check and runs as a non-root user.
+
+### **Bug Fixes**
+- Single lock namespace (`path:<path>`) for path locks.
+- Erasure shards keyed by a random ID, with shard repair.
+- Staged updates for file writes.
+- S3 backend nil-pointer fixes.
+- LocalFS directory fsync after renames and writes.
+- Internal proxy streaming no longer hits the request timeout.
+- SQLite prefix matching is case-sensitive.
+- Redis update and rename are atomic.
+- Metadata deletes cascade to child entries.
+
 ## [v1.6.0] - 2026-07-31
 
 Findings from an adversarial security and performance review of the whole codebase. Ten confirmed defects fixed at the root, each covered by a regression test that was first confirmed to fail against the pre-fix code. No existing behaviour was changed except where noted under Breaking Changes.

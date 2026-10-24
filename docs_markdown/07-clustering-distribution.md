@@ -63,6 +63,16 @@ callfs cluster join \
 
 The command reads `raft.node_id`, `raft.bind_addr`, `server.external_url`, and `auth.internal_proxy_secret` from the config file (or flags if provided) and calls the leader join endpoint.
 
+### Removing a Node (Raft)
+
+To remove a node from the Raft cluster:
+
+```bash
+callfs cluster remove <node-id>
+```
+
+The same operation is available over HTTP as `DELETE /internal/raft/servers/<id>`.
+
 ### Example Configuration
 
 **Node 1 (`callfs-node-1`):**

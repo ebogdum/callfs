@@ -24,7 +24,7 @@ When a recipient requests the download URL:
 4. If all checks pass, it **atomically marks the token as `used`** via a conditional update — only succeeding if the status is still `active`. This prevents a race condition where two simultaneous requests both pass the validity check.
 5. It streams the file content to the client and records the consuming IP address.
 
-A token that has been used, tampered with, or expired always returns HTTP 410 Gone — never a generic 404 that might encourage enumeration attempts.
+A token that has been used, or has expired, returns HTTP 410 Gone. A token that is malformed or does not exist in the metadata store returns HTTP 404 Not Found. A stored record whose signature fails verification returns HTTP 410 Gone.
 
 ---
 
@@ -137,7 +137,7 @@ curl -v https://files.example.com/download/TOKEN
 # {"error":"link is invalid or has been used"}
 ```
 
-This response is returned for tokens that have been used, tokens whose signature does not match (indicating tampering), and tokens past their expiry time.
+This response is returned for tokens that have been used, stored records whose signature does not match (indicating tampering), and tokens past their expiry time. Malformed or unknown tokens return HTTP 404 Not Found instead.
 
 ---
 

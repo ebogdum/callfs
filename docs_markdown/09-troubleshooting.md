@@ -23,7 +23,7 @@ If the CallFS service fails to start, check the following:
 - **Solution**:
     - Verify that the paths in `server.cert_file` and `server.key_file` are correct.
     - Ensure the user running CallFS has read permissions for the certificate and key files.
-    - For development, you can quickly generate self-signed certificates (see the Installation guide).
+    - For development, you can quickly generate a self-signed certificate with `openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=localhost" -keyout server.key -out server.crt`.
 
 #### 4. Database or Redis Connection Issues
 - **Symptom**: The service fails to start with errors about connecting to PostgreSQL or Redis.
@@ -72,7 +72,6 @@ If the CallFS service fails to start, check the following:
     - **Check Backend Performance**: If using S3, check the latency between your CallFS node and the S3 endpoint. If using LocalFS, check the disk I/O performance (`iostat -x`).
     - **Check Database Performance**: Slow metadata operations can delay file access. Monitor your PostgreSQL instance for slow queries.
 - **High CPU or Memory Usage**:
-    - **Enable Profiling**: Go's `pprof` endpoints can be enabled for detailed performance analysis.
     - **Check for Excessive Logging**: In `debug` mode, logging can be resource-intensive. Ensure you are using `info` level in production.
     - **Monitor Metrics**: Use the `/metrics` endpoint to identify bottlenecks. High `callfs_backend_op_duration_seconds` or `callfs_metadata_db_query_duration_seconds` can point to the source of the slowdown.
 
@@ -84,7 +83,7 @@ If the CallFS service fails to start, check the following:
     - **Manual Intervention (Emergency)**: You can manually delete the stale lock key from Redis. The keys are prefixed with `callfs:lock:`.
       ```bash
       # Find the lock key for a specific path
-      redis-cli keys "callfs:lock:/path/to/locked/file"
+      redis-cli keys "callfs:lock:path:/path/to/locked/file"
       # Delete the key
       redis-cli del <the-lock-key>
       ```

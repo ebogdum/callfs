@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-05
 **Issue:** [#3 — Is a rename possible as a first class operation?](https://github.com/ebogdum/callfs/issues/3)
-**Status:** Proposed (pending owner review)
+**Status:** Implemented
 
 ---
 
@@ -158,8 +158,7 @@ Cross-backend relocation (Case 3) does **not** use `Storage.Move`; the engine st
   4. Resolve destination parent; missing → honor `create_parents` (reuse `ensureParentDirectories`) or `409`.
   5. Existing target: `overwrite=false` → `ErrAlreadyExists`; else delete target first (non-empty dir rejected, mirroring `DeleteFile`).
   6. Dispatch Case 1 / 2 / 3 (above), incl. erasure re-tier via the erasure `Manager` when backend changes to/from `erasure`.
-  7. Replicate the move to the secondary backend if HA replication is on (best-effort).
-  8. Invalidate `metadataCache` for `src`, `dst`, and both parent prefixes.
+  7. Invalidate `metadataCache` for `src`, `dst`, and both parent prefixes.
 
 ### 4. Cross-instance — `core/cross_instance_operations.go`
 

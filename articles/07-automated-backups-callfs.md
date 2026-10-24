@@ -31,14 +31,14 @@ DATE=$(date +%Y-%m-%d)
 
 # Backup a database dump
 pg_dump mydb | curl -s -X POST \
-  -H "Authorization: Bearer $API_KEY" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$API_KEY") \
   -H "Content-Type: application/octet-stream" \
   --data-binary @- \
   "$CALLFS_URL/v1/files/backups/db-$DATE.sql"
 
 # Backup a directory (tar it first)
 tar czf - /etc/nginx/ | curl -s -X POST \
-  -H "Authorization: Bearer $API_KEY" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$API_KEY") \
   -H "Content-Type: application/octet-stream" \
   --data-binary @- \
   "$CALLFS_URL/v1/files/backups/nginx-$DATE.tar.gz"
@@ -63,11 +63,11 @@ To capture curl exit codes and log failures, extend the script with explicit err
 
 ```bash
 upload() {
-  local src_cmd="$1"
-  local dest_path="$2"
+  local dest_path="$1"
+  shift
 
-  if ! eval "$src_cmd" | curl -sf -X POST \
-    -H "Authorization: Bearer $API_KEY" \
+  if ! "$@" | curl -sf -X POST \
+    -K <(printf 'header = "Authorization: Bearer %s"\n' "$API_KEY") \
     -H "Content-Type: application/octet-stream" \
     --data-binary @- \
     "$CALLFS_URL/v1/files/$dest_path"; then
@@ -78,8 +78,8 @@ upload() {
   echo "[$(date -u +%FT%TZ)] OK: $dest_path"
 }
 
-upload "pg_dump mydb"    "backups/db-$DATE.sql"
-upload "tar czf - /etc/nginx/" "backups/nginx-$DATE.tar.gz"
+upload "backups/db-$DATE.sql" pg_dump mydb
+upload "backups/nginx-$DATE.tar.gz" tar czf - /etc/nginx/
 ```
 
 The `-f` flag on `curl` causes it to return a non-zero exit code on HTTP errors (4xx, 5xx), so upload failures surface as script errors rather than being swallowed silently.
@@ -153,7 +153,7 @@ CallFS returns a JSON document listing every file with its name, path, size, and
       "path": "backups/db-2026-04-05.sql",
       "type": "file",
       "size": 52428800,
-      "mode": "-rw-r--r--",
+      "mode": "0644",
       "owner": "",
       "mtime": "2026-04-05T02:03:11Z"
     }
@@ -371,7 +371,7 @@ groups:
           summary: "No backup uploads detected in the last 26 hours"
 ```
 
-For more targeted monitoring, track `callfs_http_requests_total` filtered by the `POST` method and `/v1/files/*` path to count only upload requests, or monitor `callfs_errors_total` to detect upload failures before they accumulate.
+For more targeted monitoring, track `callfs_http_requests_total` filtered by the `POST` method and `/v1/files/*` path to count only upload requests.
 
 ---
 

@@ -55,10 +55,6 @@ End-to-end HTTP request latency using Prometheus default buckets. Use this for l
 
 ### Backend Storage
 
-**`callfs_backend_ops_total`** — Counter, labels: `backend_type`, `operation`
-
-Total operations against each storage backend (for example, `localfs` or `s3`), broken down by operation type. Use this to understand the ratio of reads to writes and to spot anomalies like a sudden spike in delete operations.
-
 **`callfs_backend_op_duration_seconds`** — Histogram, labels: `backend_type`, `operation`
 
 Latency for each backend operation type. This is where you will see the difference between local disk I/O and object storage round-trip times. If `callfs_http_request_duration_seconds` spikes but `callfs_backend_op_duration_seconds` does not, the bottleneck is elsewhere (metadata, locking).
@@ -70,28 +66,6 @@ Latency for each backend operation type. This is where you will see the differen
 Counts completed file-level operations — `create`, `read`, `update`, and `delete` — attributed to the backend that handled them. This gives you the business-level view of what the server is actually doing with files, independent of raw HTTP mechanics.
 
 ### Distributed Locking
-
-**`callfs_active_locks`** — Gauge
-
-The current number of held locks across the system. A value that grows without bound indicates lock leaks or clients that are not releasing locks after failed operations.
-
-**`callfs_lock_operations_total`** — Counter, labels: `operation`, `status`
-
-Total lock acquire and release attempts, labeled by outcome (`success` or `failure`). High failure rates on `acquire` mean contention — multiple clients competing for the same file at the same time.
-
-**`callfs_lock_operation_duration_seconds`** — Histogram, labels: `operation`
-
-Time spent waiting to acquire or release a lock. Elevated acquisition latency is a leading indicator of write contention before it surfaces as client timeouts.
-
-### Metadata Database
-
-**`callfs_metadata_db_queries_total`** — Counter, labels: `operation`
-
-Total queries issued to the metadata store, broken down by operation type. Useful for understanding metadata load and for correlating metadata query volume with storage backend load.
-
-**`callfs_metadata_db_query_duration_seconds`** — Histogram, labels: `operation`
-
-Latency of metadata database queries. If this climbs while backend latency stays flat, the bottleneck has shifted to metadata (common when SQLite is under heavy concurrent write load, or when a PostgreSQL connection pool is exhausted).
 
 ### Single-Use Links
 
@@ -105,9 +79,6 @@ Total link consumption attempts, labeled by outcome: `success`, `expired`, `inva
 
 ### Errors
 
-**`callfs_errors_total`** — Counter, labels: `component`, `error_type`
-
-Total errors by subsystem and type. This is the most direct signal for operational issues. The `component` label identifies which part of the system produced the error (for example, `backend`, `metadata`, `lock_manager`), and `error_type` describes what went wrong.
 
 ---
 
