@@ -224,7 +224,7 @@ Both rename and move update the metadata store **and** relocate the underlying b
 
 **Responses:** `200 OK` (body `{"path":"/new/path"}`); `400` invalid request (bad name, both/neither of `name`/`destination`, moving a directory into itself, missing parent without `create_parents`); `403` not owner / no write on destination parent; `404` source missing; `409` destination exists and `overwrite=false`.
 
-> **v1 limitations:** moving a file to/from the `erasure` backend (re-tiering) and moving a *directory* across backends or instances are not supported and return `400`; rename, in-place reorganization, cross-backend/cross-instance *file* moves, and same-backend directory moves are fully supported.
+Moving a file to or from the `erasure` backend, or a directory across backends or instances, returns `400`.
 
 ### Directories
 

@@ -127,7 +127,7 @@ curl --cacert /etc/callfs/tls/ca.pem -X PATCH -H "Authorization: Bearer <api-key
 
 **Responses**: `200 OK` with body `{"path": "<new path>"}`; `400` for an invalid request (bad name, both/neither of `name`/`destination`, moving a directory into itself, or a missing destination parent without `create_parents`); `403` if the caller is not the source owner or lacks write access to the destination parent; `404` if the source does not exist; `409` if the destination exists and `overwrite` is false.
 
-**v1 limitations**: re-tiering to/from the `erasure` backend and moving a *directory* across backends or instances are not supported (`400`). Rename, in-place reorganization, cross-backend/cross-instance *file* moves, and same-backend directory moves are fully supported.
+Moving a file to or from the `erasure` backend, or a directory across backends or instances, returns `400`.
 
 ### `DELETE /v1/files/{path}`
 

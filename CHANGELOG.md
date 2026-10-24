@@ -103,9 +103,6 @@ Three advisories remain unresolved upstream with no patched release available: `
 ### **Documentation**
 - Documented the rename/move API in `README.md`, `docs_markdown/03-api-reference.md`, and the OpenAPI/Swagger specs.
 
-### **v1 Limitations**
-- Re-tiering a file to/from the `erasure` backend and moving a *directory* across backends or instances are not supported and return `400`.
-
 ---
 
 ## [v1.3.0] - 2026-04-11
