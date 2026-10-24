@@ -134,6 +134,7 @@ func TestNATSValidationRejects(t *testing.T) {
 		{"bad auth mode", func(c *AppConfig) { c.NATS.Auth.Mode = "jwt" }, "nats.auth.mode"},
 		{"nkey without seed", func(c *AppConfig) { c.NATS.Auth.Mode = NATSAuthNKey }, "nkey_seed_file"},
 		{"creds without file", func(c *AppConfig) { c.NATS.Auth.Mode = NATSAuthCreds }, "creds_file"},
+		{"creds in embedded mode", func(c *AppConfig) { c.NATS.Auth.Mode = NATSAuthCreds; c.NATS.Auth.CredsFile = "callfs.creds" }, "requires nats.mode=external"},
 		{"short previous secret", func(c *AppConfig) { c.NATS.Auth.PreviousSecret = "short" }, "previous_secret"},
 		{"non-loopback cluster without tls", func(c *AppConfig) { c.NATS.ClusterListen = "0.0.0.0:6222" }, "nats.tls"},
 		{"non-loopback client without tls", func(c *AppConfig) { c.NATS.ClientListen = "0.0.0.0:4222" }, "nats.client_listen"},

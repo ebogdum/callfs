@@ -24,7 +24,7 @@ func DefaultAppConfig() AppConfig {
 			MetadataCacheSize: 1000,
 			RateLimit: RateLimitConfig{
 				LinkGenerateRPS:       100,
-				LinkGenerateBurst:     1,
+				LinkGenerateBurst:     100,
 				MaxActiveLinksPerUser: 1000,
 				DownloadRPS:           10,
 				DownloadBurst:         5,
@@ -69,6 +69,7 @@ func DefaultAppConfig() AppConfig {
 		Erasure: ErasureConfig{
 			DataShards:   4,
 			ParityShards: 2,
+			ShardPath:    ".callfs/shards",
 		},
 		MetadataStore: MetadataStoreConfig{
 			Type:           "postgres",

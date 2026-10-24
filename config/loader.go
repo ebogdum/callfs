@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ func LoadConfigFromFile(configFilePath string) (AppConfig, error) {
 	if err := k.Load(structs.Provider(defaultCfg, "koanf"), nil); err != nil {
 		return AppConfig{}, fmt.Errorf("failed to load default config: %w", err)
 	}
+	k.Delete("backend.localfs_tmp_save_max_size")
 
 	// Load from config file
 	if configFilePath != "" {
@@ -99,6 +101,10 @@ func LoadConfigFromFile(configFilePath string) (AppConfig, error) {
 	var cfg AppConfig
 	if err := k.Unmarshal("", &cfg); err != nil {
 		return AppConfig{}, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	if nil != k.Get("backend.localfs_tmp_save_max_size") && 1 > cfg.Backend.LocalFSTmpSaveMaxSize {
+		return AppConfig{}, fmt.Errorf("config validation failed: backend.localfs_tmp_save_max_size must be at least 1 byte; leave it out for no size limit")
 	}
 
 	// Validate required fields
@@ -449,6 +455,16 @@ func validateConfig(cfg *AppConfig) error {
 			return fmt.Errorf("erasure.data_shards + erasure.parity_shards must not exceed 256")
 		}
 	}
+	if 0 > cfg.Erasure.MinFileSize {
+		return fmt.Errorf("erasure.min_file_size must be >= 0 (0 means only when an upload asks)")
+	}
+	cfg.Erasure.ShardPath = strings.Trim(strings.TrimSpace(cfg.Erasure.ShardPath), "/")
+	if "" == cfg.Erasure.ShardPath {
+		cfg.Erasure.ShardPath = ".callfs/shards"
+	}
+	if cleaned := path.Clean(cfg.Erasure.ShardPath); cleaned != cfg.Erasure.ShardPath || ".." == cleaned || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("erasure.shard_path must be a clean relative path inside the storage (got %q)", cfg.Erasure.ShardPath)
+	}
 
 	cfg.Backend.DefaultBackend = strings.ToLower(strings.TrimSpace(cfg.Backend.DefaultBackend))
 	switch cfg.Backend.DefaultBackend {
@@ -470,6 +486,9 @@ func validateConfig(cfg *AppConfig) error {
 		cfg.Performance.Mode = PerformanceFast
 	default:
 		return fmt.Errorf("performance.mode must be one of: fast, strict (got %q)", cfg.Performance.Mode)
+	}
+	if 0 > cfg.Backend.LocalFSTmpSaveMaxSize {
+		return fmt.Errorf("backend.localfs_tmp_save_max_size must be at least 1 byte; leave it out for no size limit")
 	}
 	cfg.Backend.LocalFSAck = strings.ToLower(strings.TrimSpace(cfg.Backend.LocalFSAck))
 	switch cfg.Backend.LocalFSAck {

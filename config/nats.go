@@ -180,6 +180,9 @@ func validateNATSTLS(n *NATSConfig) error {
 }
 
 func validateNATSEmbedded(n *NATSConfig) error {
+	if NATSAuthCreds == n.Auth.Mode {
+		return fmt.Errorf("nats.auth.mode=creds requires nats.mode=external")
+	}
 	if "" == n.ClusterListen {
 		return fmt.Errorf("nats.cluster_listen is required when nats.mode=embedded")
 	}

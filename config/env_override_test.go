@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -169,4 +170,30 @@ func TestNewServerAndDLMKeysFromEnv(t *testing.T) {
 	if cfg.DLM.WaitTimeout != 45*time.Second {
 		t.Errorf("dlm.wait_timeout = %v, want 45s", cfg.DLM.WaitTimeout)
 	}
+}
+
+func TestTmpSaveMaxSizeMustBeAtLeastOneByte(t *testing.T) {
+	path := writeTmpSaveConfig(t, "0")
+	if _, err := LoadConfigFromFile(path); nil == err || !strings.Contains(err.Error(), "at least 1 byte") {
+		t.Fatalf("expected a 1-byte minimum error, got %v", err)
+	}
+	cfg, err := LoadConfigFromFile(writeTmpSaveConfig(t, "1"))
+	if nil != err || 1 != cfg.Backend.LocalFSTmpSaveMaxSize {
+		t.Fatalf("1 byte rejected: %v", err)
+	}
+}
+
+func writeTmpSaveConfig(t *testing.T, size string) string {
+	t.Helper()
+	path := writeMinimalConfig(t)
+	body, err := os.ReadFile(path)
+	if nil != err {
+		t.Fatalf("read config: %v", err)
+	}
+	body = []byte(strings.Replace(string(body), "auth:\n", "auth:\n  api_key_users:\n    alice: \"alice-key-at-least-16-chars\"\n", 1))
+	body = append(body, []byte("backend:\n  localfs_tmp_save_max_size: \""+size+"\"\n")...)
+	if err := os.WriteFile(path, body, 0o600); nil != err {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
 }

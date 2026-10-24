@@ -41,6 +41,10 @@ func SetDocumentValue(doc *yaml.Node, path string, value any) error {
 	current := doc.Content[0]
 	for index, segment := range segments {
 		child := mappingChild(current, segment)
+		if nil == value && index == len(segments)-1 {
+			removeMappingChild(current, segment)
+			return nil
+		}
 		if nil == child {
 			child = &yaml.Node{Kind: yaml.ScalarNode}
 			if index < len(segments)-1 {
@@ -149,4 +153,13 @@ func replaceFileAtomically(path string, data []byte, mode os.FileMode) error {
 		return renameErr
 	}
 	return nil
+}
+
+func removeMappingChild(mapping *yaml.Node, key string) {
+	for index := 0; index+1 < len(mapping.Content); index += 2 {
+		if key == mapping.Content[index].Value {
+			mapping.Content = append(mapping.Content[:index], mapping.Content[index+2:]...)
+			return
+		}
+	}
 }

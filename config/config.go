@@ -123,6 +123,8 @@ type BackendConfig struct {
 	LocalFSRootPath            string        `koanf:"localfs_root_path"`
 	LocalFSSync                string        `koanf:"localfs_sync"`
 	LocalFSAck                 string        `koanf:"localfs_ack"`
+	LocalFSTrueOverwrite       bool          `koanf:"localfs_true_overwrite"`
+	LocalFSTmpSaveMaxSize      ByteSize      `koanf:"localfs_tmp_save_max_size"`
 	FlushWorkers               int           `koanf:"flush_workers"`
 	FlushMaxPendingBytes       int64         `koanf:"flush_max_pending_bytes"`
 	FlushMaxDelay              time.Duration `koanf:"flush_max_delay"`
@@ -130,11 +132,12 @@ type BackendConfig struct {
 	S3SecretKey                string        `koanf:"s3_secret_key"`
 	S3Region                   string        `koanf:"s3_region"`
 	S3BucketName               string        `koanf:"s3_bucket_name"`
-	S3Endpoint                 string        `koanf:"s3_endpoint"`                    // Custom S3 endpoint (e.g., for MinIO)
-	S3AllowInsecure            bool          `koanf:"s3_allow_insecure"`              // Permit a plaintext http:// S3 endpoint
-	S3ServerSideEncryption     string        `koanf:"s3_server_side_encryption"`      // SSE algorithm (AES256, aws:kms)
-	S3ACL                      string        `koanf:"s3_acl"`                         // Object ACL (private, public-read, etc.)
-	S3KMSKeyID                 string        `koanf:"s3_kms_key_id"`                  // KMS key ID for SSE-KMS
+	S3Endpoint                 string        `koanf:"s3_endpoint"`               // Custom S3 endpoint (e.g., for MinIO)
+	S3AllowInsecure            bool          `koanf:"s3_allow_insecure"`         // Permit a plaintext http:// S3 endpoint
+	S3ServerSideEncryption     string        `koanf:"s3_server_side_encryption"` // SSE algorithm (AES256, aws:kms)
+	S3ACL                      string        `koanf:"s3_acl"`                    // Object ACL (private, public-read, etc.)
+	S3KMSKeyID                 string        `koanf:"s3_kms_key_id"`             // KMS key ID for SSE-KMS
+	InternalProxyCAFile        string        `koanf:"internal_proxy_ca_file"`
 	InternalProxySkipTLSVerify bool          `koanf:"internal_proxy_skip_tls_verify"` // Skip TLS certificate verification for internal proxy requests
 }
 
@@ -183,10 +186,12 @@ type HAConfig struct {
 
 // ErasureConfig holds erasure coding configuration
 type ErasureConfig struct {
-	Enabled      bool   `koanf:"enabled"`
-	DataShards   int    `koanf:"data_shards"`   // default: 4
-	ParityShards int    `koanf:"parity_shards"` // default: 2
-	ShardBackend string `koanf:"shard_backend"` // "localfs" or "s3"
+	Enabled      bool     `koanf:"enabled"`
+	DataShards   int      `koanf:"data_shards"`   // default: 4
+	ParityShards int      `koanf:"parity_shards"` // default: 2
+	ShardBackend string   `koanf:"shard_backend"` // "localfs" or "s3"
+	MinFileSize  ByteSize `koanf:"min_file_size"`
+	ShardPath    string   `koanf:"shard_path"`
 }
 
 // InstanceDiscoveryConfig holds instance discovery configuration
