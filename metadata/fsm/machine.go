@@ -81,7 +81,6 @@ type Result struct {
 	Link         *metadata.SingleUseLink `json:"link,omitempty"`
 	Children     []*metadata.Metadata    `json:"children,omitempty"`
 	Index        uint64                  `json:"index,omitempty"`
-	Count        int                     `json:"count,omitempty"`
 	Halt         bool                    `json:"halt,omitempty"`
 	Results      []Result                `json:"results,omitempty"`
 }

@@ -343,10 +343,8 @@ func (b *Bus) Serve(name string, h cluster.Handler, opt ...cluster.ServeOpt) err
 	if err := add(b.nc.Subscribe(cluster.GatherWildcard(name), dispatch)); nil != err {
 		return fail(err)
 	}
-	if options.QueueGroup {
-		if err := add(b.nc.QueueSubscribe(cluster.ServiceWildcard(name), cluster.ServiceQueueGroup(name), dispatch)); nil != err {
-			return fail(err)
-		}
+	if err := add(b.nc.QueueSubscribe(cluster.ServiceWildcard(name), cluster.ServiceQueueGroup(name), dispatch)); nil != err {
+		return fail(err)
 	}
 	return nil
 }

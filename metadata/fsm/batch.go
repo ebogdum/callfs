@@ -194,7 +194,11 @@ func (v *batchView) rename(src *metadata.Metadata, oldPath, newPath string) {
 		v.metadata[oldP] = nil
 	}
 	for i, oldP := range affected {
-		v.metadata[newPath+oldP[len(oldPath):]] = moved[i]
+		target := newPath + oldP[len(oldPath):]
+		clone := CloneMetadata(moved[i])
+		clone.Path = target
+		clone.Name = pathBase(target)
+		v.metadata[target] = clone
 	}
 
 	erasureAffected := make([]string, 0)

@@ -50,11 +50,21 @@ type Store struct {
 	groupTail []byte
 
 	strictReads  atomic.Bool
+	fences       atomic.Pointer[FenceSource]
 	barrierMu    sync.Mutex
 	nextRound    *barrierRound
 	roundRunning bool
 
 	appliedSeq atomic.Uint64
+	applyMu    sync.Mutex
+
+	snapObj     jetstream.ObjectStore
+	snapMu      sync.Mutex
+	snapStateMu sync.Mutex
+	lastSnapSeq uint64
+	lastSnapAt  time.Time
+	openedAt    time.Time
+	snapDone    chan struct{}
 
 	progressMu sync.Mutex
 	progress   chan struct{}
@@ -104,7 +114,13 @@ func Open(ctx context.Context, nc *nats.Conn, js jetstream.JetStream, self strin
 		return nil, fmt.Errorf("natsmeta: open stream %s: %w", StreamName, err)
 	}
 
+	streamInfo, err := stream.Info(ctx)
+	if nil != err {
+		return nil, fmt.Errorf("natsmeta: read stream %s info: %w", StreamName, err)
+	}
+
 	runCtx, cancel := context.WithCancel(context.Background())
+	openedAt := time.Now()
 	s := &Store{
 		nc:           nc,
 		js:           js,
@@ -120,9 +136,25 @@ func Open(ctx context.Context, nc *nats.Conn, js jetstream.JetStream, self strin
 		ctx:          runCtx,
 		cancel:       cancel,
 		done:         make(chan struct{}),
+		openedAt:     openedAt,
+		lastSnapAt:   openedAt,
+		snapDone:     make(chan struct{}),
 	}
 
-	consumer, err := js.OrderedConsumer(ctx, StreamName, jetstream.OrderedConsumerConfig{DeliverPolicy: jetstream.DeliverAllPolicy})
+	if err := s.openSnapshotBucket(ctx); nil != err {
+		cancel()
+		return nil, err
+	}
+	restoredSeq, err := s.restoreFromSnapshots(ctx, streamInfo.State.FirstSeq, streamInfo.State.LastSeq)
+	if nil != err {
+		cancel()
+		return nil, err
+	}
+	consumerCfg := jetstream.OrderedConsumerConfig{DeliverPolicy: jetstream.DeliverAllPolicy}
+	if 0 < restoredSeq {
+		consumerCfg = jetstream.OrderedConsumerConfig{DeliverPolicy: jetstream.DeliverByStartSequencePolicy, OptStartSeq: restoredSeq + 1}
+	}
+	consumer, err := js.OrderedConsumer(ctx, StreamName, consumerCfg)
 	if nil != err {
 		cancel()
 		return nil, fmt.Errorf("natsmeta: create ordered consumer: %w", err)
@@ -141,8 +173,10 @@ func Open(ctx context.Context, nc *nats.Conn, js jetstream.JetStream, self strin
 	go s.runApplier()
 
 	if err := s.catchUp(ctx); nil != err {
+		close(s.snapDone)
 		return nil, errors.Join(fmt.Errorf("natsmeta: catch up with stream: %w", err), s.Close())
 	}
+	go s.runSnapshotter()
 	return s, nil
 }
 
@@ -151,6 +185,7 @@ func (s *Store) Close() error {
 		s.cancel()
 		s.iter.Stop()
 		<-s.done
+		<-s.snapDone
 	})
 	return nil
 }
@@ -275,7 +310,7 @@ func (s *Store) Create(ctx context.Context, md *metadata.Metadata) error {
 	if nil == md {
 		return fmt.Errorf("metadata is required")
 	}
-	_, err := s.apply(ctx, fsm.Command{Op: "create_metadata", Metadata: fsm.CloneMetadata(md)})
+	_, err := s.apply(ctx, fsm.Command{Op: "create_metadata", Metadata: fsm.CloneMetadata(md), Fence: s.fenceFor(md)})
 	return err
 }
 
@@ -283,7 +318,7 @@ func (s *Store) Update(ctx context.Context, md *metadata.Metadata) error {
 	if nil == md {
 		return fmt.Errorf("metadata is required")
 	}
-	_, err := s.apply(ctx, fsm.Command{Op: "update_metadata", Metadata: fsm.CloneMetadata(md)})
+	_, err := s.apply(ctx, fsm.Command{Op: "update_metadata", Metadata: fsm.CloneMetadata(md), Fence: s.fenceFor(md)})
 	return err
 }
 
@@ -301,7 +336,7 @@ func (s *Store) UpdateIfMatch(ctx context.Context, md *metadata.Metadata, expect
 	if nil == md {
 		return fmt.Errorf("metadata is required")
 	}
-	_, err := s.apply(ctx, fsm.Command{Op: "update_metadata_if_match", Metadata: fsm.CloneMetadata(md), ExpectedETag: expectedETag})
+	_, err := s.apply(ctx, fsm.Command{Op: "update_metadata_if_match", Metadata: fsm.CloneMetadata(md), ExpectedETag: expectedETag, Fence: s.fenceFor(md)})
 	return err
 }
 
@@ -314,11 +349,6 @@ func (s *Store) CreateSingleUseLink(ctx context.Context, link *metadata.SingleUs
 	}
 	link.ID = fsm.LinkIDForToken(link.Token)
 	return nil
-}
-
-func (s *Store) UpdateSingleUseLink(ctx context.Context, token string, status string, usedAt *time.Time, usedByIP *string) error {
-	_, err := s.apply(ctx, fsm.Command{Op: "update_link", Token: token, Status: status, UsedAt: usedAt, UsedByIP: usedByIP})
-	return err
 }
 
 func (s *Store) ConsumeSingleUseLink(ctx context.Context, token string, usedByIP string, now time.Time) (*metadata.SingleUseLink, bool, error) {

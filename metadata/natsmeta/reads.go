@@ -53,16 +53,6 @@ func (s *Store) Get(ctx context.Context, path string) (*metadata.Metadata, error
 	return nil, metadata.ErrNotFound
 }
 
-func (s *Store) GetConsistent(ctx context.Context, path string) (*metadata.Metadata, error) {
-	if err := s.barrier(ctx); nil != err {
-		return nil, err
-	}
-	if md, ok := s.machine.Get(path); ok {
-		return md, nil
-	}
-	return nil, metadata.ErrNotFound
-}
-
 func (s *Store) ListByPrefix(ctx context.Context, prefix, startAfter string, limit int) ([]*metadata.Metadata, error) {
 	if err := s.strictBarrier(ctx); nil != err {
 		return nil, err

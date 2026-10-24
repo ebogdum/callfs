@@ -55,6 +55,24 @@ func (l *Lease) Hold(ctx context.Context, name string, ttl time.Duration) (<-cha
 	return held, release, nil
 }
 
+func (l *Lease) Holder(ctx context.Context, name string) (string, error) {
+	if !cluster.ValidToken(name) {
+		return "", cluster.ErrInvalidName
+	}
+	kv, err := l.js.KeyValue(ctx, cluster.BucketLeases)
+	if nil != err {
+		return "", fmt.Errorf("open lease bucket: %w", err)
+	}
+	entry, err := kv.Get(ctx, cluster.LeaseKey(name))
+	if nil != err {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read lease %s: %w", name, err)
+	}
+	return string(entry.Value()), nil
+}
+
 func (l *Lease) acquire(ctx context.Context, kv jetstream.KeyValue, key string, ttl time.Duration) (uint64, error) {
 	for {
 		rev, err := kv.Create(ctx, key, []byte(l.self), jetstream.KeyTTL(ttl))

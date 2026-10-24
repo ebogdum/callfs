@@ -93,15 +93,6 @@ type redisLease struct {
 	ended      atomic.Bool
 }
 
-func NewRedisManager(redisAddr, redisPassword string, logger *zap.Logger) (*RedisManager, error) {
-	return NewRedisManagerWithOptions(RedisOptions{
-		Addr:         redisAddr,
-		Password:     redisPassword,
-		PoolSize:     defaultRedisPoolSize,
-		MinIdleConns: defaultRedisMinIdleConns,
-	}, logger)
-}
-
 func NewRedisManagerWithOptions(opts RedisOptions, logger *zap.Logger) (*RedisManager, error) {
 	poolSize := opts.PoolSize
 	if poolSize <= 0 {

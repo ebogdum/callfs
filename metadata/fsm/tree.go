@@ -252,6 +252,9 @@ func (m *Machine) StateCounts(now time.Time) StateCounts {
 	defer m.mu.RUnlock()
 	var counts StateCounts
 	for _, md := range m.state.MetadataByPath {
+		if "/" == md.Path {
+			continue
+		}
 		if "directory" == md.Type {
 			counts.Directories++
 		} else {

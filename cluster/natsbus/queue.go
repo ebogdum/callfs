@@ -90,7 +90,6 @@ func (q *Queue) Consume(pool string, n int, h cluster.TaskHandler) func() {
 			AckPolicy:     jetstream.AckExplicitPolicy,
 			AckWait:       taskAckWait,
 			MaxDeliver:    q.maxDeliver,
-			BackOff:       q.backoff,
 			MaxAckPending: 2 * n,
 		})
 		if nil != err {
@@ -167,7 +166,7 @@ func (q *Queue) run(ctx context.Context, msg jetstream.Msg, pool, affinity strin
 			q.logger.Warn("task term failed", zap.String("pool", pool), zap.String("id", id), zap.Error(termErr))
 		}
 	default:
-		if nakErr := msg.Nak(); nil != nakErr {
+		if nakErr := msg.NakWithDelay(cluster.TaskRetryDelay(q.backoff, attempt)); nil != nakErr {
 			q.logger.Warn("task nak failed", zap.String("pool", pool), zap.String("id", id), zap.Error(nakErr))
 		}
 	}

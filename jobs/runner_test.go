@@ -165,7 +165,7 @@ func TestListFiltersByState(t *testing.T) {
 	r.Submit("link_cleanup", "bob", func(ctx context.Context, p *Progress) (any, error) {
 		return nil, errors.New("boom")
 	})
-	items := r.List(Filter{State: StateSucceeded, CreatedBy: "alice"})
+	items := r.List(Filter{States: []State{StateSucceeded}, CreatedBy: "alice"})
 	if 1 != len(items) || job.ID != items[0].ID {
 		t.Fatalf("list = %v, want only alice succeeded job", items)
 	}

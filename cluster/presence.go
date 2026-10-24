@@ -20,6 +20,8 @@ type Member struct {
 	Zone        string    `json:"zone,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
 	Caps        []string  `json:"caps,omitempty"`
+	DiskFree    uint64    `json:"disk_free_bytes,omitempty"`
+	DiskTotal   uint64    `json:"disk_total_bytes,omitempty"`
 	Seen        time.Time `json:"seen"`
 }
 

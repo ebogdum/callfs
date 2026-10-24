@@ -163,20 +163,6 @@ func FormatRetryAfter(d time.Duration) string {
 	return strconv.FormatInt(max(seconds, 1), 10)
 }
 
-func ParseRetryAfter(s string) (time.Duration, error) {
-	if "" == s {
-		return 0, nil
-	}
-	seconds, err := strconv.ParseInt(s, 10, 64)
-	if nil != err {
-		return 0, err
-	}
-	if 0 > seconds {
-		return 0, errors.New("negative retry-after: " + s)
-	}
-	return time.Duration(seconds) * time.Second, nil
-}
-
 func FormatDeadline(t time.Time) string {
 	if t.IsZero() {
 		return ""

@@ -22,7 +22,6 @@ type Publisher interface {
 }
 
 type Filter struct {
-	State     State
 	Kind      string
 	CreatedBy string
 	States    []State
@@ -37,6 +36,8 @@ type Runner struct {
 	workers     map[string]*worker
 	workerOrder []string
 	baseCtx     context.Context
+	cluster     *Cluster
+	self        string
 }
 
 func NewRunner(publisher Publisher, logger *zap.Logger) *Runner {
@@ -61,6 +62,7 @@ func (r *Runner) submit(kind, createdBy, retryOf string, retrying []FailedItem, 
 		job: Job{
 			ID:        rand.Text(),
 			Kind:      kind,
+			Node:      r.self,
 			State:     StateQueued,
 			CreatedBy: createdBy,
 			RetryOf:   retryOf,
@@ -164,9 +166,6 @@ func (r *Runner) Get(id string) (Job, error) {
 }
 
 func (f Filter) matches(rec *record) bool {
-	if "" != f.State && f.State != rec.job.State {
-		return false
-	}
 	if "" != f.Kind && f.Kind != rec.job.Kind {
 		return false
 	}

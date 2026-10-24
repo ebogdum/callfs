@@ -94,6 +94,7 @@ func moveToDLQ(ctx context.Context, js jetstream.JetStream, stream jetstream.Str
 		}
 	}
 	out.Header.Set(headerDLQError, reason)
+	out.Header.Set(headerDLQSubject, raw.Subject)
 	if _, err := js.PublishMsg(stepCtx, out); nil != err {
 		return fmt.Errorf("publish dlq %s: %w", out.Subject, err)
 	}
@@ -102,3 +103,5 @@ func moveToDLQ(ctx context.Context, js jetstream.JetStream, stream jetstream.Str
 	}
 	return nil
 }
+
+const headerDLQSubject = "Callfs-Task-Subject"

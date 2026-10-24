@@ -43,6 +43,17 @@ func (s *Store) applyMessage(msg jetstream.Msg) bool {
 		return false
 	}
 	seq := meta.Sequence.Stream
+	s.applyMu.Lock()
+	last := s.appliedSeq.Load()
+	if seq <= last {
+		s.applyMu.Unlock()
+		return true
+	}
+	if last+1 != seq {
+		s.applyMu.Unlock()
+		s.halt(fmt.Errorf("natsmeta: stream sequence %d follows applied sequence %d: %w", seq, last, ErrSnapshotGap))
+		return false
+	}
 	data := msg.Data()
 	var cmd fsm.Command
 	var res fsm.Result
@@ -58,10 +69,12 @@ func (s *Store) applyMessage(msg jetstream.Msg) bool {
 	}
 
 	if res.Halt {
+		s.applyMu.Unlock()
 		s.halt(fmt.Errorf("natsmeta: halted at stream sequence %d: %w", seq, res.AsError()))
 		return false
 	}
 	s.appliedSeq.Store(seq)
+	s.applyMu.Unlock()
 	s.broadcast()
 	return true
 }

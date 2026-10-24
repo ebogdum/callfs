@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +22,7 @@ const (
 	natsBackendName     = "nats"
 	natsLockBucket      = "CALLFS_LOCKS"
 	natsLockPrefix      = "l."
+	natsQueuePrefix     = "q."
 	natsKVSubjectPrefix = "$KV."
 	natsOpTimeout       = 5 * time.Second
 	natsReleaseTimeout  = 10 * time.Second
@@ -39,14 +42,35 @@ type NATSManager struct {
 	locks       jetstream.KeyValue
 	nodeID      string
 	ttl         time.Duration
+	queueStale  time.Duration
 	logger      *zap.Logger
 	waitTimeout atomic.Int64
 	stopChan    chan struct{}
 	closeOnce   sync.Once
 	watcher     jetstream.KeyWatcher
+	held        sync.Map
 
 	mu      sync.Mutex
 	waiters map[string]map[chan struct{}]struct{}
+	queues  map[string][]natsQueueEntry
+	queued  map[string]uint64
+	seen    uint64
+}
+
+type natsQueueEntry struct {
+	order uint64
+	key   string
+}
+
+type natsTicket struct {
+	manager  *NATSManager
+	key      string
+	value    []byte
+	order    uint64
+	rev      atomic.Uint64
+	stopOnce sync.Once
+	stop     chan struct{}
+	done     chan struct{}
 }
 
 type natsLease struct {
@@ -65,7 +89,7 @@ var (
 	_ Inspector = (*NATSManager)(nil)
 )
 
-func NewNATSManager(ctx context.Context, js jetstream.JetStream, nodeID string, ttl time.Duration, logger *zap.Logger) (*NATSManager, error) {
+func NewNATSManager(ctx context.Context, js jetstream.JetStream, nodeID string, ttl, queueStale time.Duration, logger *zap.Logger) (*NATSManager, error) {
 	if nil == js {
 		return nil, errors.New("nats lock manager requires a jetstream handle")
 	}
@@ -76,19 +100,22 @@ func NewNATSManager(ctx context.Context, js jetstream.JetStream, nodeID string, 
 	if nil != err {
 		return nil, fmt.Errorf("failed to open lock bucket %s: %w", natsLockBucket, err)
 	}
-	watcher, err := locks.WatchAll(context.WithoutCancel(ctx), jetstream.UpdatesOnly(), jetstream.MetaOnly())
+	watcher, err := locks.WatchAll(context.WithoutCancel(ctx))
 	if nil != err {
 		return nil, fmt.Errorf("failed to watch lock bucket %s: %w", natsLockBucket, err)
 	}
 	m := &NATSManager{
-		js:       js,
-		locks:    locks,
-		nodeID:   nodeID,
-		ttl:      ttl,
-		logger:   logger,
-		stopChan: make(chan struct{}),
-		watcher:  watcher,
-		waiters:  map[string]map[chan struct{}]struct{}{},
+		js:         js,
+		locks:      locks,
+		nodeID:     nodeID,
+		ttl:        ttl,
+		queueStale: queueStale,
+		logger:     logger,
+		stopChan:   make(chan struct{}),
+		watcher:    watcher,
+		waiters:    map[string]map[chan struct{}]struct{}{},
+		queues:     map[string][]natsQueueEntry{},
+		queued:     map[string]uint64{},
 	}
 	m.waitTimeout.Store(int64(defaultWaitTimeout))
 	go m.dispatchReleases()
@@ -124,18 +151,101 @@ func (m *NATSManager) dispatchReleases() {
 			continue
 		}
 		op := entry.Operation()
-		if jetstream.KeyValueDelete != op && jetstream.KeyValuePurge != op {
-			continue
-		}
+		removed := jetstream.KeyValueDelete == op || jetstream.KeyValuePurge == op
+		key := entry.Key()
 		m.mu.Lock()
-		for signal := range m.waiters[entry.Key()] {
-			select {
-			case signal <- struct{}{}:
-			default:
+		if entry.Revision() > m.seen {
+			m.seen = entry.Revision()
+		}
+		if strings.HasPrefix(key, natsQueuePrefix) {
+			hash, ok := queueKeyHash(key)
+			if ok && m.applyQueueEvent(hash, key, entry, removed) {
+				m.signalLocked(natsLockPrefix + hash)
 			}
+		} else if removed {
+			m.signalLocked(key)
 		}
 		m.mu.Unlock()
 	}
+}
+
+func (m *NATSManager) signalLocked(lockKey string) {
+	for signal := range m.waiters[lockKey] {
+		select {
+		case signal <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func queueKeyHash(key string) (string, bool) {
+	rest := key[len(natsQueuePrefix):]
+	idx := strings.IndexByte(rest, '.')
+	if 0 >= idx {
+		return "", false
+	}
+	return rest[:idx], true
+}
+
+func (m *NATSManager) applyQueueEvent(hash, key string, entry jetstream.KeyValueEntry, removed bool) bool {
+	old, exists := m.queued[key]
+	if removed {
+		if !exists {
+			return false
+		}
+		m.removeQueueLocked(hash, key, old)
+		return true
+	}
+	order := entry.Revision()
+	if value := entry.Value(); 0 < len(value) {
+		if parsed, err := strconv.ParseUint(string(value), 10, 64); nil == err {
+			order = parsed
+		}
+	}
+	if exists {
+		if old == order {
+			return false
+		}
+		m.removeQueueLocked(hash, key, old)
+	}
+	list := m.queues[hash]
+	idx := sort.Search(len(list), func(i int) bool { return list[i].order > order || (list[i].order == order && list[i].key >= key) })
+	list = append(list, natsQueueEntry{})
+	copy(list[idx+1:], list[idx:])
+	list[idx] = natsQueueEntry{order: order, key: key}
+	m.queues[hash] = list
+	m.queued[key] = order
+	return true
+}
+
+func (m *NATSManager) removeQueueLocked(hash, key string, order uint64) {
+	list := m.queues[hash]
+	idx := sort.Search(len(list), func(i int) bool { return list[i].order > order || (list[i].order == order && list[i].key >= key) })
+	if idx < len(list) && key == list[idx].key {
+		list = append(list[:idx], list[idx+1:]...)
+	}
+	if 0 == len(list) {
+		delete(m.queues, hash)
+	} else {
+		m.queues[hash] = list
+	}
+	delete(m.queued, key)
+}
+
+func (m *NATSManager) queueBusy(hash string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return 0 < len(m.queues[hash])
+}
+
+func (m *NATSManager) isQueueHead(hash string, t *natsTicket) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.seen < t.order {
+		return false
+	}
+	list := m.queues[hash]
+	return 0 < len(list) && t.key == list[0].key
 }
 
 func (m *NATSManager) subscribeRelease(lockKey string) (chan struct{}, func()) {
@@ -168,13 +278,109 @@ func (m *NATSManager) Acquire(ctx context.Context, key string) (Lease, error) {
 		return nil, err
 	}
 	lockKey := natsLockKey(key)
+	hash := lockKey[len(natsLockPrefix):]
 	signal, unsubscribe := m.subscribeRelease(lockKey)
 	defer unsubscribe()
+	var ticket *natsTicket
+	defer func() {
+		if nil == ticket {
+			return
+		}
+		if err := ticket.leave(ctx); nil != err {
+			m.logger.Warn("Failed to leave lock queue", zap.String("key", key), zap.Error(err))
+		}
+	}()
 	return waitForLock(ctx, time.Duration(m.waitTimeout.Load()), &m.lockCounters, func() (Lease, error) {
-		return m.tryAcquire(ctx, key, lockKey, value)
+		if nil != ticket {
+			if !m.isQueueHead(hash, ticket) {
+				return nil, nil
+			}
+			return m.tryAcquire(ctx, key, lockKey, value)
+		}
+		if 0 < m.queueStale && m.queueBusy(hash) {
+			created, err := m.enqueue(ctx, key, hash, owner)
+			if nil != err {
+				return nil, err
+			}
+			ticket = created
+			return nil, nil
+		}
+		lease, err := m.tryAcquire(ctx, key, lockKey, value)
+		if nil != err || nil != lease || 0 >= m.queueStale {
+			return lease, err
+		}
+		created, err := m.enqueue(ctx, key, hash, owner)
+		if nil != err {
+			return nil, err
+		}
+		ticket = created
+		return nil, nil
 	}, func() <-chan struct{} {
 		return signal
 	})
+}
+
+func (m *NATSManager) enqueue(ctx context.Context, key, hash, owner string) (*natsTicket, error) {
+	queueKey := natsQueuePrefix + hash + "." + owner
+	opCtx, cancel := context.WithTimeout(ctx, natsOpTimeout)
+	defer cancel()
+	rev, err := m.locks.Create(opCtx, queueKey, nil, jetstream.KeyTTL(m.queueStale))
+	if nil != err {
+		return nil, fmt.Errorf("failed to join lock queue for key %s: %w", key, err)
+	}
+	t := &natsTicket{manager: m, key: queueKey, value: []byte(strconv.FormatUint(rev, 10)), order: rev, stop: make(chan struct{}), done: make(chan struct{})}
+	t.rev.Store(rev)
+	go t.refreshLoop()
+	return t, nil
+}
+
+func (t *natsTicket) refreshLoop() {
+	defer close(t.done)
+	m := t.manager
+	interval := m.queueStale / 3
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-t.stop:
+			return
+		case <-m.stopChan:
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), interval)
+			ack, err := m.js.Publish(ctx, natsKVSubjectPrefix+natsLockBucket+"."+t.key, t.value,
+				jetstream.WithExpectLastSequencePerSubject(t.rev.Load()), jetstream.WithMsgTTL(m.queueStale))
+			if nil == err {
+				t.rev.Store(ack.Sequence)
+				cancel()
+				continue
+			}
+			if isWrongSequence(err) {
+				rev, createErr := m.locks.Create(ctx, t.key, t.value, jetstream.KeyTTL(m.queueStale))
+				cancel()
+				if nil != createErr {
+					m.logger.Warn("Failed to restore lock queue entry", zap.String("queue_key", t.key), zap.Error(createErr))
+					continue
+				}
+				t.rev.Store(rev)
+				continue
+			}
+			cancel()
+			m.logger.Warn("Failed to refresh lock queue entry", zap.String("queue_key", t.key), zap.Error(err))
+		}
+	}
+}
+
+func (t *natsTicket) leave(ctx context.Context) error {
+	t.stopOnce.Do(func() { close(t.stop) })
+	<-t.done
+	leaveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), natsReleaseTimeout)
+	defer cancel()
+	err := t.manager.locks.Purge(leaveCtx, t.key, jetstream.PurgeTTL(t.manager.queueStale))
+	if nil != err && !errors.Is(err, jetstream.ErrKeyNotFound) {
+		return err
+	}
+	return nil
 }
 
 func (m *NATSManager) tryAcquire(ctx context.Context, key, lockKey string, value []byte) (Lease, error) {
@@ -189,6 +395,7 @@ func (m *NATSManager) tryAcquire(ctx context.Context, key, lockKey string, value
 	}
 	lease := &natsLease{manager: m, key: key, lockKey: lockKey, value: value, stop: make(chan struct{})}
 	lease.rev.Store(rev)
+	m.held.Store(key, lease)
 	go lease.renewLoop()
 	return lease, nil
 }
@@ -197,8 +404,21 @@ func (l *natsLease) Token() uint64 {
 	return l.rev.Load()
 }
 
+func (m *NATSManager) FenceToken(key string) (uint64, bool) {
+	value, ok := m.held.Load(key)
+	if !ok {
+		return 0, false
+	}
+	lease, isLease := value.(*natsLease)
+	if !isLease || lease.ended.Load() {
+		return 0, false
+	}
+	return lease.Token(), true
+}
+
 func (l *natsLease) finish() {
 	if l.ended.CompareAndSwap(false, true) {
+		l.manager.held.CompareAndDelete(l.key, l)
 		activeLocks.Dec()
 	}
 }
@@ -302,9 +522,10 @@ func (m *NATSManager) ForceRelease(ctx context.Context, key string) (bool, error
 }
 
 func (m *NATSManager) Close() error {
+	var stopErr error
 	m.closeOnce.Do(func() {
 		close(m.stopChan)
-		_ = m.watcher.Stop()
+		stopErr = m.watcher.Stop()
 	})
-	return nil
+	return stopErr
 }

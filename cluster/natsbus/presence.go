@@ -28,6 +28,7 @@ type Presence struct {
 
 	mu        sync.RWMutex
 	self      cluster.Member
+	onBeat    func(*cluster.Member)
 	members   map[string]cluster.Member
 	watchers  map[uint64]func(cluster.Event)
 	nextWatch uint64
@@ -159,6 +160,9 @@ func (p *Presence) halt() error {
 func (p *Presence) beat(ctx context.Context) error {
 	p.mu.Lock()
 	p.self.Seen = time.Now().UTC()
+	if nil != p.onBeat {
+		p.onBeat(&p.self)
+	}
 	member := p.self
 	p.mu.Unlock()
 	raw, err := cluster.Encode(member)
@@ -321,4 +325,10 @@ func emit(event cluster.Event, watchers []func(cluster.Event)) {
 	for _, fn := range watchers {
 		fn(event)
 	}
+}
+
+func (p *Presence) OnBeat(fn func(*cluster.Member)) {
+	p.mu.Lock()
+	p.onBeat = fn
+	p.mu.Unlock()
 }

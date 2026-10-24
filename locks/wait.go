@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	mrand "math/rand/v2"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +19,7 @@ const (
 	lockPollInitialDelay = 10 * time.Millisecond
 	lockPollMaxDelay     = 200 * time.Millisecond
 	holderHintBytes      = 4
+	waitSampleCapacity   = 1024
 )
 
 var (
@@ -32,10 +35,43 @@ type lockCounters struct {
 	errors      atomic.Uint64
 	lostLeases  atomic.Uint64
 	renewErrors atomic.Uint64
+
+	waitMu      sync.Mutex
+	waitSamples []time.Duration
+	waitNext    int
+}
+
+func (c *lockCounters) recordWait(d time.Duration) {
+	c.waitMu.Lock()
+	defer c.waitMu.Unlock()
+	if len(c.waitSamples) < waitSampleCapacity {
+		c.waitSamples = append(c.waitSamples, d)
+		return
+	}
+	c.waitSamples[c.waitNext] = d
+	c.waitNext = (c.waitNext + 1) % waitSampleCapacity
+}
+
+func (c *lockCounters) waitPercentiles() (*int64, *int64) {
+	c.waitMu.Lock()
+	sorted := slices.Clone(c.waitSamples)
+	c.waitMu.Unlock()
+	if 0 == len(sorted) {
+		return nil, nil
+	}
+	slices.Sort(sorted)
+	at := func(q float64) *int64 {
+		ms := sorted[int(q*float64(len(sorted)-1)+0.5)].Milliseconds()
+		return &ms
+	}
+	return at(0.5), at(0.95)
 }
 
 func (c *lockCounters) Stats() LockStats {
+	p50, p95 := c.waitPercentiles()
 	return LockStats{
+		WaitP50Ms:   p50,
+		WaitP95Ms:   p95,
 		Acquired:    c.acquired.Load(),
 		Timeouts:    c.timeouts.Load(),
 		Cancelled:   c.cancelled.Load(),
@@ -47,7 +83,9 @@ func (c *lockCounters) Stats() LockStats {
 
 func (c *lockCounters) recordAcquire(started time.Time, outcome string) {
 	lockOperations.WithLabelValues("acquire", outcome).Inc()
-	lockOperationDuration.WithLabelValues("acquire").Observe(time.Since(started).Seconds())
+	elapsed := time.Since(started)
+	lockOperationDuration.WithLabelValues("acquire").Observe(elapsed.Seconds())
+	c.recordWait(elapsed)
 	switch outcome {
 	case "acquired":
 		c.acquired.Add(1)

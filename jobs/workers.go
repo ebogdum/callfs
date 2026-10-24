@@ -2,20 +2,49 @@ package jobs
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/ebogdum/callfs/v2/cluster"
+)
+
+const (
+	ScopeNode            = "node"
+	ScopeCluster         = "cluster"
+	DefaultLeaseTTL      = 30 * time.Second
+	jobsService          = "jobs"
+	jobsRunNowMethod     = "run_now"
+	jobsServeConcurrency = 4
 )
 
 type WorkerFunc func(ctx context.Context) (any, error)
 
+type Cluster struct {
+	Self     string
+	Lease    cluster.Lease
+	Bus      cluster.Bus
+	LeaseTTL time.Duration
+}
+
+type runNowRequest struct {
+	Name  string `json:"name"`
+	Actor string `json:"actor"`
+}
+
 type worker struct {
 	name         string
 	interval     time.Duration
+	scope        string
 	fn           WorkerFunc
 	running      bool
+	holding      bool
+	lastKey      string
+	lastJob      Job
 	lastRunAt    *time.Time
 	lastDuration time.Duration
 	lastResult   any
@@ -26,6 +55,8 @@ type worker struct {
 type WorkerStatus struct {
 	Name           string     `json:"name"`
 	IntervalS      int64      `json:"interval_s"`
+	Scope          string     `json:"scope"`
+	LeaseHeld      bool       `json:"lease_held,omitempty"`
 	Running        bool       `json:"running"`
 	LastRunAt      *time.Time `json:"last_run_at"`
 	LastDurationMs int64      `json:"last_duration_ms"`
@@ -38,6 +69,8 @@ func (w *worker) status() WorkerStatus {
 	status := WorkerStatus{
 		Name:           w.name,
 		IntervalS:      int64(w.interval / time.Second),
+		Scope:          w.scope,
+		LeaseHeld:      w.holding,
 		Running:        w.running,
 		LastRunAt:      w.lastRunAt,
 		LastDurationMs: w.lastDuration.Milliseconds(),
@@ -52,6 +85,41 @@ func (w *worker) status() WorkerStatus {
 }
 
 func (r *Runner) RegisterWorker(name string, interval time.Duration, fn WorkerFunc) error {
+	return r.register(name, interval, ScopeNode, fn)
+}
+
+func (r *Runner) RegisterClusterWorker(name string, interval time.Duration, fn WorkerFunc) error {
+	if !cluster.ValidToken(name) {
+		return fmt.Errorf("worker %s name must use only letters, digits, - and _", name)
+	}
+	return r.register(name, interval, ScopeCluster, fn)
+}
+
+func (r *Runner) UseCluster(c Cluster) error {
+	if nil == c.Lease {
+		return errors.New("cluster lease is required")
+	}
+	if 0 >= c.LeaseTTL {
+		c.LeaseTTL = DefaultLeaseTTL
+	}
+	r.mu.Lock()
+	if nil != r.baseCtx {
+		r.mu.Unlock()
+		return ErrAlreadyStarted
+	}
+	r.cluster = &c
+	r.self = c.Self
+	r.mu.Unlock()
+	if nil == c.Bus {
+		return nil
+	}
+	if err := c.Bus.Serve(jobsService, r.serve, cluster.WithConcurrency(jobsServeConcurrency)); nil != err {
+		return fmt.Errorf("serve jobs over the cluster bus: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) register(name string, interval time.Duration, scope string, fn WorkerFunc) error {
 	if "" == name {
 		return errors.New("worker name is required")
 	}
@@ -66,7 +134,7 @@ func (r *Runner) RegisterWorker(name string, interval time.Duration, fn WorkerFu
 	if _, exists := r.workers[name]; exists {
 		return fmt.Errorf("worker %s is already registered", name)
 	}
-	w := &worker{name: name, interval: interval, fn: fn}
+	w := &worker{name: name, interval: interval, scope: scope, fn: fn}
 	r.workers[name] = w
 	r.workerOrder = append(r.workerOrder, name)
 	if nil != r.baseCtx {
@@ -97,6 +165,30 @@ func (r *Runner) Start(ctx context.Context) error {
 }
 
 func (r *Runner) schedule(ctx context.Context, w *worker) {
+	if ScopeCluster != w.scope || nil == r.cluster {
+		r.tick(ctx, w)
+		return
+	}
+	lease := r.cluster.Lease
+	cluster.Singleton(ctx, lease, w.name, r.cluster.LeaseTTL, func(heldCtx context.Context) error {
+		r.setHolding(w, true)
+		defer r.setHolding(w, false)
+		r.logger.Info("worker lease acquired", zap.String("worker", w.name))
+		r.tick(heldCtx, w)
+		r.logger.Info("worker lease released", zap.String("worker", w.name))
+		return nil
+	}, func(err error) {
+		r.logger.Warn("worker lease failed", zap.String("worker", w.name), zap.Error(err))
+	})
+}
+
+func (r *Runner) setHolding(w *worker, holding bool) {
+	r.mu.Lock()
+	w.holding = holding
+	r.mu.Unlock()
+}
+
+func (r *Runner) tick(ctx context.Context, w *worker) {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 	for {
@@ -125,6 +217,10 @@ func (r *Runner) RunNow(name, actor string) (Job, error) {
 	if !ok {
 		r.mu.Unlock()
 		return Job{}, ErrWorkerNotFound
+	}
+	if ScopeCluster == w.scope && nil != r.cluster && !w.holding {
+		r.mu.Unlock()
+		return r.runRemote(name, actor)
 	}
 	if w.running {
 		r.mu.Unlock()
@@ -168,4 +264,71 @@ func (r *Runner) execute(ctx context.Context, w *worker) (any, error) {
 		r.logger.Info("worker finished", zap.String("worker", w.name), zap.Duration("duration", duration))
 	}
 	return result, err
+}
+
+func (r *Runner) runRemote(name, actor string) (Job, error) {
+	if nil == r.cluster.Bus {
+		return Job{}, ErrWorkerElsewhere
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cluster.DefaultCallTimeout)
+	defer cancel()
+	holder, err := r.cluster.Lease.Holder(ctx, name)
+	if nil != err {
+		return Job{}, fmt.Errorf("find the server running worker %s: %w", name, err)
+	}
+	if "" == holder || r.self == holder {
+		return Job{}, ErrWorkerElsewhere
+	}
+	var job Job
+	callErr := r.cluster.Bus.Call(ctx, holder, jobsService, jobsRunNowMethod, runNowRequest{Name: name, Actor: actor}, &job,
+		cluster.WithIdempotencyKey(rand.Text()), cluster.Idempotent())
+	if nil == callErr {
+		return job, nil
+	}
+	switch cluster.StatusOf(callErr) {
+	case http.StatusNotFound:
+		return Job{}, fmt.Errorf("%w on server %s", ErrWorkerNotFound, holder)
+	case http.StatusConflict:
+		return Job{}, fmt.Errorf("%w on server %s", ErrWorkerBusy, holder)
+	}
+	return Job{}, fmt.Errorf("run worker %s on server %s: %w", name, holder, callErr)
+}
+
+func (r *Runner) serve(_ context.Context, req *cluster.Request) (any, error) {
+	if jobsRunNowMethod != req.Method {
+		return nil, cluster.NewError(http.StatusNotFound, "unknown_method", "unknown jobs method "+req.Method)
+	}
+	var body runNowRequest
+	if err := req.Decode(&body); nil != err {
+		return nil, cluster.NewError(http.StatusBadRequest, "decode", err.Error())
+	}
+	r.mu.Lock()
+	w, ok := r.workers[body.Name]
+	if ok && "" != req.IdempotencyKey && req.IdempotencyKey == w.lastKey {
+		job := w.lastJob
+		r.mu.Unlock()
+		return job, nil
+	}
+	held := ok && (ScopeCluster != w.scope || w.holding)
+	r.mu.Unlock()
+	if !ok {
+		return nil, cluster.NewError(http.StatusNotFound, "worker_not_found", ErrWorkerNotFound.Error())
+	}
+	if !held {
+		return nil, cluster.NewError(http.StatusConflict, "worker_elsewhere", ErrWorkerElsewhere.Error())
+	}
+	job, err := r.RunNow(body.Name, body.Actor)
+	if errors.Is(err, ErrWorkerBusy) {
+		return nil, cluster.NewError(http.StatusConflict, "worker_busy", err.Error())
+	}
+	if nil != err {
+		return nil, err
+	}
+	if "" != req.IdempotencyKey {
+		r.mu.Lock()
+		w.lastKey = req.IdempotencyKey
+		w.lastJob = job
+		r.mu.Unlock()
+	}
+	return job, nil
 }

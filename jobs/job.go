@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -21,13 +22,14 @@ const (
 const maxFailedItems = 1000
 
 var (
-	ErrNotFound       = errors.New("job not found")
-	ErrCursorNotFound = errors.New("cursor does not match any job")
-	ErrInvalidState   = errors.New("job state does not allow this action")
-	ErrNothingToRetry = errors.New("job has no failed items to retry")
-	ErrWorkerNotFound = errors.New("worker not found")
-	ErrWorkerBusy     = errors.New("worker is already running")
-	ErrAlreadyStarted = errors.New("runner already started")
+	ErrNotFound        = errors.New("job not found")
+	ErrCursorNotFound  = errors.New("cursor does not match any job")
+	ErrInvalidState    = errors.New("job state does not allow this action")
+	ErrNothingToRetry  = errors.New("job has no failed items to retry")
+	ErrWorkerNotFound  = errors.New("worker not found")
+	ErrWorkerBusy      = errors.New("worker is already running")
+	ErrWorkerElsewhere = fmt.Errorf("%w on another server", ErrWorkerBusy)
+	ErrAlreadyStarted  = errors.New("runner already started")
 )
 
 type JobFunc func(ctx context.Context, p *Progress) (any, error)
@@ -47,6 +49,7 @@ type FailedItem struct {
 type Job struct {
 	ID         string       `json:"id"`
 	Kind       string       `json:"kind"`
+	Node       string       `json:"node,omitempty"`
 	State      State        `json:"state"`
 	CreatedBy  string       `json:"created_by"`
 	RetryOf    string       `json:"retry_of,omitempty"`

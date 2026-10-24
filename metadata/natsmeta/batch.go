@@ -47,6 +47,7 @@ func (s *Store) ApplyBatch(ctx context.Context, ops []metadata.Op) error {
 			Metadata:     fsm.CloneMetadata(op.Metadata),
 			ExpectedETag: op.ExpectedETag,
 			ErasureInfo:  fsm.CloneErasureFileInfo(op.ErasureInfo),
+			Fence:        s.fenceFor(op.Metadata),
 		})
 	}
 

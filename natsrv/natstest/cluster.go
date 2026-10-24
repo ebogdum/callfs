@@ -22,6 +22,20 @@ func StartCluster(t testing.TB, n int) []*Node {
 	t.Helper()
 	ports := freePorts(t, n)
 	servers := make([]*server.Server, 0, n)
+	nodes := make([]*Node, 0, n)
+	storeDirs := make([]string, n)
+	for i := range storeDirs {
+		storeDirs[i] = t.TempDir()
+	}
+	t.Cleanup(func() {
+		for _, node := range nodes {
+			node.Conn.Close()
+		}
+		for _, ns := range servers {
+			ns.Shutdown()
+			ns.WaitForShutdown()
+		}
+	})
 	for i := 0; i < n; i++ {
 		opts := &server.Options{
 			ServerName: fmt.Sprintf("n%d", i),
@@ -30,7 +44,7 @@ func StartCluster(t testing.TB, n int) []*Node {
 			NoSigs:     true,
 			NoLog:      true,
 			JetStream:  true,
-			StoreDir:   t.TempDir(),
+			StoreDir:   storeDirs[i],
 		}
 		if 1 < n {
 			opts.Cluster.Name = "callfs-test"
@@ -54,7 +68,6 @@ func StartCluster(t testing.TB, n int) []*Node {
 		servers = append(servers, ns)
 	}
 	waitForRoutes(t, servers, n-1)
-	nodes := make([]*Node, 0, n)
 	for _, ns := range servers {
 		nc, err := nats.Connect(ns.ClientURL())
 		if nil != err {
@@ -62,15 +75,6 @@ func StartCluster(t testing.TB, n int) []*Node {
 		}
 		nodes = append(nodes, &Node{Server: ns, Conn: nc})
 	}
-	t.Cleanup(func() {
-		for _, node := range nodes {
-			node.Conn.Close()
-		}
-		for _, ns := range servers {
-			ns.Shutdown()
-			ns.WaitForShutdown()
-		}
-	})
 	return nodes
 }
 

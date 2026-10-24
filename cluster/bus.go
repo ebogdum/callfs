@@ -108,7 +108,6 @@ func CallRetryDelay(attempt int) time.Duration {
 
 type ServeOptions struct {
 	Concurrency int
-	QueueGroup  bool
 }
 
 type ServeOpt func(*ServeOptions)
@@ -116,12 +115,6 @@ type ServeOpt func(*ServeOptions)
 func WithConcurrency(n int) ServeOpt {
 	return func(o *ServeOptions) {
 		o.Concurrency = n
-	}
-}
-
-func WithQueueGroup() ServeOpt {
-	return func(o *ServeOptions) {
-		o.QueueGroup = true
 	}
 }
 

@@ -53,7 +53,7 @@ type linkCursor struct {
 
 func LinkIDForToken(token string) int64 {
 	sum := sha256.Sum256([]byte(token))
-	return int64(binary.BigEndian.Uint64(sum[:8]) >> 1)
+	return int64(binary.BigEndian.Uint64(sum[:8]) >> 11)
 }
 
 func effectiveLinkStatus(link *metadata.SingleUseLink, now time.Time) string {

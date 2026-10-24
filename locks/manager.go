@@ -33,6 +33,8 @@ type LockStats struct {
 	Errors      uint64
 	LostLeases  uint64
 	RenewErrors uint64
+	WaitP50Ms   *int64
+	WaitP95Ms   *int64
 }
 
 type Inspector interface {

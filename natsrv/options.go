@@ -24,8 +24,18 @@ func BuildOptions(cfg config.NATSConfig, peers map[string]string) (*server.Optio
 		StoreDir:           cfg.JetStream.StoreDir,
 		JetStreamMaxMemory: cfg.JetStream.MaxMemory.Int64(),
 		JetStreamMaxStore:  cfg.JetStream.MaxStore.Int64(),
+		JetStreamUniqueTag: cfg.JetStream.UniqueTag,
 		MaxPayload:         int32(cfg.Metadata.MaxMsgSize.Int64()),
 		Tags:               tags,
+	}
+
+	if "" != cfg.MonitorListen {
+		host, port, err := splitListen(cfg.MonitorListen)
+		if nil != err {
+			return nil, fmt.Errorf("nats.monitor_listen: %w", err)
+		}
+		opts.HTTPHost = host
+		opts.HTTPPort = port
 	}
 
 	if config.NATSSyncAlways == cfg.JetStream.Sync {
@@ -81,6 +91,24 @@ func BuildOptions(cfg config.NATSConfig, peers map[string]string) (*server.Optio
 		opts.DontListen = false
 		opts.Host = "127.0.0.1"
 		opts.Port = server.RANDOM_PORT
+	}
+
+	if "" != cfg.TLS.CertFile {
+		clientTLS, err := clientPortTLSConfig(cfg.TLS)
+		if nil != err {
+			return nil, fmt.Errorf("nats.tls: %w", err)
+		}
+		opts.TLS = true
+		opts.TLSConfig = clientTLS
+		opts.TLSTimeout = tlsHandshakeTimeout
+		if 0 < len(opts.Routes) {
+			routeTLS, err := clusterTLSConfig(cfg.TLS)
+			if nil != err {
+				return nil, fmt.Errorf("nats.tls: %w", err)
+			}
+			opts.Cluster.TLSConfig = routeTLS
+			opts.Cluster.TLSTimeout = tlsHandshakeTimeout
+		}
 	}
 
 	return opts, nil
