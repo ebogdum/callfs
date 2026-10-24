@@ -1,6 +1,7 @@
 export default {
 	'search.title': 'Search',
 	'search.query.label': 'Search files',
+	'search.query.placeholder': 'Name, type or path',
 	'search.tips.title': 'Start with a name, size or date.',
 	'search.tips.body': 'Type a search, or pick a filter.',
 	'search.tip.name': 'name:*.log finds log files.',

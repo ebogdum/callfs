@@ -118,26 +118,6 @@ function conflictDescription(failure: HttpFailure, context: ErrorContext): Descr
 				layer: 'locked',
 				fixAction: fix('errors.locked.fix')
 			};
-		case 'QUORUM_RISK':
-			return {
-				title: t('errors.quorum_risk.title'),
-				body: t('errors.quorum_risk.body', {
-					voters_after: detailNumber(failure.details, 'voters_after') ?? t('common.unknown')
-				}),
-				retryable: false,
-				layer: 'conflict',
-				fixAction: fix('errors.quorum_risk.fix', '/cluster/nodes')
-			};
-		case 'NOT_LEADER':
-			return {
-				title: t('errors.not_leader.title'),
-				body: t('errors.not_leader.body', {
-					leader_id: detailString(failure.details, 'leader_id') ?? t('common.unknown')
-				}),
-				retryable: false,
-				layer: 'leader',
-				fixAction: fix('errors.not_leader.fix', detailString(failure.details, 'leader_endpoint') ?? undefined)
-			};
 		default:
 			return {
 				title: t('errors.conflict.title', { object }),
@@ -286,15 +266,6 @@ function describeHttp(failure: HttpFailure, context: ErrorContext): Described {
 				fixAction: fix('errors.peer.fix', '/cluster/servers')
 			};
 		case 503:
-			if ('NO_LEADER' === failure.code) {
-				return {
-					title: t('errors.no_leader.title'),
-					body: t('errors.no_leader.body'),
-					retryable: true,
-					layer: 'leader',
-					fixAction: fix('errors.no_leader.fix', '/cluster')
-				};
-			}
 			return serverDescription(action, true);
 		case 508:
 			return {

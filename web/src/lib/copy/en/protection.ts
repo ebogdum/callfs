@@ -10,6 +10,5 @@ export default {
 	'protection.durability.piece_data': 'Data piece',
 	'protection.durability.piece_spare': 'Spare piece',
 	'protection.durability.piece_ok': 'Piece OK',
-	'protection.durability.piece_missing': 'Piece missing',
-	'protection.stepper.position': 'Step {current} of {total}'
+	'protection.durability.piece_missing': 'Piece missing'
 };

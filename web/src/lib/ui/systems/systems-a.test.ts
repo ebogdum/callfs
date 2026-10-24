@@ -218,16 +218,4 @@ describe('FilesStore', () => {
 		expect(store.hidden).toBe(true);
 	});
 
-	it('copies cut paths into the clipboard and clears it on empty input', () => {
-		const store = new FilesStore(sinkFor());
-		const paths = ['/a/one.txt', '/a/two.txt'];
-		store.cut(paths);
-		expect(store.clipboard).toEqual({ mode: 'cut', paths });
-		expect(store.clipboard?.paths).not.toBe(paths);
-		store.cut([]);
-		expect(store.clipboard).toBeNull();
-		store.cut(paths);
-		store.clearClipboard();
-		expect(store.clipboard).toBeNull();
-	});
 });

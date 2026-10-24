@@ -1,24 +1,22 @@
 import { request } from '../http';
 import { toUiError } from '../errors';
-import type { ClusterInfo, Preflight, Result, Snapshot, StateStats } from '../types';
+import type { ClusterInfo, Result, Snapshot, StateStats } from '../types';
 import type { UiError } from '$lib/ui/types';
 
-export interface NodeRequest {
+export interface JoinConfigRequest {
 	node_id: string;
-	raft_addr: string;
 	api_endpoint: string;
+	cluster_addr: string;
 }
 
-export interface JoinResult {
-	status: 'joined' | 'already_member';
-	leader_id: string | null;
-	replaced: string[];
+export interface JoinConfig {
+	yaml: string;
+	steps: string[];
 }
 
 export interface RemoveResult {
 	status: 'removed';
-	leader_id: string | null;
-	voters_after: number;
+	remaining: number;
 }
 
 export interface TransferResult {
@@ -27,8 +25,8 @@ export interface TransferResult {
 }
 
 export interface SnapshotResult {
-	index: number;
-	term: number;
+	id: string;
+	seq: number;
 	bytes: number;
 	took_ms: number;
 }
@@ -46,26 +44,19 @@ export async function cluster(): Promise<Result<ClusterInfo, UiError>> {
 	return { ok: true, value: response.value.data };
 }
 
-export async function preflight(req: NodeRequest): Promise<Result<Preflight, UiError>> {
-	const response = await request<Preflight>('/v1/admin/cluster/preflight', { method: 'POST', body: req });
+export async function joinConfig(req: JoinConfigRequest): Promise<Result<JoinConfig, UiError>> {
+	const response = await request<JoinConfig>('/v1/admin/cluster/join-config', {
+		query: { node_id: req.node_id, api_endpoint: req.api_endpoint, cluster_addr: req.cluster_addr }
+	});
 	if (!response.ok) {
-		return { ok: false, error: toUiError(response.error, { action: 'cluster.preflight' }) };
+		return { ok: false, error: toUiError(response.error, { action: 'cluster.joinConfig', object: req.node_id }) };
 	}
 	return { ok: true, value: response.value.data };
 }
 
-export async function join(req: NodeRequest): Promise<Result<JoinResult, UiError>> {
-	const response = await request<JoinResult>('/v1/admin/cluster/nodes', { method: 'POST', body: req });
-	if (!response.ok) {
-		return { ok: false, error: toUiError(response.error, { action: 'cluster.join', object: req.node_id }) };
-	}
-	return { ok: true, value: response.value.data };
-}
-
-export async function removeNode(id: string, force = false): Promise<Result<RemoveResult, UiError>> {
+export async function removeNode(id: string): Promise<Result<RemoveResult, UiError>> {
 	const response = await request<RemoveResult>(`/v1/admin/cluster/nodes/${encodeURIComponent(id)}`, {
-		method: 'DELETE',
-		query: { force: true === force ? true : undefined }
+		method: 'DELETE'
 	});
 	if (!response.ok) {
 		return { ok: false, error: toUiError(response.error, { action: 'cluster.remove', object: id }) };

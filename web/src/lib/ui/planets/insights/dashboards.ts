@@ -8,16 +8,12 @@ import type { Annotation, Series, Threshold, Tone, Unit } from '$lib/ui/types';
 
 export const POLL_MS = 10_000;
 
-const PRESET_SECONDS = { '15m': 900, '1h': 3_600, '6h': 21_600, '24h': 86_400, '7d': 604_800 };
-export type RangePreset = keyof typeof PRESET_SECONDS;
-export const DEFAULT_PRESET: RangePreset = '1h';
-const PRESETS: readonly string[] = Object.keys(PRESET_SECONDS);
 const POINT_BUDGET = 240;
 const MIN_STEP_S = 5;
 
 const MEASURES: readonly string[] = ['rate', 'total', 'avg', 'p50', 'p95', 'p99', 'max', 'value'];
 const UNITS: readonly string[] = ['bytes', 'bytes_per_s', 'count', 'per_s', 'ms', 's', 'percent', 'ratio', 'none'];
-const EVENT_TYPES = ['config.changed', 'cluster.leader_changed', 'server.started', 'job.failed'];
+const EVENT_TYPES = ['config.changed', 'cluster.member_joined', 'server.started', 'job.failed'];
 
 const HTTP_REQUESTS = 'callfs_http_requests_total';
 const HTTP_DURATION = 'callfs_http_request_duration_seconds';
@@ -82,30 +78,6 @@ export interface PanelLine {
 export interface StatReading {
 	value: number | null;
 	base?: { num: number; den: number };
-}
-
-const isPreset = (value: string | null): value is RangePreset => null !== value && PRESETS.includes(value);
-
-const wholeSeconds = (raw: string | null): number | null => {
-	if (null === raw) {
-		return null;
-	}
-	const value = Number(raw);
-	return Number.isInteger(value) && 0 < value ? value : null;
-};
-
-export function rangeFromParams(params: URLSearchParams, nowSeconds: number): TimeRange {
-	const live = 'false' !== params.get('live');
-	const preset = params.get('preset');
-	const from = wholeSeconds(params.get('from'));
-	const to = wholeSeconds(params.get('to'));
-	if (isPreset(preset)) {
-		return { from: nowSeconds - PRESET_SECONDS[preset], to: nowSeconds, live };
-	}
-	if (null !== from && null !== to && from < to) {
-		return { from, to, live };
-	}
-	return { from: nowSeconds - PRESET_SECONDS[DEFAULT_PRESET], to: nowSeconds, live };
 }
 
 export function stepFor(range: TimeRange): number {
@@ -264,8 +236,8 @@ export function buildDashboards(): DashboardDefinition[] {
 					chart: 'line',
 					span: 6
 				},
-				{ id: 'index-apply', title: t('dashboards.panel.index.apply_time'), metric: 'callfs_raft_apply_duration_seconds', queries: [query('p95')], unit: 's', thresholds: [], chart: 'line', span: 4 },
-				{ id: 'index-forward', title: t('dashboards.panel.index.forward_time'), metric: 'callfs_raft_forward_duration_seconds', queries: [query('p95', ['result'])], unit: 's', thresholds: [], chart: 'line', span: 4 },
+				{ id: 'index-nats-routes', title: t('storage-insights.dashboard.nats_routes'), metric: 'callfs_nats_routes', queries: [query('value')], unit: 'count', thresholds: [], chart: 'line', span: 4 },
+				{ id: 'index-nats-log', title: t('storage-insights.dashboard.nats_log'), metric: 'callfs_nats_stream_messages', queries: [query('value', ['stream'])], unit: 'count', thresholds: [], chart: 'line', span: 4 },
 				{ id: 'index-cache', title: t('dashboards.panel.index.cache'), metric: 'callfs_cache_lookups_total', queries: [query('rate', ['result'])], unit: 'per_s', thresholds: [], chart: 'stacked', span: 4 }
 			]
 		},

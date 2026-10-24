@@ -1,8 +1,6 @@
 <script lang="ts" module>
 	import type { Unit } from '../types';
 
-	export const TOKENS = ['--stat-tile-label', '--stat-tile-value', '--stat-tile-help'] as const;
-
 	const SUFFIXES: Partial<Record<Unit, string>> = {
 		bytes_per_s: '/s',
 		per_s: '/s',

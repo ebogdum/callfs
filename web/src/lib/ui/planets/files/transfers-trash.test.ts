@@ -16,6 +16,10 @@ const mocks = vi.hoisted(() => ({
 	goto: vi.fn(),
 	store: {
 		items: [] as Transfer[],
+		resumable: [] as { uploadId: string; name: string; size: number }[],
+		resolveConflict: vi.fn(),
+		resumeFrom: vi.fn(),
+		discardResumable: vi.fn(),
 		settings: { parallel: 3, partBytes: 8388608 },
 		pause: vi.fn(),
 		resume: vi.fn(),

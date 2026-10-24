@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--progress-bar-track', '--progress-bar-h', '--progress-bar-fill', '--progress-bar-value-color'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import type { Tone } from '../types';

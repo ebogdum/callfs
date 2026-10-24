@@ -35,7 +35,8 @@ const ME: Me = {
 	auth_method: 'session',
 	session_expires_at: '2030-01-01T00:00:00Z',
 	csrf_token: 'csrf-token',
-	permissions_model: 'owner'
+	permissions_model: 'owner',
+	idle_timeout_seconds: 3600
 };
 
 const CAPABILITIES = {} as Capabilities;

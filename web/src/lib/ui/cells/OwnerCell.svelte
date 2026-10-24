@@ -7,8 +7,6 @@
 	import Tooltip from '../atoms/Tooltip.svelte';
 	import Cluster from '../quarks/Cluster.svelte';
 
-	export const TOKENS = ['--owner-cell-fg', '--owner-cell-font-size'] as const;
-
 	interface Props extends HTMLAttributes<HTMLSpanElement> {
 		value: string;
 	}

@@ -394,7 +394,7 @@
 		]);
 		hub.connection.apiReachable = true === healthResult.ok || 'network' !== healthResult.error.layer;
 		if (true === clusterResult.ok) {
-			noLeader = 'raft' === clusterResult.value.mode && null === clusterResult.value.leader_id;
+			noLeader = 'nats' === clusterResult.value.mode && null === clusterResult.value.leader_id;
 		}
 		if (true === configResult.ok) {
 			restartRequired = true === configResult.value.restart_required;
@@ -770,7 +770,12 @@
 			{/if}
 		</Dock>
 	{/if}
-	<Toaster items={toasts.items} ondismiss={(id) => toasts.dismiss(id)} />
+	<Toaster
+		items={toasts.items}
+		ondismiss={(id) => toasts.dismiss(id)}
+		onpause={(id) => toasts.pause(id)}
+		onresume={(id) => toasts.resume(id)}
+	/>
 	<Drawer bind:open={notificationsOpen} title={t('galaxy.notifications.title')}>
 		<NotificationCenter
 			items={notifications.items}
@@ -858,7 +863,10 @@
 	}
 
 	.crumb-group {
+		min-inline-size: 0;
+		overflow: hidden;
 		color: var(--text-faint);
+		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
@@ -972,9 +980,10 @@
 
 	.account {
 		display: inline-flex;
+		flex: none;
 		align-items: center;
 		gap: var(--space-2);
-		min-inline-size: 0;
+		min-inline-size: max-content;
 		block-size: var(--control-h);
 		padding-inline: var(--space-1) var(--space-2);
 		border: 0;

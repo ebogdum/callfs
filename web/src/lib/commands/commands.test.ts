@@ -251,7 +251,7 @@ describe('visibleNavItems', () => {
 			visibleNavItems('admin', capabilities)
 				.find((item) => 'cluster' === item.id)
 				?.children.map((entry) => entry.id) ?? [];
-		expect(childIds([])).not.toContain('cluster.raft');
-		expect(childIds(['raft'])).toContain('cluster.raft');
+		expect(childIds([])).not.toContain('cluster.replication');
+		expect(childIds(['nats'])).toContain('cluster.replication');
 	});
 });

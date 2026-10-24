@@ -10,6 +10,11 @@ const RESTORE_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000] as const;
 const TICK_MS = 1000;
 const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
 
+function idleMsOf(source: object): number | null {
+	const seconds = (source as { idle_timeout_seconds?: unknown }).idle_timeout_seconds;
+	return 'number' === typeof seconds && 0 < seconds ? seconds * 1000 : null;
+}
+
 export type ExpiryReason = 'idle' | 'expiry' | 'expired';
 
 export interface ExpiryWarning {
@@ -35,9 +40,10 @@ export class SessionStore {
 	csrf = $state<string | null>(null);
 	warning = $state<ExpiryWarning | null>(null);
 	restored = $state(false);
+	expired = $state(false);
 	isAdmin = $derived(null !== this.me && true === this.me.is_admin);
 	readonly #clock: () => number;
-	readonly #idleTimeoutMs: number;
+	#idleTimeoutMs: number;
 	#expiresAt: number | null = null;
 	#lastActivity: number;
 	#reauthRequired = false;
@@ -86,14 +92,17 @@ export class SessionStore {
 			session_expires_at: result.value.expires_at,
 			csrf_token: result.value.csrf_token,
 			permissions_model: 'owner',
+			idle_timeout_seconds: result.value.idle_timeout_seconds,
 		};
-		this.#adopt(me);
+		this.#adopt(me, idleMsOf(result.value));
 		return { ok: true, value: me };
 	}
 
 	async signOut(): Promise<Result<void, UiError>> {
+		const wasExpired = 'expired' === this.warning?.reason;
 		const result = await sessionApi.signOut();
 		this.#clear();
+		this.expired = wasExpired;
 		return result;
 	}
 
@@ -145,12 +154,16 @@ export class SessionStore {
 		this.warning = warningFor(expiryLeftMs, idleLeftMs, this.#reauthRequired);
 	}
 
-	#adopt(me: Me): void {
+	#adopt(me: Me, idleMs: number | null = idleMsOf(me)): void {
+		if (null !== idleMs) {
+			this.#idleTimeoutMs = idleMs;
+		}
 		this.me = me;
 		this.csrf = me.csrf_token;
 		setCsrfToken(me.csrf_token);
 		this.#expiresAt = this.#parseExpiry(me.session_expires_at);
 		this.#reauthRequired = false;
+		this.expired = false;
 		this.#lastActivity = this.#clock();
 		this.#startTimer();
 		this.tick();

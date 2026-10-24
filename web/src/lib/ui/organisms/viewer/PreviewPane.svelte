@@ -40,9 +40,10 @@
 		kind?: PreviewKind;
 		siblings?: PreviewStat[];
 		onnavigate?: (path: string) => void;
+		search?: string;
 	}
 
-	let { stat, src, loadRange, kind, siblings = [], onnavigate, class: className, ...rest }: Props = $props();
+	let { stat, src, loadRange, kind, siblings = [], onnavigate, search, class: className, ...rest }: Props = $props();
 
 	const uid = $props.id();
 	const fromId = `${uid}-from`;
@@ -203,7 +204,7 @@
 			</Stack>
 		</object>
 	{:else if isText}
-		<TextViewer size={stat.size} {loadRange} bind:loaded {wrap} tail={'log' === resolved} />
+		<TextViewer size={stat.size} {loadRange} bind:loaded {wrap} {search} tail={'log' === resolved} />
 	{:else if 'binary' === resolved}
 		<HexViewer size={stat.size} {loadRange} bind:loaded />
 	{:else if 'image' === resolved || 'video' === resolved || 'audio' === resolved}

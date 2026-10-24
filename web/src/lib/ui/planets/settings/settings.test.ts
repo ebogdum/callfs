@@ -26,25 +26,24 @@ vi.mock('$lib/stores/toasts.svelte', () => ({
 }));
 
 const EXPECTED_KEYS = [
-	'server.listen_addr', 'server.protocol', 'server.external_url', 'server.enable_quic', 'server.quic_listen_addr', 'metrics.listen_addr', 'metrics.profiling', 'performance.mode', 'backend.localfs_sync', 'backend.localfs_ack', 'backend.flush_workers', 'backend.flush_max_pending_bytes', 'backend.flush_max_delay',
+	'server.listen_addr', 'server.protocol', 'server.external_url', 'server.enable_quic', 'server.quic_listen_addr', 'metrics.listen_addr', 'metrics.profiling', 'performance.mode', 'backend.localfs_sync', 'backend.localfs_ack', 'backend.localfs_true_overwrite', 'backend.localfs_tmp_save_max_size', 'backend.flush_workers', 'backend.flush_max_pending_bytes', 'backend.flush_max_delay',
 	'server.read_timeout', 'server.write_timeout', 'server.file_op_timeout', 'server.metadata_op_timeout', 'server.metadata_cache_ttl',
 	'dlm.wait_timeout', 'server.rate_limit.download_rps', 'server.rate_limit.download_burst', 'server.rate_limit.link_generate_rps',
 	'server.rate_limit.link_generate_burst', 'server.rate_limit.session_rps', 'server.rate_limit.session_burst', 'ui.session_ttl', 'ui.idle_timeout',
-	'server.cert_file', 'server.key_file', 'backend.internal_proxy_skip_tls_verify', 'auth.internal_proxy_secret', 'auth.single_use_link_secret', 'log_mode',
+	'server.cert_file', 'server.key_file', 'backend.internal_proxy_ca_file', 'backend.internal_proxy_skip_tls_verify', 'auth.internal_proxy_secret', 'auth.single_use_link_secret', 'log_mode',
 	'backend.default_backend', 'backend.localfs_root_path', 'backend.s3_bucket_name', 'backend.s3_region', 'backend.s3_endpoint',
 	'backend.s3_access_key', 'backend.s3_secret_key', 'backend.s3_server_side_encryption', 'backend.s3_kms_key_id', 'backend.s3_acl',
 	'erasure.enabled', 'erasure.data_shards', 'erasure.parity_shards', 'erasure.min_file_size', 'erasure.shard_backend', 'erasure.shard_path',
 	'ha.replication_enabled', 'ha.replica_backend', 'ha.require_replica_success', 'trash.enabled', 'trash.retention',
 	'metadata_store.type', 'metadata_store.dsn', 'metadata_store.sqlite_path', 'metadata_store.redis_addr', 'metadata_store.redis_password',
-	'metadata_store.redis_db', 'metadata_store.redis_key_prefix', 'raft.enabled', 'raft.node_id', 'raft.bind_addr', 'raft.data_dir',
-	'raft.bootstrap', 'raft.peers', 'raft.api_peer_endpoints', 'raft.apply_timeout', 'raft.forward_timeout', 'raft.snapshot_interval',
-	'raft.snapshot_threshold', 'raft.retain_snapshot_count', 'instance_discovery.instance_id', 'instance_discovery.peer_endpoints',
+	'metadata_store.redis_db', 'metadata_store.redis_key_prefix', 'instance_discovery.instance_id', 'instance_discovery.peer_endpoints',
 	'dlm.type', 'dlm.redis_addr', 'dlm.redis_password', 'log.level', 'log.format', 'ui.log_buffer_entries', 'ui.audit_buffer_entries',
 	'ui.event_buffer_entries', 'ui.metrics_sample_interval', 'ui.metrics_retention', 'ui.enabled', 'ui.allow_remote_restart',
+	'nats.metadata.replicas', 'nats.metadata.apply_timeout', 'nats.metadata.read_barrier', 'nats.metadata.miss_barrier', 'nats.metadata.max_msg_size', 'nats.metadata.snapshot_interval', 'nats.metadata.snapshot_every', 'nats.metadata.retain_commands', 'nats.metadata.retain_snapshots', 'nats.enabled', 'nats.mode', 'nats.server_name', 'nats.cluster_name', 'nats.server_tags', 'nats.client_listen', 'nats.cluster_listen', 'nats.routes', 'nats.routes_from_peers', 'nats.monitor_listen', 'nats.tls.cert_file', 'nats.tls.key_file', 'nats.tls.ca_file', 'nats.tls.client_cert_file', 'nats.tls.client_key_file', 'nats.auth.mode', 'nats.auth.nkey_seed_file', 'nats.auth.creds_file', 'nats.auth.previous_secret', 'nats.jetstream.store_dir', 'nats.jetstream.max_memory', 'nats.jetstream.max_store', 'nats.jetstream.sync', 'nats.jetstream.sync_interval', 'nats.jetstream.unique_tag', 'nats.external.urls', 'nats.external.js_domain', 'nats.external.tls_ca_file', 'nats.locks.replicas', 'nats.locks.ttl', 'nats.locks.queue_stale', 'nats.streams.replicas', 'nats.streams.events_max_age', 'nats.streams.events_max_bytes', 'nats.streams.audit_max_age', 'nats.streams.logs_level', 'nats.streams.logs_max_age', 'nats.streams.tasks_max_deliver', 'nats.streams.tasks_backoff', 'nats.streams.dlq_max_age', 'nats.rpc_timeout', 'nats.bytes', 'nats.counters',
 	'auth.api_key_users', 'auth.api_keys', 'auth.admin_users'
 ];
 
-const RESTART_KEYS = ['server.listen_addr', 'raft.bootstrap', 'metadata_store.type'];
+const RESTART_KEYS = ['server.listen_addr', 'nats.enabled', 'metadata_store.type'];
 const RUNTIME_KEYS = ['log.level', 'trash.enabled', 'server.metadata_cache_ttl'];
 
 function configView(pending: string[] = []): ConfigView {
@@ -71,10 +70,10 @@ function entryOf(key: string): SettingsEntry {
 }
 
 describe('settings map', () => {
-	it('maps all 89 config keys and env rows exactly once', () => {
+	it('maps all config keys and env rows exactly once', () => {
 		const keys = SETTINGS_MAP.map((entry) => entry.key);
-		expect(keys).toHaveLength(90);
-		expect(new Set(keys).size).toBe(90);
+		expect(keys).toHaveLength(133);
+		expect(new Set(keys).size).toBe(133);
 		expect([...keys].sort()).toEqual([...EXPECTED_KEYS].sort());
 	});
 
@@ -96,11 +95,26 @@ describe('settings map', () => {
 		}
 	});
 
+	it('gives every enum option a label that resolves', () => {
+		for (const entry of SETTINGS_MAP) {
+			for (const option of entry.options ?? []) {
+				const key = `settings.option.${entry.key}.${option}`;
+				expect(t(key)).not.toBe(key);
+			}
+		}
+	});
+
 	it('splits rows across the seven groups and the access page', () => {
 		const groups = ['network', 'limits', 'security', 'storage', 'index', 'coordination', 'logging'] as const;
 		const grouped = groups.flatMap((group) => entriesFor(group).map((entry) => entry.key));
-		expect(grouped).toHaveLength(87);
+		expect(grouped).toHaveLength(130);
 		expect(entriesFor('network').map((entry) => entry.key)).toContain('metrics.listen_addr');
+	});
+
+	it('has copy for every zero label row', () => {
+		for (const entry of SETTINGS_MAP.filter((item) => item.zeroLabel)) {
+			expect(t(`settings.zero.${entry.key}`)).not.toBe(`settings.zero.${entry.key}`);
+		}
 	});
 });
 
@@ -124,11 +138,11 @@ describe('row metadata', () => {
 
 	it('describes values in words', () => {
 		expect(describeValue(entryOf('log.level'), 'debug', false)).toBe(t('settings.option.log.level.debug'));
-		expect(describeValue(entryOf('server.read_timeout'), '0s', false)).toBe('No limit');
+		expect(describeValue(entryOf('server.metadata_cache_ttl'), '0s', false)).toBe('Off');
 		expect(describeValue(entryOf('auth.internal_proxy_secret'), null, true)).toBe('Set');
 		expect(describeValue(entryOf('auth.internal_proxy_secret'), null, false)).toBe('Not set');
 		expect(describeValue(entryOf('ha.replication_enabled'), true, false)).toBe('On');
-		expect(describeValue(entryOf('raft.peers'), { a: 'x', b: 'y' }, false)).toBe(t('settings.value.count', { count: 2 }));
+		expect(describeValue(entryOf('instance_discovery.peer_endpoints'), { a: 'x', b: 'y' }, false)).toBe(t('settings.value.count', { count: 2 }));
 	});
 
 	it('applies risk rules to the current value', () => {
@@ -226,9 +240,9 @@ describe('settings draft', () => {
 		const draft = new SettingsDraft();
 		draft.load(snapshotOf());
 		await draft.setValue(entryOf('server.read_timeout'), '2m');
-		draft.stage(entryOf('raft.bootstrap'), true);
+		draft.stage(entryOf('nats.enabled'), true);
 		draft.discard(['server.read_timeout']);
-		expect(draft.dirtyKeys).toEqual(['raft.bootstrap']);
+		expect(draft.dirtyKeys).toEqual(['nats.enabled']);
 	});
 });
 
@@ -254,5 +268,13 @@ describe('SettingsGroupPlanet', () => {
 	it('shows the empty state for an unknown group', async () => {
 		render(SettingsGroupPlanet, { props: { group: 'nope' } });
 		expect(await screen.findByText(t('settings.unknown.title'))).toBeTruthy();
+	});
+});
+
+describe('optional size settings', () => {
+	it('shows no limit when the temp save size is unset and 1 byte as the minimum', () => {
+		const entry = entryOf('backend.localfs_tmp_save_max_size');
+		expect(describeValue(entry, null, false)).toBe(t('settings.unset.backend.localfs_tmp_save_max_size'));
+		expect(metaFor(entry, undefined, null, null, null)).toMatchObject({ optional: true, min: 1 });
 	});
 });

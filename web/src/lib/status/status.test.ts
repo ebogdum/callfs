@@ -7,7 +7,7 @@ const STATUS_TONES: readonly string[] = ['neutral', 'accent', 'ok', 'warn', 'dan
 
 const EXPECTED_KEYS: StatusKey[] = [
 	'health.ok', 'health.warn', 'health.down', 'health.disabled', 'health.unknown', 'health.checking',
-	'member.leader', 'member.follower', 'member.candidate', 'member.shutdown', 'member.unreachable', 'member.lagging',
+	'member.leader', 'member.follower', 'member.shutdown', 'member.unreachable', 'member.lagging',
 	'server.up', 'server.down', 'server.self', 'server.unknown',
 	'quorum.ok', 'quorum.at_risk', 'quorum.lost',
 	'link.active', 'link.used', 'link.expired', 'link.revoked',

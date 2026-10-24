@@ -5,7 +5,7 @@
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import { t } from '$lib/copy/t';
-	import { isValidMode, modeToSymbolic } from '$lib/format/mode';
+	import { isValidMode, modeToSymbolic, symbolicToMode } from '$lib/format/mode';
 	import Checkbox from '../atoms/Checkbox.svelte';
 	import FieldError from '../atoms/FieldError.svelte';
 	import Input from '../atoms/Input.svelte';
@@ -38,6 +38,20 @@
 	const valid = $derived(isValidMode(value));
 	const digits = $derived(valid ? Array.from(value.slice(-3), (char) => Number(char)) : [0, 0, 0]);
 	const symbolic = $derived(modeToSymbolic(value));
+	let typed = $state<string | null>(null);
+	const symbolicInputId = `${idPrefix}-symbolic`;
+	const symbolicErrorId = `${idPrefix}-symbolic-error`;
+	const symbolicShown = $derived(typed ?? (symbolic.ok ? symbolic.value : ''));
+	const symbolicInvalid = $derived(null !== typed && !symbolicToMode(typed, valid ? value : '000').ok);
+
+	function setSymbolic(next: string): void {
+		typed = next;
+		const parsed = symbolicToMode(next, valid ? value : '000');
+		if (parsed.ok) {
+			const prefix = valid && 4 === value.length ? value.charAt(0) : '';
+			value = `${prefix}${parsed.value.slice(1)}`;
+		}
+	}
 
 	function isChecked(roleIndex: number, weight: number): boolean {
 		return 0 !== (digits[roleIndex] & weight);
@@ -91,7 +105,19 @@
 			{#if false === valid}
 				<FieldError id={errorId} message={t('editors.octal.invalid')} />
 			{/if}
-			<Text mono tabular>{symbolic.ok ? symbolic.value : ''}</Text>
+			<Label for={symbolicInputId}>{t('editors.octal.symbolic_label')}</Label>
+			<Input
+				id={symbolicInputId}
+				mono
+				autocomplete="off"
+				invalid={symbolicInvalid}
+				aria-describedby={symbolicInvalid ? symbolicErrorId : undefined}
+				onblur={() => (typed = null)}
+				bind:value={() => symbolicShown, setSymbolic}
+			/>
+			{#if symbolicInvalid}
+				<FieldError id={symbolicErrorId} message={t('editors.octal.symbolic_invalid')} />
+			{/if}
 		</Stack>
 	</fieldset>
 </div>

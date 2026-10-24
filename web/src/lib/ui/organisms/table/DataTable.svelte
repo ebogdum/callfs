@@ -62,6 +62,8 @@
 		rowInline?: (row: T) => MenuItem[];
 		empty: Snippet;
 		toolbar?: Snippet;
+		search?: Snippet;
+		filters?: Snippet;
 		footer?: Snippet;
 		stickyHeader?: boolean;
 		freezeFirst?: boolean;
@@ -94,6 +96,8 @@
 		rowInline,
 		empty,
 		toolbar,
+		search,
+		filters,
 		footer,
 		stickyHeader = true,
 		freezeFirst = true,
@@ -372,13 +376,15 @@
 {/snippet}
 
 <div class={['data-table', className]} data-density={density} data-state={status} {...rest}>
-	{#if (controls && !narrow) || undefined !== onexport || undefined !== toolbar}
+	{#if (controls && !narrow) || undefined !== onexport || undefined !== toolbar || undefined !== search || undefined !== filters}
 		<TableToolbar
 			columns={columns as ColumnDef<unknown>[]}
 			bind:visible
 			bind:order
 			bind:density
 			{onexport}
+			{search}
+			{filters}
 			extra={toolbar}
 			controls={controls && !narrow}
 		/>
@@ -396,17 +402,17 @@
 		</div>
 	{/if}
 
-	{#if 'error' === status && 0 < rows.length}
+	{#if false === narrow && 'error' === status && 0 < rows.length}
 		<InlineAlert tone="danger" title={errorView.title} body={errorView.body} />
 	{/if}
-	{#if 'partial' === status}
+	{#if false === narrow && 'partial' === status}
 		<InlineAlert tone="warn" title={t('datatable.partial')} body={t('datatable.partialBody')} />
 	{/if}
 
 	{#if narrow}
 		<TableCardView
 			{rows}
-			columns={columns}
+			columns={visibleColumns}
 			{rowKey}
 			{label}
 			{status}

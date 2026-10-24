@@ -51,3 +51,7 @@ export function t(key: CopyKey, params: CopyParams = {}): string {
 	}
 	return applyPlaceholders(applyPlurals(dictionary[key], params), params);
 }
+
+export function hasCopy(key: string): key is CopyKey {
+	return Object.hasOwn(dictionary, key);
+}

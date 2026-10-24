@@ -58,6 +58,7 @@
 	let intervalMs = $state(HEALTHY_CHECK_MS);
 	let retryStep = 0;
 	let timer: ReturnType<typeof setTimeout> | null = null;
+	let disposed = false;
 
 	const connection = new LiveConnection({ onPause: stopTimer, onResume: retryNow });
 
@@ -78,10 +79,7 @@
 		if (isNetworkFailure(healthResult) || isNetworkFailure(clusterResult)) {
 			return 'unreachable';
 		}
-		if (false === clusterResult.ok && 'leader' === clusterResult.error.layer) {
-			return 'no-leader';
-		}
-		if (true === clusterResult.ok && 'raft' === clusterResult.value.mode && null === clusterResult.value.leader_id) {
+		if (true === clusterResult.ok && 'nats' === clusterResult.value.mode && null === clusterResult.value.leader_id) {
 			return 'no-leader';
 		}
 		if (true === healthResult.ok && 'down' === healthResult.value.status) {
@@ -96,6 +94,9 @@
 
 	async function check(): Promise<void> {
 		const next = 'admin' === role ? await probeAdmin() : await probeMember();
+		if (disposed) {
+			return;
+		}
 		checkedAt = Date.now();
 		if (null === next) {
 			probedCause = null;
@@ -140,9 +141,11 @@
 	}
 
 	$effect(() => {
+		disposed = false;
 		const stopWatching = connection.watch();
 		void untrack(check);
 		return (): void => {
+			disposed = true;
 			stopWatching();
 			stopTimer();
 		};

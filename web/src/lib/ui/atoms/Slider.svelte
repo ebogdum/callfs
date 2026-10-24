@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--slider-track', '--slider-range', '--slider-thumb', '--slider-thumb-size'] as const;
-</script>
-
 <script lang="ts">
 	import { Slider } from 'bits-ui';
 

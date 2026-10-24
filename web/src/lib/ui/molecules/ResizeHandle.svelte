@@ -1,8 +1,6 @@
 <script lang="ts" module>
 	export type ResizeOrientation = 'horizontal' | 'vertical';
 
-	export const TOKENS = ['--resize-handle-size', '--resize-handle-color', '--resize-handle-active-color'] as const;
-
 	const KEY_STEP = 16;
 </script>
 

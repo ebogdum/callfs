@@ -24,9 +24,12 @@
 		step?: number;
 		unit?: string;
 		isSet?: boolean;
+		optional?: boolean;
+		limitLabel?: string;
 	}
 
 	const OWN_HELP_TYPES: SettingType[] = ['bool', 'enum', 'number', 'text', 'map'];
+	const OPTIONAL_SIZE_START = 64 * 1024 * 1024;
 
 	const SOURCE_COPY: Record<SettingSource, string> = {
 		default: 'settingsui.source.default',
@@ -164,7 +167,12 @@
 				{/snippet}
 			</FormField>
 		{:else if 'duration' === meta.type}
-			<DurationInput label={meta.label} bind:value={asText, setDraft} />
+			<DurationInput label={meta.label} min={'number' === typeof meta.min ? `${meta.min}s` : undefined} bind:value={asText, setDraft} />
+		{:else if 'size' === meta.type && meta.optional}
+			<Switch checked={null !== draft && undefined !== draft} label={meta.limitLabel ?? meta.label} onchange={(on: boolean) => setDraft(on ? OPTIONAL_SIZE_START : null)} />
+			{#if null !== draft && undefined !== draft}
+				<SizeInput label={meta.label} bind:value={asBytes, setDraft} />
+			{/if}
 		{:else if 'size' === meta.type}
 			<SizeInput label={meta.label} bind:value={asBytes, setDraft} />
 		{:else if 'secret' === meta.type}

@@ -5,7 +5,6 @@
 	import type { Unit } from '../types';
 
 	export type DeltaGoodWhen = 'up' | 'down' | 'none';
-	export const TOKENS = ['--delta-ok', '--delta-danger', '--delta-neutral', '--delta-gap'] as const;
 
 	type Direction = 'up' | 'down' | 'flat';
 	type Tone = 'ok' | 'danger' | 'neutral';

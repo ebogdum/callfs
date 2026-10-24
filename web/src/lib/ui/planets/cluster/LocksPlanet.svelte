@@ -76,7 +76,9 @@
 	);
 
 	function typeWord(type: string): string {
-		return 'redis' === type ? t('runtime.locks.type.redis') : t('runtime.locks.type.local');
+		if ('redis' === type) return t('runtime.locks.type.redis');
+		if ('nats' === type) return t('runtime.locks.type.nats');
+		return t('runtime.locks.type.local');
 	}
 
 	function heldMs(lock: LockRow): number {
@@ -226,7 +228,7 @@
 				>
 					{#snippet toolbar()}
 						<div class="filter">
-							<PathInput bind:value={filter} label={t('runtime.locks.filter')} onsubmit={applyFilter} />
+							<PathInput bind:value={filter} label={t('runtime.locks.filter')} placeholder={t('runtime.locks.filter.placeholder')} onsubmit={applyFilter} />
 						</div>
 					{/snippet}
 					{#snippet empty()}

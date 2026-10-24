@@ -8,6 +8,7 @@ export interface SessionGrant {
 	is_admin: boolean;
 	expires_at: string;
 	csrf_token: string;
+	idle_timeout_seconds: number;
 }
 
 export interface JobQuery {

@@ -18,7 +18,6 @@
 	import Skeleton from '$lib/ui/atoms/Skeleton.svelte';
 	import BytesCell from '$lib/ui/cells/BytesCell.svelte';
 	import CountCell from '$lib/ui/cells/CountCell.svelte';
-	import PathCell from '$lib/ui/cells/PathCell.svelte';
 	import TextCell from '$lib/ui/cells/TextCell.svelte';
 	import TimeCell from '$lib/ui/cells/TimeCell.svelte';
 	import PageFrame from '$lib/ui/environments/PageFrame.svelte';
@@ -99,7 +98,7 @@
 	const rows = $derived([...firstItems, ...pages.items]);
 	const nextCursor = $derived(undefined === pages.cursor ? firstNextCursor : pages.cursor);
 	const partialFiles = $derived(rows.some((row) => null === row.healthy_shards));
-	const tableStatus = $derived(filesStatusOf(filesResult, filesQuery.status, rows.length, partialFiles || null !== moreError));
+	const tableStatus = $derived(filesStatusOf(filesResult, filesQuery.status, rows.length, null !== moreError));
 
 	const planQuery = createQuery<Result<PlacementPlan, UiError>>(() => {
 		const data = planData;
@@ -125,7 +124,7 @@
 						value: summary.health.ok,
 						unit: 'count',
 						base: { num: summary.health.ok, den: summary.files },
-						status: 'durability.full',
+						status: 0 < summary.files && summary.health.ok === summary.files ? 'durability.full' : undefined,
 						href: `${base}/cluster/durability?health=ok`
 					},
 					{
@@ -139,7 +138,7 @@
 						label: t('durability.kpi.unreadable'),
 						value: summary.health.unreadable,
 						unit: 'count',
-						status: 0 < summary.health.unreadable ? 'durability.unreadable' : 'durability.full',
+						status: 0 < summary.health.unreadable ? 'durability.unreadable' : undefined,
 						href: `${base}/cluster/durability?health=unreadable`
 					}
 				]
@@ -156,12 +155,12 @@
 	});
 
 	const columns = $derived<ColumnDef<SplitFile>[]>([
-		{ id: 'path', header: t('durability.col.path'), cell: pathCell },
+		{ id: 'path', header: t('durability.col.path'), cell: pathCell, width: 240 },
 		{ id: 'size', header: t('durability.col.size'), cell: sizeCell, align: 'end' },
 		{ id: 'layout', header: t('durability.col.layout'), cell: layoutCell },
 		{ id: 'pieces', header: t('durability.col.pieces'), cell: piecesCell, align: 'end' },
 		{ id: 'protection', header: t('durability.col.protection'), cell: protectionCell },
-		{ id: 'checked', header: t('durability.col.checked'), cell: checkedCell }
+		{ id: 'checked', header: t('durability.col.checked'), cell: checkedCell, width: 140 }
 	]);
 
 	$effect(() => {
@@ -197,11 +196,11 @@
 		return partial ? 'partial' : 'success';
 	}
 
-	function lessProtectedStatus(current: ErasureSummary): StatusKey {
+	function lessProtectedStatus(current: ErasureSummary): StatusKey | undefined {
 		if (0 < current.health.critical) {
 			return 'durability.critical';
 		}
-		return 0 < current.health.reduced ? 'durability.reduced' : 'durability.full';
+		return 0 < current.health.reduced ? 'durability.reduced' : undefined;
 	}
 
 	async function loadPlan(
@@ -222,16 +221,21 @@
 			return;
 		}
 		loadingMore = true;
+		const requestedKey = filterKey;
+		const loadedItems = pages.items;
 		const response = await listSplitFiles({ health: healthFilter ?? undefined, limit: PAGE_SIZE }, cursor);
 		loadingMore = false;
+		if (requestedKey !== filterKey) {
+			return;
+		}
 		if (!response.ok) {
 			moreError = response.error;
 			return;
 		}
 		moreError = null;
 		extra = {
-			key: filterKey,
-			items: [...pages.items, ...response.value.items],
+			key: requestedKey,
+			items: [...loadedItems, ...response.value.items],
 			cursor: response.value.next_cursor
 		};
 	}
@@ -299,7 +303,9 @@
 </script>
 
 {#snippet pathCell(row: SplitFile)}
-	<PathCell path={row.path} href={detailHref(row.path)} />
+	<Link href={detailHref(row.path)}>
+		<span class="path-wrap" title={row.path}>{#each row.path.split('/') as part, index (index)}{#if 0 < index}/<wbr />{/if}{part}{/each}</span>
+	</Link>
 {/snippet}
 
 {#snippet sizeCell(row: SplitFile)}
@@ -409,9 +415,16 @@
 </PageFrame>
 
 <style>
+	.path-wrap {
+		font-family: var(--font-mono);
+		font-size: var(--table-text);
+		overflow-wrap: anywhere;
+	}
+
 	.cards {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-4) * 22)), 1fr));
+		align-items: start;
 		gap: var(--space-4);
 	}
 </style>

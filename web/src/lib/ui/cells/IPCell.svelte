@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--ip-cell-fg', '--ip-cell-empty-fg'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import { t } from '$lib/copy/t';

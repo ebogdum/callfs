@@ -6,8 +6,6 @@
 		recommended?: boolean;
 		disabledReason?: string;
 	}
-
-	export const TOKENS = ['--radio-group-gap', '--radio-group-label-fg'] as const;
 </script>
 
 <script lang="ts">

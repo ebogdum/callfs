@@ -79,7 +79,9 @@
 	});
 
 	const usersResult = $derived(usersQuery.data);
-	const userRows = $derived(true === usersResult?.ok ? usersResult.value.items : []);
+	const userRows = $derived(
+		true === usersResult?.ok ? usersResult.value.items.filter((user) => 'reserved' !== user.source) : []
+	);
 	const usersError = $derived.by((): UiError | null =>
 		false === usersResult?.ok ? toUiError(usersResult.error, { action: 'logs.signins.keys.read' }) : null
 	);
@@ -107,8 +109,8 @@
 
 	const failuresLoading = $derived(undefined === failuresResult && null === failuresQuery.error);
 	const usersLoading = $derived(undefined === usersResult && null === usersQuery.error);
-	const failuresReason = $derived((failuresError ?? failuresQuery.error)?.title);
-	const usersReason = $derived((usersError ?? usersQuery.error)?.title);
+	const failuresReason = $derived(null === failuresError ? failuresQuery.error?.title : undefined);
+	const usersReason = $derived(null === usersError ? usersQuery.error?.title : undefined);
 
 	const tiles = $derived.by((): Tile[] => [
 		{

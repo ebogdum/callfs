@@ -14,9 +14,5 @@ export default {
 	'u080molecules.scope.server': 'Server {server}',
 	'u080molecules.scope.member': 'Member {member}',
 	'u080molecules.scope.leader': 'Leader',
-	'u080molecules.scope.separator': '·',
-	'u080molecules.theme.group': 'Theme',
-	'u080molecules.theme.system': 'System',
-	'u080molecules.theme.light': 'Light',
-	'u080molecules.theme.dark': 'Dark'
+	'u080molecules.scope.separator': '·'
 };

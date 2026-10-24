@@ -12,7 +12,7 @@ export default {
 	'durability.plan.settings': 'Change split storage settings',
 	'durability.table.label': 'Split files',
 	'durability.table.empty.title': 'No split files yet.',
-	'durability.table.empty.body': 'Files are split when they are saved and are larger than the size set in storage settings.',
+	'durability.table.empty.body': 'Files are split when an upload asks for it or is at least the split size set in storage settings.',
 	'durability.col.path': 'Path',
 	'durability.col.size': 'Size',
 	'durability.col.layout': 'Layout',

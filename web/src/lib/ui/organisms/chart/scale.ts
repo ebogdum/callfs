@@ -6,12 +6,6 @@ export interface Scale {
 	ticks(count: number): number[];
 }
 
-export interface BandScale {
-	readonly count: number;
-	readonly bandwidth: number;
-	start(index: number): number;
-}
-
 export interface PlotBox {
 	left: number;
 	top: number;
@@ -29,8 +23,6 @@ export const PLOT_TOP = 8;
 export const DEFAULT_RIGHT_INSET = 16;
 
 const MIN_SAMPLES = 3;
-const MIN_LOG_VALUE = 1e-9;
-const BAND_PADDING = 0.2;
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -69,6 +61,8 @@ const niceStep = (span: number, count: number): number => {
 	if (Math.SQRT2 <= normalized) return 2 * magnitude;
 	return magnitude;
 };
+
+export const tickDigits = (step: number): number => Math.min(6, Math.max(0, Math.ceil(-Math.log10(step) - 1e-9)));
 
 export const niceTicks = (min: number, max: number, count: number): number[] => {
 	if (max <= min) return [min];
@@ -109,31 +103,6 @@ export const timeScale = (domain: readonly [number, number], range: readonly [nu
 		...base,
 		ticks: (count) =>
 			timeTicks(base.domain[0] * msPerUnit, base.domain[1] * msPerUnit, count).map((tick) => tick / msPerUnit)
-	};
-};
-
-export const logScale = (domain: readonly [number, number], range: readonly [number, number]): Scale => {
-	const low = Math.max(domain[0], MIN_LOG_VALUE);
-	const high = Math.max(domain[1], low * 10);
-	const exponents = linearScale([Math.log10(low), Math.log10(high)], range);
-	return {
-		domain: [low, high],
-		range,
-		apply: (value) => exponents.apply(Math.log10(Math.max(value, low))),
-		invert: (position) => 10 ** exponents.invert(position),
-		ticks: () =>
-			ticksWithin(Math.ceil(Math.log10(low)), Math.floor(Math.log10(high)), 1).map((exponent) => 10 ** exponent)
-	};
-};
-
-export const bandScale = (count: number, range: readonly [number, number], padding = BAND_PADDING): BandScale => {
-	const span = range[1] - range[0];
-	const step = 0 < count ? span / count : span;
-	const bandwidth = step * (1 - padding);
-	return {
-		count,
-		bandwidth,
-		start: (index) => range[0] + index * step + (step - bandwidth) / 2
 	};
 };
 

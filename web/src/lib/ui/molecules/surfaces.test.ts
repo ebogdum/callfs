@@ -13,6 +13,25 @@ afterEach(() => {
 
 const fileNamed = (name: string, type = '', size = 'x'): File => new File([size], name, { type });
 
+const folderEntry = {
+	isDirectory: true,
+	isFile: false,
+	createReader: () => {
+		let served = false;
+		return {
+			readEntries: (done: (entries: unknown[]) => void) => {
+				const entries = served
+					? []
+					: [{ isDirectory: false, isFile: true, fullPath: '/docs/inside.txt', file: (ok: (file: File) => void) => ok(insideFile) }];
+				served = true;
+				done(entries);
+			},
+		};
+	},
+};
+
+const insideFile = new File(['x'], 'inside.txt', { type: 'text/plain' });
+
 const transferOf = (files: File[], directories = 0): DataTransfer =>
 	({
 		types: ['Files'],
@@ -26,7 +45,7 @@ const transferOf = (files: File[], directories = 0): DataTransfer =>
 			...Array.from({ length: directories }, () => ({
 				kind: 'file',
 				getAsFile: () => null,
-				webkitGetAsEntry: () => ({ isDirectory: true }),
+				webkitGetAsEntry: () => folderEntry,
 			})),
 		],
 	}) as unknown as DataTransfer;
@@ -122,9 +141,9 @@ describe('DropZone', () => {
 		const onfiles = vi.fn();
 		render(DropZone, { props: { ...dropZoneProps, onfiles } });
 		const region = screen.getByRole('region', { name: 'Upload to /team' });
-		const file = fileNamed('inside.txt', 'text/plain');
-		await fireEvent.drop(region, { dataTransfer: transferOf([file], 1) });
-		expect(onfiles).toHaveBeenCalledWith([file], true);
+		await fireEvent.drop(region, { dataTransfer: transferOf([], 1) });
+		await vi.waitFor(() => expect(onfiles).toHaveBeenCalledWith([insideFile], true));
+		expect(insideFile.webkitRelativePath).toBe('docs/inside.txt');
 	});
 
 	it('shows the drop highlight while files are dragged over and clears it on leave', async () => {

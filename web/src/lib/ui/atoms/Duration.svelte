@@ -1,6 +1,5 @@
 <script lang="ts" module>
 	export type DurationDisplay = 'long' | 'short';
-	export const TOKENS = ['--duration-color'] as const;
 </script>
 
 <script lang="ts">

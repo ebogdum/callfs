@@ -48,17 +48,17 @@
 		leader: boolean;
 		instanceId: string | null;
 		role: string;
-		address: string;
 		serverAddress: string;
-		lastContactMs: number | null;
+		lastSeenMs: number | null;
 		behindBy: number | null;
 		x: number;
 		y: number;
+		below: boolean;
 	}
 
 	interface TopologyLink {
 		key: string;
-		kind: 'forward' | 'serves';
+		kind: 'forward';
 		x1: number;
 		y1: number;
 		x2: number;
@@ -67,19 +67,16 @@
 
 	const VIEW_SIZE = 480;
 	const CENTER = 240;
-	const MEMBER_RADIUS = 104;
-	const SERVER_RADIUS = 200;
+	const RING_RADIUS = 150;
 	const NODE_RADIUS = 24;
-	const LABEL_OFFSET = 40;
+	const LABEL_GAP = 20;
 	const LABEL_LINE = 14;
 	const CROWN_OFFSET = 8;
 
 	const MEMBER_STATUS: Record<ClusterMember['state'], StatusKey> = {
 		leader: 'member.leader',
 		follower: 'member.follower',
-		candidate: 'member.candidate',
-		shutdown: 'member.shutdown',
-		unreachable: 'member.unreachable'
+		offline: 'member.unreachable'
 	};
 
 	const GLYPHS: Record<Tone, string> = {
@@ -135,11 +132,36 @@
 		return 'danger';
 	}
 
+	const DISK_USED_WARN = 0.8;
+	const DISK_USED_DANGER = 0.9;
+
+	function diskTone(usedShare: number | null): Tone {
+		if (null === usedShare) {
+			return 'neutral';
+		}
+		if (DISK_USED_WARN > usedShare) {
+			return 'ok';
+		}
+		if (DISK_USED_DANGER > usedShare) {
+			return 'warn';
+		}
+		return 'danger';
+	}
+
+	function diskUsedShareOf(instanceId: string | null): number | null {
+		const server = servers.find((candidate) => candidate.instance_id === instanceId);
+		if (undefined === server || null === server.disk_total_bytes || null === server.disk_free_bytes || 0 >= server.disk_total_bytes) {
+			return null;
+		}
+		return 1 - server.disk_free_bytes / server.disk_total_bytes;
+	}
+
 	function nodeTone(
 		mode: TopologyColorBy,
 		status: StatusKey,
 		latencyMs: number | null,
-		behindBy: number | null
+		behindBy: number | null,
+		diskUsedShare: number | null
 	): Tone {
 		if ('latency' === mode) {
 			return latencyTone(latencyMs);
@@ -148,25 +170,34 @@
 			return lagTone(behindBy);
 		}
 		if ('disk' === mode) {
-			return 'neutral';
+			return diskTone(diskUsedShare);
 		}
 		return toneOf(status);
 	}
 
-	function ringPoint(index: number, count: number, radius: number): { x: number; y: number } {
+	function ringPoint(index: number, count: number): { x: number; y: number; below: boolean } {
+		if (1 === count) {
+			return { x: CENTER, y: CENTER, below: true };
+		}
 		const angle = -Math.PI / 2 + (2 * Math.PI * index) / count;
+		const y = CENTER + RING_RADIUS * Math.sin(angle);
 		return {
-			x: CENTER + radius * Math.cos(angle),
-			y: CENTER + radius * Math.sin(angle)
+			x: CENTER + RING_RADIUS * Math.cos(angle),
+			y,
+			below: CENTER <= y
 		};
 	}
 
 	const nodes = $derived.by((): TopologyNode[] => {
+		const memberInstances = new Set(members.flatMap((member) => (null === member.instance_id ? [] : [member.instance_id])));
+		const loneServers = servers.filter((server) => false === memberInstances.has(server.instance_id));
+		const total = members.length + loneServers.length;
 		const memberNodes = members.map((member, index): TopologyNode => {
-			const point = ringPoint(index, members.length, MEMBER_RADIUS);
+			const point = ringPoint(index, total);
 			const status = MEMBER_STATUS[member.state];
-			const tone = nodeTone(colorBy, status, member.last_contact_ms, member.behind_by);
+			const tone = nodeTone(colorBy, status, member.last_seen_ms, member.behind_by, diskUsedShareOf(member.instance_id));
 			const leader = 'leader' === member.state;
+			const server = servers.find((candidate) => candidate.instance_id === member.instance_id);
 			return {
 				id: `member:${member.node_id}`,
 				kind: 'member',
@@ -177,23 +208,19 @@
 				glyph: GLYPHS[tone],
 				leader,
 				instanceId: member.instance_id,
-				role: leader
-					? t('status.member.leader')
-					: 'voter' === member.suffrage
-						? t('topology.role.voter')
-						: t('topology.role.nonvoter'),
-				address: member.raft_addr,
-				serverAddress: member.api_endpoint,
-				lastContactMs: member.last_contact_ms,
+				role: leader ? t('status.member.leader') : t('topology.member.role_member'),
+				serverAddress: member.api_endpoint ?? server?.endpoint ?? '',
+				lastSeenMs: member.last_seen_ms,
 				behindBy: member.behind_by,
 				x: point.x,
-				y: point.y
+				y: point.y,
+				below: point.below
 			};
 		});
-		const serverNodes = servers.map((server, index): TopologyNode => {
-			const point = ringPoint(index, servers.length, SERVER_RADIUS);
+		const serverNodes = loneServers.map((server, index): TopologyNode => {
+			const point = ringPoint(members.length + index, total);
 			const status = serverStatus(server);
-			const tone = nodeTone(colorBy, status, server.rtt_ms, null);
+			const tone = nodeTone(colorBy, status, server.rtt_ms, null, diskUsedShareOf(server.instance_id));
 			return {
 				id: `server:${server.instance_id}`,
 				kind: 'server',
@@ -205,12 +232,12 @@
 				leader: false,
 				instanceId: server.instance_id,
 				role: t('topology.role.server'),
-				address: server.instance_id,
 				serverAddress: server.endpoint,
-				lastContactMs: null,
+				lastSeenMs: null,
 				behindBy: null,
 				x: point.x,
-				y: point.y
+				y: point.y,
+				below: point.below
 			};
 		});
 		return [...memberNodes, ...serverNodes];
@@ -218,39 +245,19 @@
 
 	const links = $derived.by((): TopologyLink[] => {
 		const leaderNode = nodes.find((node) => node.leader);
-		const result: TopologyLink[] = [];
-		for (const node of nodes) {
-			if ('member' !== node.kind) {
-				continue;
-			}
-			if (undefined !== leaderNode && false === node.leader) {
-				result.push({
-					key: `forward:${node.id}`,
-					kind: 'forward',
-					x1: node.x,
-					y1: node.y,
-					x2: leaderNode.x,
-					y2: leaderNode.y
-				});
-			}
-			if (null === node.instanceId) {
-				continue;
-			}
-			const server = nodes.find(
-				(candidate) => 'server' === candidate.kind && candidate.instanceId === node.instanceId
-			);
-			if (undefined !== server) {
-				result.push({
-					key: `serves:${node.id}`,
-					kind: 'serves',
-					x1: node.x,
-					y1: node.y,
-					x2: server.x,
-					y2: server.y
-				});
-			}
+		if (undefined === leaderNode) {
+			return [];
 		}
-		return result;
+		return nodes
+			.filter((node) => 'member' === node.kind && false === node.leader)
+			.map((node) => ({
+				key: `forward:${node.id}`,
+				kind: 'forward',
+				x1: node.x,
+				y1: node.y,
+				x2: leaderNode.x,
+				y2: leaderNode.y
+			}));
 	});
 
 	const leaderName = $derived(nodes.find((node) => node.leader)?.name ?? t('common.unknown'));
@@ -265,6 +272,13 @@
 		const found = nodes.findIndex((node) => node.id === selected);
 		return 0 > found ? 0 : found;
 	});
+
+	function labelY(node: TopologyNode, line: 0 | 1): number {
+		if (node.below) {
+			return node.y + NODE_RADIUS + LABEL_GAP + line * LABEL_LINE;
+		}
+		return node.y - NODE_RADIUS - LABEL_GAP - (1 - line) * LABEL_LINE;
+	}
 
 	let nodeEls: (SVGGElement | undefined)[] = $state([]);
 
@@ -343,12 +357,12 @@
 				<circle class="shape" cx={node.x} cy={node.y} r={NODE_RADIUS} />
 				<text class="glyph" x={node.x} y={node.y} aria-hidden="true">{node.glyph}</text>
 				{#if node.leader}
-					<text class="crown" x={node.x} y={node.y - NODE_RADIUS - CROWN_OFFSET} aria-hidden="true"
+					<text class="crown" x={node.x + NODE_RADIUS} y={node.y - NODE_RADIUS + CROWN_OFFSET} aria-hidden="true"
 						>♛</text
 					>
 				{/if}
-				<text class="name" x={node.x} y={node.y + LABEL_OFFSET}>{node.name}</text>
-				<text class="word" x={node.x} y={node.y + LABEL_OFFSET + LABEL_LINE}>{node.word}</text>
+				<text class="name" x={node.x} y={labelY(node, 0)}>{node.name}</text>
+				<text class="word" x={node.x} y={labelY(node, 1)}>{node.word}</text>
 			</g>
 		{/each}
 	</svg>
@@ -362,9 +376,8 @@
 					<th scope="col">{t('topology.table.name')}</th>
 					<th scope="col">{t('topology.table.role')}</th>
 					<th scope="col">{t('topology.table.state')}</th>
-					<th scope="col">{t('topology.table.address')}</th>
 					<th scope="col">{t('topology.table.server_address')}</th>
-					<th scope="col">{t('topology.table.last_contact')}</th>
+					<th scope="col">{t('topology.table.last_seen')}</th>
 					<th scope="col">{t('topology.table.behind')}</th>
 					<th scope="col">{t('topology.table.actions')}</th>
 				</tr>
@@ -375,13 +388,12 @@
 						<td><TextCell value={node.name} mono /></td>
 						<td><TextCell value={node.role} /></td>
 						<td><StatusCell status={node.status} /></td>
-						<td><TextCell value={node.address} mono /></td>
-						<td><TextCell value={node.serverAddress} mono /></td>
+						<td><TextCell value={node.serverAddress} mono wrap /></td>
 						<td>
-							{#if null === node.lastContactMs}
+							{#if null === node.lastSeenMs}
 								<TextCell value={t('common.unknown')} muted />
 							{:else}
-								<DurationCell value={node.lastContactMs} />
+								<DurationCell value={node.lastSeenMs} />
 							{/if}
 						</td>
 						<td><NumberCell value={node.behindBy} /></td>
@@ -404,7 +416,8 @@
 	.map {
 		display: block;
 		inline-size: 100%;
-		max-inline-size: var(--content-max);
+		max-inline-size: min(100%, calc(var(--space-4) * 34));
+		margin-inline: auto;
 		block-size: auto;
 	}
 

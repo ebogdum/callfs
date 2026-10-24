@@ -3,7 +3,18 @@ import { base } from '$app/paths';
 import { batch, type BatchMode } from '$lib/api/batch';
 import { toUiError, type ApiFailure } from '$lib/api/errors';
 import { repair, verify } from '$lib/api/erasure';
-import { createFolder, planDelete, readRange, rename, setMode, setOwner, trash, type TrashReceipt } from '$lib/api/files';
+import {
+	createFolder,
+	deletePermanent,
+	planDelete,
+	readRangeBlob,
+	rename,
+	setMode,
+	setOwner,
+	trash,
+	type DeleteResult,
+	type TrashReceipt
+} from '$lib/api/files';
 import { fileUrl, type ApiResponse } from '$lib/api/http';
 import { generateLink } from '$lib/api/links';
 import { users } from '$lib/api/admin/users';
@@ -19,8 +30,9 @@ import { isValidMode } from '$lib/format/mode';
 import { notifications } from '$lib/stores/notifications.svelte';
 import { session } from '$lib/stores/session.svelte';
 import { toasts } from '$lib/stores/toasts.svelte';
-import { transfers, type ConflictPolicy, type ExistingFile } from '$lib/stores/transfers.svelte';
+import { relativeDirectory, transfers, type ConflictPolicy, type ExistingFile } from '$lib/stores/transfers.svelte';
 import type { MenuItem, Selection, UiError } from '$lib/ui/types';
+import { filesClipboard } from '$lib/stores/clipboard.svelte';
 import type { PermissionCheck } from '$lib/ui/organisms/PermissionInspector.svelte';
 import type { ConflictRow } from '$lib/ui/organisms/ConflictResolver.svelte';
 import type { MoveOptions } from '$lib/ui/organisms/DestinationPicker.svelte';
@@ -30,7 +42,6 @@ import type { BrowseState } from './browse-state.svelte';
 
 export const TYPED_DELETE_FILE_LIMIT = 100;
 export const TYPED_DELETE_BYTES = 1024 ** 3;
-export const LARGE_RANGE_BYTES = 2 * 1024 ** 3;
 export const UPLOAD_LIMIT_BYTES = 10 * 1024 ** 3;
 
 const PERMISSION_KINDS: readonly PermissionCheck['perm'][] = ['read', 'write', 'delete'];
@@ -61,12 +72,16 @@ export interface FileActions {
 	readonly shareLink: ShareLinkResult | null;
 	readonly conflicts: ConflictRow[];
 	readonly pendingCount: number;
+	readonly clipboardCount: number;
 	readonly ownerItems: ComboboxItem[];
 	readonly forms: ActionForms;
 	readonly selected: FileEntry[];
 	rowItems(entry: FileEntry): MenuItem[];
 	bulkItems(): MenuItem[];
 	toolbarItems(): MenuItem[];
+	folderItems(): MenuItem[];
+	cut(entries: FileEntry[]): void;
+	paste(): Promise<void>;
 	openDrawer(kind: DrawerKind, entries: FileEntry[]): void;
 	closeDrawer(): void;
 	startRename(entry: FileEntry): void;
@@ -158,6 +173,7 @@ export function createFileActions(state: BrowseState): FileActions {
 	let conflicts = $state<ConflictRow[]>([]);
 	let pendingUploads = $state<File[]>([]);
 	let ownerItems = $state<ComboboxItem[]>([]);
+	let drawerToken = 0;
 	const forms = $state<ActionForms>({
 		move: { destination: '/', options: { overwrite: false, createParents: false } },
 		mode: '644',
@@ -277,6 +293,15 @@ export function createFileActions(state: BrowseState): FileActions {
 		deps
 	);
 
+	const deleteMutation = createMutation<FileEntry, DeleteResult>(
+		{
+			run: (entry) => settle(deletePermanent(entry.path, { recursive: 'directory' === entry.type })),
+			invalidate: (entry) => [['dir', state.path], ['stat', entry.path]],
+			context: { action: 'files.delete', object: (entry) => entry.name }
+		},
+		deps
+	);
+
 	const batchMutation = createMutation<{ ops: BatchOp[]; mode: BatchMode }, BatchResult>(
 		{
 			run: ({ ops, mode }) => settle(batch(ops, mode)),
@@ -354,10 +379,14 @@ export function createFileActions(state: BrowseState): FileActions {
 			: { ok: false, error: toUiError(outcome.error, { action: 'files.delete' }) };
 	}
 
-	async function loadDeletePlan(entries: FileEntry[]): Promise<void> {
+	async function loadDeletePlan(entries: FileEntry[], token: number): Promise<void> {
 		deletePlan = null;
 		const plans: DeletePlan[] = [];
-		for (const outcome of await Promise.all(entries.map(planFor))) {
+		const outcomes = await Promise.all(entries.map(planFor));
+		if (token !== drawerToken) {
+			return;
+		}
+		for (const outcome of outcomes) {
 			if (!outcome.ok) {
 				report(outcome.error);
 				return;
@@ -367,9 +396,12 @@ export function createFileActions(state: BrowseState): FileActions {
 		deletePlan = sumPlans(plans);
 	}
 
-	async function loadPermissions(entry: FileEntry): Promise<void> {
+	async function loadPermissions(entry: FileEntry, token: number): Promise<void> {
 		permissionChecks = [];
 		const outcomes = await Promise.all(PERMISSION_KINDS.map((perm) => permissionCheck(entry.path, perm)));
+		if (token !== drawerToken) {
+			return;
+		}
 		permissionChecks = outcomes.flatMap((outcome) => (outcome.ok ? [toCheck(outcome.value.data)] : []));
 	}
 
@@ -384,15 +416,17 @@ export function createFileActions(state: BrowseState): FileActions {
 
 	function openDrawer(kind: DrawerKind, entries: FileEntry[]): void {
 		const [first] = entries;
+		drawerToken += 1;
+		const token = drawerToken;
 		drawer = { kind, entries };
 		if ('owner' === kind) {
 			void loadOwners();
 		}
 		if ('permissions' === kind && undefined !== first) {
-			void loadPermissions(first);
+			void loadPermissions(first, token);
 		}
 		if ('delete' === kind) {
-			void loadDeletePlan(entries);
+			void loadDeletePlan(entries, token);
 		}
 		if ('mode' === kind && undefined !== first) {
 			forms.mode = first.mode;
@@ -412,6 +446,7 @@ export function createFileActions(state: BrowseState): FileActions {
 	}
 
 	function closeDrawer(): void {
+		drawerToken += 1;
 		drawer = null;
 		pendingUploads = [];
 		conflicts = [];
@@ -447,6 +482,9 @@ export function createFileActions(state: BrowseState): FileActions {
 	function listingEntriesFor(files: File[]): ConflictRow[] {
 		const existing = new Map(state.entries.map((entry) => [entry.name, entry]));
 		return files.flatMap((file): ConflictRow[] => {
+			if ('' !== relativeDirectory(file)) {
+				return [];
+			}
 			const match = existing.get(file.name);
 			if (undefined === match) {
 				return [];
@@ -621,6 +659,18 @@ export function createFileActions(state: BrowseState): FileActions {
 			return;
 		}
 		busy = true;
+		const [only] = entries;
+		if (1 === entries.length && undefined !== only) {
+			const single = await perform(deleteMutation, only, 'files.delete');
+			busy = false;
+			if (!single.ok) {
+				return;
+			}
+			closeDrawer();
+			state.selection = { mode: 'none', ids: new Set(), allMatching: false } satisfies Selection;
+			confirmed(t('fileactions.toast.deleted', { count: 1 }));
+			return;
+		}
 		const ops = entries.map(
 			(entry): BatchOp => ({ op: 'delete', path: entry.path, recursive: 'directory' === entry.type })
 		);
@@ -657,22 +707,14 @@ export function createFileActions(state: BrowseState): FileActions {
 		}
 		const from = forms.range.from;
 		const to = forms.range.to ?? entry.size - 1;
-		if (LARGE_RANGE_BYTES < to - from + 1) {
-			const anchor = document.createElement('a');
-			anchor.href = fileUrl(entry.path, { download: true });
-			anchor.download = entry.name;
-			anchor.click();
-			closeDrawer();
-			return;
-		}
 		busy = true;
-		const outcome = await readRange(entry.path, from, to);
+		const outcome = await readRangeBlob(entry.path, from, to);
 		busy = false;
 		if (!outcome.ok) {
 			report(toUiError(outcome.error, { action: 'files.download' }));
 			return;
 		}
-		saveBlob(entry.name, new Blob([outcome.value]));
+		saveBlob(entry.name, outcome.value);
 		closeDrawer();
 		confirmed(
 			t('fileactions.toast.range_saved', {
@@ -759,7 +801,8 @@ export function createFileActions(state: BrowseState): FileActions {
 			{ id: 'copy-url', label: t('fileactions.copy_url'), onselect: () => copyText(absoluteUrl(entry.path)) },
 			{ id: 'rename', label: t('fileactions.rename'), icon: 'rename', shortcut: ['f2'], onselect: () => startRename(entry) },
 			{ id: 'move', label: t('fileactions.move'), icon: 'move', shortcut: ['m'], onselect: () => openDrawer('move', [entry]) },
-			{ id: 'mode', label: t('fileactions.change_mode'), onselect: () => openDrawer('mode', [entry]) }
+			{ id: 'cut', label: t('fileactions.cut'), shortcut: ['mod', 'x'], onselect: () => cut(cutTargets(entry)) },
+				{ id: 'mode', label: t('fileactions.change_mode'), onselect: () => openDrawer('mode', [entry]) }
 		];
 		if (session.isAdmin) {
 			items.push({ id: 'owner', label: t('fileactions.change_owner'), onselect: () => openDrawer('owner', [entry]) });
@@ -782,6 +825,56 @@ export function createFileActions(state: BrowseState): FileActions {
 			{ id: 'delete', label: t('fileactions.delete_forever'), tone: 'danger', onselect: () => openDrawer('delete', [entry]) }
 		);
 		return items;
+	}
+
+	function cut(entries: FileEntry[]): void {
+		filesClipboard.cut(entries.map((entry) => entry.path));
+		if (0 < entries.length) {
+			toasts.push({ tone: 'info', title: t('fileactions.toast.cut', { count: entries.length }) });
+		}
+	}
+
+	async function paste(): Promise<void> {
+		const clipboard = filesClipboard.value;
+		if (null === clipboard) {
+			return;
+		}
+		const destination = state.path;
+		const paths = clipboard.paths.filter(
+			(path) => parentPath(path) !== destination && destination !== path && !destination.startsWith(`${path}/`)
+		);
+		if (0 === paths.length) {
+			filesClipboard.clear();
+			toasts.push({ tone: 'warn', title: t('fileactions.toast.paste_nothing') });
+			return;
+		}
+		const outcome = await perform(
+			moveMutation,
+			{
+				ops: paths.map((path): BatchOp => ({ op: 'move', path, destination, overwrite: false, create_parents: false })),
+				reverse: paths.map((path): BatchOp => ({
+					op: 'move',
+					path: joinPath(destination, baseName(path)),
+					destination: parentPath(path)
+				})),
+				destination,
+				count: paths.length
+			},
+			'files.move'
+		);
+		if (!outcome.ok) {
+			return;
+		}
+		filesClipboard.clear();
+		for (const source of new Set(paths.map(parentPath))) {
+			invalidate(['dir', source]);
+		}
+		reportBatch(outcome.value, paths.length, null);
+	}
+
+	function cutTargets(entry: FileEntry): FileEntry[] {
+		const chosen = selected();
+		return 1 < chosen.length && chosen.some((item) => item.path === entry.path) ? chosen : [entry];
 	}
 
 	async function trashOne(entry: FileEntry): Promise<void> {
@@ -824,6 +917,20 @@ export function createFileActions(state: BrowseState): FileActions {
 		];
 	}
 
+	function folderItems(): MenuItem[] {
+		return [
+			{ id: 'new-folder', label: t('fileactions.new_folder'), icon: 'folder-plus', shortcut: ['n'], onselect: () => void newFolder() },
+			{
+				id: 'paste',
+				label: t('fileactions.paste'),
+				shortcut: ['mod', 'v'],
+				disabledReason: null === filesClipboard.value ? t('fileactions.paste_empty') : undefined,
+				onselect: () => void paste()
+			},
+			...toolbarItems()
+		];
+	}
+
 	return {
 		get drawer() {
 			return drawer;
@@ -849,6 +956,9 @@ export function createFileActions(state: BrowseState): FileActions {
 		get pendingCount() {
 			return pendingUploads.length;
 		},
+		get clipboardCount() {
+			return filesClipboard.value?.paths.length ?? 0;
+		},
 		get ownerItems() {
 			return ownerItems;
 		},
@@ -859,6 +969,9 @@ export function createFileActions(state: BrowseState): FileActions {
 		rowItems,
 		bulkItems,
 		toolbarItems,
+		folderItems,
+		cut,
+		paste,
 		openDrawer,
 		closeDrawer,
 		startRename,

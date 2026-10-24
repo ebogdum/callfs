@@ -100,6 +100,7 @@ const RECORDS_KEY = 'callfs.transfers.resumable';
 const ACTIVE_STATES: readonly TransferState[] = ['uploading', 'downloading', 'stalled', 'verifying'];
 const MOVING_STATES: readonly TransferState[] = ['uploading', 'downloading'];
 const FINISHED_STATES: readonly TransferState[] = ['done', 'failed', 'cancelled'];
+const VERIFY_BYTES = RESUMABLE_BYTES;
 const NO_LISTING: ReadonlyMap<string, ExistingFile> = new Map();
 
 export function createTransfer(
@@ -122,6 +123,11 @@ export function createTransfer(
 
 export function joinPath(directory: string, name: string): string {
 	return directory.endsWith('/') ? `${directory}${name}` : `${directory}/${name}`;
+}
+
+export function relativeDirectory(file: File): string {
+	const cut = (file.webkitRelativePath ?? '').lastIndexOf('/');
+	return 0 < cut ? file.webkitRelativePath.slice(0, cut) : '';
 }
 
 export function keepBothName(name: string, listing: ReadonlyMap<string, ExistingFile>): string {
@@ -160,7 +166,7 @@ export function planConflict(
 	if (size === existing.size) {
 		return { action: 'skip' };
 	}
-	return { action: 'upload', name, overwrite: true, ifMatch: existing.etag };
+	return { action: 'upload', name, overwrite: true, ifMatch: '' === existing.etag ? null : existing.etag };
 }
 
 export function nextThroughput(previous: number | null, bytes: number, seconds: number): number {
@@ -280,6 +286,27 @@ function writeRecords(records: readonly ResumableRecord[]): void {
 	sessionStorage.setItem(RECORDS_KEY, JSON.stringify(records));
 }
 
+function remoteEtag(value: unknown): string | null {
+	if ('object' !== typeof value || null === value) {
+		return null;
+	}
+	const etag = (value as Record<string, unknown>).etag;
+	if ('string' !== typeof etag || '' === etag) {
+		return null;
+	}
+	return etag.replace(/^W\//, '').replaceAll('"', '').toLowerCase();
+}
+
+async function sha256Hex(file: Blob): Promise<Result<string, string>> {
+	try {
+		const digest = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+		const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+		return { ok: true, value: hex };
+	} catch (error) {
+		return { ok: false, error: String(error) };
+	}
+}
+
 function saveBlob(name: string, blob: Blob): void {
 	const url = URL.createObjectURL(blob);
 	const anchor = document.createElement('a');
@@ -317,18 +344,21 @@ export class TransferStore {
 				continue;
 			}
 			const id = this.nextId();
+			const nested = relativeDirectory(file);
+			const target = '' === nested ? directory : joinPath(directory, nested);
+			const targetListing = '' === nested ? listing : NO_LISTING;
 			this.items = [
 				...this.items,
 				createTransfer({
 					id,
 					direction: 'upload',
 					name: file.name,
-					destination: joinPath(directory, file.name),
+					destination: joinPath(target, file.name),
 					total: file.size,
-					existing: listing.get(file.name) ?? null
+					existing: targetListing.get(file.name) ?? null
 				})
 			];
-			const context: UploadContext = { file, directory, listing, overwrite: false, ifMatch: null };
+			const context: UploadContext = { file, directory: target, listing: targetListing, overwrite: false, ifMatch: null };
 			this.contexts.set(id, context);
 			this.place(id, context, policy);
 			queued.push(id);
@@ -463,6 +493,11 @@ export class TransferStore {
 		return { ok: true, value: id };
 	}
 
+	async discardResumable(uploadId: string): Promise<Result<unknown, ApiFailure>> {
+		this.forgetRecord(uploadId);
+		return abortUpload(uploadId);
+	}
+
 	private find(id: string): Transfer | null {
 		return this.items.find((item) => id === item.id) ?? null;
 	}
@@ -542,6 +577,7 @@ export class TransferStore {
 		}
 		if ('download' === item.direction) {
 			const result = await wsDownload(item.destination, {
+				signal: controller.signal,
 				onProgress: (received, total) => {
 					this.progress(id, controller, received, total);
 				}
@@ -628,10 +664,33 @@ export class TransferStore {
 			return;
 		}
 		this.controllers.delete(id);
-		if (result.ok) {
-			this.complete(id, item);
-		} else {
+		if (!result.ok) {
 			this.fail(id, item, result.error);
+			this.pump();
+			return;
+		}
+		const context = this.contexts.get(id);
+		const etag = remoteEtag(result.value);
+		if ('upload' === item.direction && undefined !== context && null !== etag && VERIFY_BYTES >= context.file.size) {
+			void this.verify(id, item, context.file, etag);
+			return;
+		}
+		this.complete(id, item);
+		this.pump();
+	}
+
+	private async verify(id: string, item: Transfer, file: Blob, etag: string): Promise<void> {
+		this.samples.delete(id);
+		this.patch(id, { state: 'verifying', done: item.total ?? item.done, bytesPerSecond: 0, eta: null });
+		const local = await sha256Hex(file);
+		const current = this.find(id);
+		if (null === current || 'verifying' !== current.state) {
+			return;
+		}
+		if (local.ok && local.value !== etag) {
+			this.fail(id, current, { kind: 'malformed' });
+		} else {
+			this.complete(id, current);
 		}
 		this.pump();
 	}
@@ -647,10 +706,14 @@ export class TransferStore {
 		this.samples.delete(id);
 		if ('upload' === item.direction && 'http' === failure.kind && 409 === failure.status && 'RESOURCE_LOCKED' !== failure.code) {
 			const context = this.contexts.get(id);
+			const known = context?.listing.get(item.name) ?? null;
+			if (undefined !== context && null === known) {
+				context.listing = new Map([...context.listing, [item.name, { size: -1, etag: '' }]]);
+			}
 			this.patch(id, {
 				state: 'conflict',
 				conflictPolicy: null,
-				existing: context?.listing.get(item.name) ?? null,
+				existing: known,
 				bytesPerSecond: 0,
 				eta: null,
 				error: null

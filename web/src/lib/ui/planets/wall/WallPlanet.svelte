@@ -98,7 +98,7 @@
 		fetch: async () =>
 			valueOrReject(
 				await series({
-					name: 'usage_bytes',
+					name: 'callfs_usage_bytes',
 					measure: 'value',
 					from: windowStart(DAY_S),
 					to: nowSeconds(),
@@ -184,11 +184,8 @@
 	const attention = $derived(
 		openFindings.filter((finding) => 'critical' === finding.severity || 'warning' === finding.severity).length
 	);
-	const healthyVoters = $derived(
-		(clusterQuery.data?.members ?? []).filter(
-			(member) => 'voter' === member.suffrage && 'unreachable' !== member.state && 'shutdown' !== member.state
-		).length
-	);
+	const noteCount = $derived(openFindings.length - attention);
+	const healthyVoters = $derived((clusterQuery.data?.members ?? []).filter((member) => member.online).length);
 	const verdict = $derived(verdictOf(healthQuery.data?.status, clusterQuery.data?.has_quorum, attention));
 	const verdictLine = $derived(verdictText(verdict, attention));
 	const downComponent = $derived(
@@ -250,10 +247,11 @@
 	const healthTiles = $derived([
 		{
 			label: t('wall-report.kpi.findings'),
-			value: openFindings.length,
+			value: attention,
 			unit: 'count' as const,
 			status: statusOf(0 < attention)
 		},
+		{ label: t('wall-report.kpi.notes'), value: noteCount, unit: 'count' as const },
 		{
 			label: t('wall-report.kpi.members'),
 			value: undefined !== clusterQuery.data ? healthyVoters : null,
@@ -321,12 +319,15 @@
 	{:else if 'health' === board}
 		<Stack gap="6">
 			<Text size="heading" weight={600} tone={toneOf(verdict)}>{verdictLine}</Text>
+			{#if 'health.ok' === verdict && 0 < noteCount}
+				<Text tone="muted">{t('wall-report.verdict.notes', { count: noteCount })}</Text>
+			{/if}
 			{#if downComponent}
 				<Text tone="danger">{t('wall-report.cause.down', { component: downComponent })}</Text>
 			{/if}
 			<KpiStrip tiles={healthTiles} />
 			{#if undefined !== clusterQuery.data}
-				<QuorumMeter voters={clusterQuery.data.voters} healthy={healthyVoters} />
+				<QuorumMeter voters={clusterQuery.data.replicas} healthy={healthyVoters} />
 			{/if}
 		</Stack>
 	{:else if 'traffic' === board}

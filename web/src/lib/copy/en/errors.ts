@@ -25,12 +25,6 @@ export default {
 	'errors.locked.title': 'Someone is changing this file right now.',
 	'errors.locked.body': 'Try again in a few seconds.',
 	'errors.locked.fix': 'Try again',
-	'errors.quorum_risk.title': 'This would stop the cluster.',
-	'errors.quorum_risk.body': '{voters_after} members left cannot agree. Add a member first.',
-	'errors.quorum_risk.fix': 'Add member',
-	'errors.not_leader.title': 'This server is not the leader.',
-	'errors.not_leader.body': 'Open the leader to do this: {leader_id}.',
-	'errors.not_leader.fix': 'Open leader',
 	'errors.gone.title': 'This link does not work anymore.',
 	'errors.gone.body': 'It was used or it expired. Ask for a new link.',
 	'errors.precondition.title': 'This file changed since you opened it.',
@@ -61,8 +55,5 @@ export default {
 	'errors.forward_loop.title': 'The request went in a loop.',
 	'errors.forward_loop.body': 'Two servers kept passing it back and forth. Go back to this server and try again.',
 	'errors.forward_loop.fix': 'Open Servers',
-	'errors.no_leader.title': 'callfs cannot accept changes right now.',
-	'errors.no_leader.body': 'The cluster has no leader. Reading still works.',
-	'errors.no_leader.fix': 'Open Topology',
 	'errors.open_page': 'open this page'
 };

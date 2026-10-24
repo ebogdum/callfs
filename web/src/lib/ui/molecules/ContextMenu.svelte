@@ -19,7 +19,7 @@
 		class?: string;
 	}
 
-	let { items, children, class: className, ...rest }: Props = $props();
+	let { items, children, onkeydown, class: className, ...rest }: Props = $props();
 
 	function sectionMenuItems(source: MenuItem[]): MenuItem[][] {
 		const groups = new Map<string, MenuItem[]>();
@@ -44,6 +44,14 @@
 	const sections = $derived(sectionMenuItems(items));
 
 	const isDisabled = (item: MenuItem): boolean => Boolean(item.disabledReason);
+
+	function handleKeydown(event: KeyboardEvent, triggerKeydown: unknown): void {
+		if ('function' === typeof triggerKeydown) {
+			triggerKeydown(event);
+		}
+		onkeydown?.(event as KeyboardEvent & { currentTarget: EventTarget & HTMLDivElement });
+		openFromKeyboard(event);
+	}
 
 	function openFromKeyboard(event: KeyboardEvent) {
 		if ('F10' !== event.key || !event.shiftKey) {
@@ -127,7 +135,7 @@
 <ContextMenuPrimitive.Root>
 	<ContextMenuPrimitive.Trigger>
 		{#snippet child({ props })}
-			<div class={['context-trigger', className]} {...props} {...rest} onkeydown={openFromKeyboard}>
+			<div class={['context-trigger', className]} {...props} {...rest} onkeydown={(event) => handleKeydown(event, props.onkeydown)}>
 				{@render children()}
 			</div>
 		{/snippet}

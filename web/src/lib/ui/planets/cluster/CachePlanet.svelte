@@ -149,7 +149,7 @@
 					/>
 				</ClusterCard>
 				<ClusterCard title={t('cluster.cache.path.title')} description={t('cluster.cache.path.body')} icon="folder">
-					<PathInput bind:value={prefix} label={t('runtime.cache.path.label')} onsubmit={() => (confirmPath = 0 < scopedPrefix.length)} />
+					<PathInput bind:value={prefix} label={t('runtime.cache.path.label')} placeholder={t('runtime.cache.path.placeholder')} onsubmit={() => (confirmPath = 0 < scopedPrefix.length)} />
 					{#if confirmPath}
 						<ConfirmInline
 							question={t('runtime.cache.path.question', { path: scopedPrefix })}

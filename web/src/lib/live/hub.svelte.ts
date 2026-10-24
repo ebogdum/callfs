@@ -1,6 +1,6 @@
 import { scopedPath } from '$lib/api/scope';
 import type { Event as LiveEvent, Result } from '$lib/api/types';
-import { invalidate } from '$lib/data/cache';
+import { invalidate, noteLiveTopic } from '$lib/data/cache';
 import { parentPath } from '$lib/format/path';
 import { nodeScope } from '$lib/stores/node-scope.svelte';
 import { LiveConnection } from './connection.svelte';
@@ -30,7 +30,6 @@ const EVENT_TYPES: readonly string[] = [
 	'link.failed',
 	'link.revoked',
 	'link.cleanup',
-	'cluster.leader_changed',
 	'cluster.member_joined',
 	'cluster.member_removed',
 	'cluster.snapshot_taken',
@@ -274,6 +273,11 @@ export class LiveHub {
 		const parsed = parseEvent(message.data);
 		if (false === parsed.ok) {
 			return;
+		}
+		noteLiveTopic(parsed.value.type);
+		const dot = parsed.value.type.indexOf('.');
+		if (0 <= dot) {
+			noteLiveTopic(`${parsed.value.type.slice(0, dot)}.*`);
 		}
 		for (const key of keysForEvent(parsed.value)) {
 			invalidate(key);

@@ -27,17 +27,13 @@
 	const MEMBER_STATUS: Record<ClusterMember['state'], StatusKey> = {
 		leader: 'member.leader',
 		follower: 'member.follower',
-		candidate: 'member.candidate',
-		shutdown: 'member.shutdown',
-		unreachable: 'member.unreachable'
+		offline: 'member.unreachable'
 	};
 
 	const status = $derived(MEMBER_STATUS[member.state]);
 	const isLeader = $derived('leader' === member.state);
 	const roleWord = $derived(isLeader ? t('status.member.leader') : t('topology.member.role_member'));
-	const suffrageWord = $derived(
-		'voter' === member.suffrage ? t('topology.role.voter') : t('topology.role.nonvoter')
-	);
+	const onlineWord = $derived(member.online ? t('members.online.yes') : t('members.online.no'));
 </script>
 
 <Surface
@@ -58,16 +54,16 @@
 				<dd>{roleWord}</dd>
 			</div>
 			<div>
-				<dt>{t('topology.member.suffrage')}</dt>
-				<dd>{suffrageWord}</dd>
+				<dt>{t('topology.member.online')}</dt>
+				<dd>{onlineWord}</dd>
 			</div>
 			<div>
-				<dt>{t('topology.member.last_contact')}</dt>
+				<dt>{t('topology.member.last_seen')}</dt>
 				<dd>
-					{#if null === member.last_contact_ms}
+					{#if null === member.last_seen_ms}
 						{t('common.unknown')}
 					{:else}
-						<Duration value={member.last_contact_ms} />
+						<Duration value={member.last_seen_ms} />
 					{/if}
 				</dd>
 			</div>
@@ -82,21 +78,16 @@
 				</dd>
 			</div>
 			<div>
-				<dt>{t('topology.member.raft_address')}</dt>
-				<dd>
-					<Cluster gap="2">
-						<Text mono>{member.raft_addr}</Text>
-						<CopyButton value={member.raft_addr} variant="button" />
-					</Cluster>
-				</dd>
-			</div>
-			<div>
 				<dt>{t('topology.member.server_address')}</dt>
 				<dd>
-					<Cluster gap="2">
-						<Text mono>{member.api_endpoint}</Text>
-						<CopyButton value={member.api_endpoint} variant="button" />
-					</Cluster>
+					{#if null === member.api_endpoint}
+						{t('common.unknown')}
+					{:else}
+						<Cluster gap="2">
+							<Text mono>{member.api_endpoint}</Text>
+							<CopyButton value={member.api_endpoint} variant="button" />
+						</Cluster>
+					{/if}
 				</dd>
 			</div>
 		</dl>

@@ -4,16 +4,16 @@
 	import { page } from '$app/state';
 	import { getContext, untrack } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
-	import { locks } from '$lib/api/admin/runtime';
+	import { cache, locks } from '$lib/api/admin/runtime';
 	import { audit, type AuditPage } from '$lib/api/admin/telemetry';
-	import { instances, type InstanceItem } from '$lib/api/admin/topology';
+	import { instances, replication, type InstanceItem } from '$lib/api/admin/topology';
 	import { getSplitFile, repair, verify } from '$lib/api/erasure';
 	import { toUiError, type ApiFailure } from '$lib/api/errors';
 	import { listDir, readRange, stat } from '$lib/api/files';
 	import { fileUrl, type ApiResponse } from '$lib/api/http';
 	import { listLinks } from '$lib/api/links';
 	import { permissionCheck } from '$lib/api/search';
-	import type { DirPage, FileEntry, Link, LinkPage, Locks, Result, SplitFileDetail, Stat } from '$lib/api/types';
+	import type { CacheStats, DirPage, FileEntry, Link, LinkPage, Locks, Replication, Result, SplitFileDetail, Stat } from '$lib/api/types';
 	import type { CommandRegistry } from '$lib/commands/registry.svelte';
 	import { t } from '$lib/copy/t';
 	import { createQuery } from '$lib/data/query.svelte';
@@ -22,12 +22,14 @@
 	import { notifications } from '$lib/stores/notifications.svelte';
 	import { preferences } from '$lib/stores/preferences.svelte';
 	import { session } from '$lib/stores/session.svelte';
-	import type { QueryStatus, Tone, UiError } from '$lib/ui/types';
+	import type { QueryStatus, StatusKey, Tone, UiError } from '$lib/ui/types';
 	import Button from '../../atoms/Button.svelte';
 	import RelTime from '../../atoms/RelTime.svelte';
 	import Skeleton from '../../atoms/Skeleton.svelte';
 	import Text from '../../atoms/Text.svelte';
 	import Breadcrumbs from '../../molecules/Breadcrumbs.svelte';
+	import ContextMenu from '../../molecules/ContextMenu.svelte';
+	import DropZone from '../../molecules/DropZone.svelte';
 	import EmptyState from '../../molecules/EmptyState.svelte';
 	import ErrorState from '../../molecules/ErrorState.svelte';
 	import InlineAlert from '../../molecules/InlineAlert.svelte';
@@ -96,6 +98,7 @@
 	let loadingMore = $state(false);
 	let durabilityBusy = $state(false);
 	let uploadInput = $state<HTMLInputElement | null>(null);
+	let contextEntry = $state<FileEntry | null>(null);
 
 	function defaults(): BrowseDefaults {
 		const files = preferences.value.files;
@@ -171,18 +174,27 @@
 			return;
 		}
 		loadingMore = true;
+		const requested = { path: browseState.path, sort: { ...browseState.sort }, hidden: browseState.showHidden };
 		const result = fromResponse(
-			await listDir(browseState.path, {
+			await listDir(requested.path, {
 				limit: PAGE_SIZE,
 				cursor,
-				sort: browseState.sort.key,
-				order: browseState.sort.dir,
-				includeHidden: browseState.showHidden
+				sort: requested.sort.key,
+				order: requested.sort.dir,
+				includeHidden: requested.hidden
 			}),
 			'browse.action.load_more',
-			browseState.path
+			requested.path
 		);
 		loadingMore = false;
+		if (
+			requested.path !== browseState.path ||
+			requested.sort.key !== browseState.sort.key ||
+			requested.sort.dir !== browseState.sort.dir ||
+			requested.hidden !== browseState.showHidden
+		) {
+			return;
+		}
 		if (!result.ok) {
 			notifications.add({
 				tone: 'danger',
@@ -336,6 +348,36 @@
 		enabled: () => session.isAdmin && null !== browseState.inspect && 'placement' === browseState.tab
 	}));
 
+	async function fetchCache(): Promise<Result<CacheStats, UiError>> {
+		return fromResult(await cache(), 'browse.action.read_placement', '');
+	}
+
+	const cacheQuery = createQuery<Result<CacheStats, UiError>>(() => ({
+		key: ['cache'],
+		fetch: fetchCache,
+		enabled: () => session.isAdmin && null !== browseState.inspect && 'placement' === browseState.tab
+	}));
+	const placementCache = $derived(undefined !== cacheQuery.data && cacheQuery.data.ok ? cacheQuery.data.value : null);
+
+	async function fetchReplication(): Promise<Result<Replication, UiError>> {
+		return fromResult(await replication(), 'browse.action.read_placement', '');
+	}
+
+	const replicationQuery = createQuery<Result<Replication, UiError>>(() => ({
+		key: ['replication'],
+		fetch: fetchReplication,
+		enabled: () => session.isAdmin
+	}));
+	const replicationData = $derived(undefined !== replicationQuery.data && replicationQuery.data.ok ? replicationQuery.data.value : null);
+	const backupFailures = $derived(new Set(replicationData?.failures.map((failed) => failed.path) ?? []));
+
+	function backupStatus(entry: FileEntry): StatusKey | null {
+		if (null === replicationData || false === replicationData.enabled || 'file' !== entry.type) {
+			return null;
+		}
+		return backupFailures.has(entry.path) ? 'file.backup_failed' : 'file.backup_ok';
+	}
+
 	const placementServer = $derived.by((): InstanceItem | null => {
 		if (undefined === instancesQuery.data || !instancesQuery.data.ok || null === entity) {
 			return null;
@@ -395,11 +437,13 @@
 		if (!(target instanceof Element)) {
 			return null;
 		}
-		const row = target.closest<HTMLElement>('[data-row-index]');
+		const row = target.closest<HTMLElement>('[data-row-index], [data-entry-path]');
 		if (null === row) {
 			return null;
 		}
-		return visible[Number(row.dataset.rowIndex)] ?? null;
+		const holder = row.matches('[data-entry-path]') ? row : row.querySelector<HTMLElement>('[data-entry-path]');
+		const path = holder?.dataset.entryPath;
+		return visible.find((entry) => path === entry.path) ?? null;
 	}
 
 	function toggleInspector(entry: FileEntry | null): void {
@@ -470,8 +514,27 @@
 		browseState.preview = entry.path;
 	}
 
+	function captureContext(event: MouseEvent): void {
+		contextEntry = rowEntry(event.target);
+	}
+
+	const contextItems = $derived(null === contextEntry ? actions.folderItems() : actions.rowItems(contextEntry));
+
 	function onKeyDown(event: KeyboardEvent): void {
-		if (isEditable(event.target) || event.ctrlKey || event.metaKey) {
+		if (isEditable(event.target)) {
+			return;
+		}
+		if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+			if ('x' === event.key && 0 < actions.selected.length) {
+				event.preventDefault();
+				actions.cut(actions.selected);
+			} else if ('v' === event.key && 0 < actions.clipboardCount) {
+				event.preventDefault();
+				void actions.paste();
+			}
+			return;
+		}
+		if (event.ctrlKey || event.metaKey) {
 			return;
 		}
 		if ('Backspace' === event.key || (event.altKey && 'ArrowUp' === event.key)) {
@@ -638,6 +701,7 @@
 {/snippet}
 
 {#snippet listBody()}
+	<ContextMenu items={contextItems} oncontextmenucapture={captureContext}>
 	{#if null !== failure && 0 === browseState.entries.length}
 		{#if 'permission' === failure.layer}
 			<EmptyState variant="no-permission" icon="lock" title={t('browse.permission.title')} body={t('browse.permission.body')} />
@@ -694,9 +758,11 @@
 				onrename={(entry, name) => void actions.rename(entry, name)}
 				rowMenu={(entry) => actions.rowItems(entry)}
 				hiddenVisible={browseState.showHidden}
+					{backupStatus}
 			/>
 		{/if}
 	{/if}
+	</ContextMenu>
 {/snippet}
 
 {#snippet detailBody()}
@@ -710,7 +776,7 @@
 			actions={inspectorActions}
 			server={placementServer}
 			lock={placementLock}
-			cache={null}
+			cache={placementCache}
 			{erasure}
 			onverify={() => void runDurability(verify)}
 			onrepair={() => void runDurability(repair)}
@@ -734,6 +800,7 @@
 	onkeydowncapture={onKeyDownCapture}
 	onkeydown={onKeyDown}
 >
+	<DropZone surface label={t('browse.drop.label')} onfiles={(files) => actions.upload(files)}>
 	<div class={['browse', treeOpen && 'with-tree', null !== browseState.inspect && 'inspecting']}>
 		{#if treeOpen}
 			<nav class="tree" aria-label={t('browse.tree.label')}>
@@ -746,6 +813,7 @@
 			<SplitView list={listBody} detail={detailBody} bind:detailOpen={() => null !== browseState.inspect, (open) => { if (!open) closeInspector(); }} bind:detailWidth label={t('browse.split.label')} />
 		</div>
 	</div>
+	</DropZone>
 
 	{#if 0 < browseState.selection.ids.size}
 		<Dock>

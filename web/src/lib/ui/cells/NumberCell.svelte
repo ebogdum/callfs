@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--number-cell-color'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import Num from '../atoms/Num.svelte';

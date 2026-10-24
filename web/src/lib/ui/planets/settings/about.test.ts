@@ -31,7 +31,7 @@ const capabilitiesFixture: Capabilities = {
 	node_id: null,
 	features: {
 		erasure: true,
-		raft: false,
+		nats: false,
 		cross_server: true,
 		websocket: true,
 		replication: false,
@@ -123,12 +123,12 @@ describe('AboutPlanet', () => {
 		render(AboutPlanet);
 
 		const splitStorage = (await screen.findByText('Split storage')).closest('li');
-		const raft = screen.getByText('Raft cluster').closest('li');
+		const nats = screen.getByText('Clustering').closest('li');
 
 		expect(splitStorage).not.toBeNull();
-		expect(raft).not.toBeNull();
+		expect(nats).not.toBeNull();
 		expect(within(splitStorage as HTMLElement).getByText('On')).toBeInTheDocument();
-		expect(within(raft as HTMLElement).getByText('Off')).toBeInTheDocument();
+		expect(within(nats as HTMLElement).getByText('Off')).toBeInTheDocument();
 	});
 
 	it('lists every API route in the parity table', async () => {

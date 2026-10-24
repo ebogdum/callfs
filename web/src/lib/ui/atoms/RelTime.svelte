@@ -1,6 +1,5 @@
 <script lang="ts" module>
 	export type RelTimeMode = 'auto' | 'relative' | 'absolute';
-	export const TOKENS = ['--reltime-color'] as const;
 
 	const TICK_MS = 30 * 1000;
 	const listeners = new Set<() => void>();

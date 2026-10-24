@@ -14,18 +14,20 @@
 		buckets: HistogramBucket[];
 		unit: Unit;
 		label: string;
+		edgeLabels?: string[];
 	}
 
-	let { buckets, unit, label, class: className, ...rest }: Props = $props();
+	let { buckets, unit, label, edgeLabels, class: className, ...rest }: Props = $props();
 
 	const data: BarDatum[] = $derived(
 		buckets.map((bucket, index) => ({
 			label:
-				Number.isFinite(bucket.le) && 0 <= bucket.le
+				edgeLabels?.[index] ??
+				(Number.isFinite(bucket.le) && 0 <= bucket.le
 					? `≤${formatChartValue(bucket.le, unit)}`
 					: 0 < index
 						? `>${formatChartValue(buckets[index - 1].le, unit)}`
-						: formatChartValue(null, unit),
+						: formatChartValue(null, unit)),
 			value: bucket.count
 		}))
 	);

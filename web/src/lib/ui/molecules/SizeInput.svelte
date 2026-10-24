@@ -2,6 +2,8 @@
 	const SIZE_UNITS = ['B', 'kB', 'MB', 'GB'] as const;
 	type SizeUnitCode = (typeof SIZE_UNITS)[number];
 
+	const DISPLAY_SCALE = 10;
+
 	const UNIT_BYTES: Record<SizeUnitCode, number> = { B: 1, kB: 1000, MB: 1000 * 1000, GB: 1000 * 1000 * 1000 };
 
 	function readSize(bytes: number, units: SizeUnitCode[]): { amount: number; unit: SizeUnitCode } {
@@ -10,7 +12,12 @@
 			[...units]
 				.sort((a, b) => UNIT_BYTES[b] - UNIT_BYTES[a])
 				.find((code) => bytes >= UNIT_BYTES[code]) ?? smallest;
-		return { amount: bytes / UNIT_BYTES[largest], unit: largest };
+		return { amount: Math.round((bytes / UNIT_BYTES[largest]) * DISPLAY_SCALE) / DISPLAY_SCALE, unit: largest };
+	}
+
+	function sameShown(bytes: number, amount: number | null, unit: SizeUnitCode, units: SizeUnitCode[]): boolean {
+		const shown = readSize(bytes, units);
+		return shown.amount === amount && shown.unit === unit;
 	}
 
 	function toBytes(amount: number | null, unit: SizeUnitCode): number {
@@ -53,7 +60,7 @@
 	$effect(() => {
 		const external = value;
 		untrack(() => {
-			if (external !== toBytes(amount, unit)) {
+			if (external !== toBytes(amount, unit) && !sameShown(external, amount, unit, units)) {
 				const next = readSize(external, units);
 				amount = next.amount;
 				unit = next.unit;
@@ -64,7 +71,7 @@
 	$effect(() => {
 		const next = toBytes(amount, unit);
 		untrack(() => {
-			if (next !== value) {
+			if (next !== value && !sameShown(value, amount, unit, units)) {
 				value = next;
 			}
 		});

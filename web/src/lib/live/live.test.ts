@@ -4,7 +4,7 @@ import { applyStatusSignals, keysForEvent, LiveHub, TOPIC_KEYS } from './hub.sve
 
 const { invalidate } = vi.hoisted(() => ({ invalidate: vi.fn<(key: readonly unknown[]) => void>() }));
 
-vi.mock('$lib/data/cache', () => ({ invalidate }));
+vi.mock('$lib/data/cache', () => ({ invalidate, noteLiveTopic: vi.fn() }));
 
 type Listener = (message: MessageEvent<string>) => void;
 
@@ -185,7 +185,7 @@ describe('events and invalidation', () => {
 	});
 
 	it('maps cluster and link events to their query keys', () => {
-		expect(keysForEvent(eventOf('cluster.leader_changed'))).toEqual([['cluster'], ['instances'], ['health']]);
+		expect(keysForEvent(eventOf('cluster.member_joined'))).toEqual([['cluster'], ['instances'], ['health']]);
 		expect(keysForEvent(eventOf('link.created'))).toEqual([['links'], ['link-stats']]);
 		expect(keysForEvent(eventOf('health.changed'))).toEqual([['health'], ['findings']]);
 	});

@@ -3,9 +3,8 @@ import { cleanup, render, screen } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { announce } from './announce';
-import FocusRing from './FocusRing.svelte';
 import Hairline from './Hairline.svelte';
-import { collapse, fadeIn, holdMinimum, holdRemainingMs, prefersReducedMotion, rise, scaleIn, slideIn } from './motion';
+import { holdMinimum, holdRemainingMs } from './motion';
 import Spinner from './Spinner.svelte';
 import VisuallyHidden from './VisuallyHidden.svelte';
 
@@ -71,57 +70,6 @@ describe('Spinner', () => {
 		vi.setSystemTime(new Date(1200));
 		const config = holdMinimum(document.createElement('span'), { shownAt: 1000 });
 		expect(config.duration).toBe(200);
-	});
-});
-
-describe('motion', () => {
-	afterEach(() => {
-		delete document.documentElement.dataset.motion;
-		vi.restoreAllMocks();
-	});
-
-	it('follows the data-motion attribute before the OS preference', () => {
-		document.documentElement.dataset.motion = 'reduced';
-		expect(prefersReducedMotion()).toBe(true);
-		document.documentElement.dataset.motion = 'none';
-		expect(prefersReducedMotion()).toBe(true);
-		vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
-		document.documentElement.dataset.motion = 'full';
-		expect(prefersReducedMotion()).toBe(false);
-	});
-
-	it('falls back to the OS preference when data-motion is unset', () => {
-		vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
-		expect(prefersReducedMotion()).toBe(true);
-	});
-
-	it('uses token durations when motion is full', () => {
-		document.documentElement.dataset.motion = 'full';
-		const element = document.createElement('div');
-		expect(fadeIn(element).duration).toBe(120);
-		expect(rise(element).duration).toBe(220);
-		expect(rise(element, {}, { direction: 'out' }).duration).toBe(150);
-		expect(scaleIn(element).duration).toBe(220);
-		expect(slideIn(element, { side: 'left' }).duration).toBe(280);
-		expect(collapse(element).duration).toBe(220);
-	});
-
-	it('returns zero-duration transitions under reduced motion', () => {
-		document.documentElement.dataset.motion = 'reduced';
-		const element = document.createElement('div');
-		expect(fadeIn(element).duration).toBe(0);
-		expect(rise(element).duration).toBe(0);
-		expect(scaleIn(element).duration).toBe(0);
-		expect(slideIn(element, { side: 'right' }).duration).toBe(0);
-		expect(collapse(element).duration).toBe(0);
-	});
-
-	it('writes the eased css for each transition', () => {
-		document.documentElement.dataset.motion = 'full';
-		const element = document.createElement('div');
-		expect(fadeIn(element).css?.(0.5, 0.5)).toBe('opacity: 0.5');
-		expect(slideIn(element, { side: 'left' }).css?.(0.5, 0.5)).toBe('transform: translateX(-50%)');
-		expect(scaleIn(element).css?.(1, 1)).toContain('scale(1)');
 	});
 });
 
@@ -196,24 +144,6 @@ describe('Hairline', () => {
 		const separator = screen.getByRole('separator');
 		expect(separator.getAttribute('aria-orientation')).toBe('vertical');
 		expect(separator.getAttribute('aria-hidden')).toBeNull();
-	});
-});
-
-describe('FocusRing', () => {
-	afterEach(() => {
-		cleanup();
-	});
-
-	it('wraps its children and keeps their accessible name', () => {
-		render(FocusRing, {
-			props: { children: createRawSnippet(() => ({ render: () => '<button type="button">Open</button>' })) }
-		});
-		expect(screen.getByRole('button', { name: 'Open' })).toBeInTheDocument();
-	});
-
-	it('marks the wrapper as inset when requested', () => {
-		const { container } = render(FocusRing, { props: { children: textSnippet('Canvas'), inset: true } });
-		expect(container.querySelector('.focus-ring')?.classList.contains('inset')).toBe(true);
 	});
 });
 

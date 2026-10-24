@@ -56,7 +56,8 @@ const adminMe: Me = {
 	auth_method: 'session',
 	session_expires_at: null,
 	csrf_token: null,
-	permissions_model: 'owner'
+	permissions_model: 'owner',
+	idle_timeout_seconds: 3600
 };
 
 const memberMe: Me = { ...adminMe, user_id: 'alice', is_admin: false };
@@ -68,14 +69,11 @@ const singleServer: ClusterInfo = {
 	self_id: 'node-1',
 	leader_id: 'node-1',
 	leader_endpoint: null,
-	term: 1,
-	last_log_index: 0,
-	commit_index: 0,
-	applied_index: 0,
-	last_snapshot: null,
-	voters: 1,
+	cluster_name: 'callfs',
+	replicas: 1,
 	has_quorum: true,
 	can_lose: 0,
+	log: { first_seq: 0, last_seq: 0, messages: 0, bytes: 0, applied_seq: 0, last_snapshot: null, snapshot_interval_ms: 300000 },
 	members: []
 };
 

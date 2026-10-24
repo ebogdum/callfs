@@ -1,6 +1,5 @@
 <script lang="ts" module>
 	export type PercentStyle = 'count-first' | 'rate-only';
-	export const TOKENS = ['--percent-rate-color', '--percent-gap'] as const;
 </script>
 
 <script lang="ts">

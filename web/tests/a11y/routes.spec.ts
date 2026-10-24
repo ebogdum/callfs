@@ -46,7 +46,7 @@ const ROUTES: RouteCase[] = [
 		target: { list: 'cluster/nodes', prefix: '/cluster/nodes/' },
 		console: true
 	},
-	{ name: 'Raft', target: 'cluster/raft', console: true },
+	{ name: 'Replication', target: 'cluster/replication', console: true },
 	{ name: 'Servers', target: 'cluster/servers', console: true },
 	{ name: 'Storage', target: 'cluster/storage', console: true },
 	{ name: 'Durability', target: 'cluster/durability', console: true },

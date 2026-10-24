@@ -1,6 +1,4 @@
 <script lang="ts" module>
-	export const TOKENS = ['--piece-cell-fg'] as const;
-
 	export type PieceKind = 'data' | 'spare';
 </script>
 

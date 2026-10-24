@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--progress-cell-gap', '--progress-cell-w', '--progress-cell-text'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import type { Tone } from '../types';

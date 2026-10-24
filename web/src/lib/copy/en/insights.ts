@@ -40,6 +40,7 @@ export default {
 	'insights.metrics.count': '{reported} of {total} have data.',
 	'insights.metrics.since': 'Counted since the server started {ago}.',
 	'insights.metrics.search': 'Find a metric',
+	'insights.metrics.placeholder': 'Metric name',
 	'insights.metrics.filter.all': 'All',
 	'insights.metrics.filter.reported': 'Has data',
 	'insights.metrics.filter.missing': 'None since start',

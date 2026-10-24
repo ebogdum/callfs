@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	export type ServerRole = 'leader' | 'follower' | 'candidate' | 'shutdown' | 'none';
+	export type ServerRole = 'leader' | 'follower' | 'offline' | 'none';
 
 	export interface ServerChoice {
 		id: string;
@@ -9,15 +9,6 @@
 		role: ServerRole;
 		latencyMs: number | null;
 	}
-
-	export const TOKENS = [
-		'--server-picker-bg',
-		'--server-picker-fg',
-		'--server-picker-border',
-		'--server-picker-remote-bg',
-		'--server-picker-remote-fg',
-		'--server-picker-remote-border'
-	] as const;
 </script>
 
 <script lang="ts">

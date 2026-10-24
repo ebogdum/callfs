@@ -44,18 +44,18 @@ function seedHealthy(): void {
 		mode: 'single',
 		self_id: 'callfs-1',
 		leader_id: 'callfs-1',
-		voters: 1,
+		cluster_name: 'callfs',
+		replicas: 1,
 		has_quorum: true,
 		can_lose: 0,
 		members: [
 			{
 				node_id: 'callfs-1',
-				raft_addr: '',
 				api_endpoint: '',
-				suffrage: 'voter',
 				state: 'leader',
 				is_self: true,
-				last_contact_ms: 0,
+				online: true,
+				last_seen_ms: 0,
 				behind_by: null,
 				instance_id: null
 			}

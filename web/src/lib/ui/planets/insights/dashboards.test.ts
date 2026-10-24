@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eventHistory, metrics, series } from '$lib/api/admin/telemetry';
 import type { Event as EventRecord, SeriesResult } from '$lib/api/types';
 import {
-	DEFAULT_PRESET,
 	aggregate,
 	annotationsOf,
 	barData,
@@ -16,7 +15,6 @@ import {
 	missingExpected,
 	panelFromCustom,
 	panelLines,
-	rangeFromParams,
 	statReading,
 	stepFor,
 	type PanelDefinition,
@@ -33,8 +31,6 @@ vi.mock('$lib/api/admin/telemetry', async (importOriginal) => ({
 	metrics: vi.fn(),
 	eventHistory: vi.fn()
 }));
-
-const NOW = 1_800_000_000;
 
 const emptyResult = (name: string): SeriesResult => ({ name, measure: 'total', unit: 'count', step_s: 60, series: [], sampled_since: null });
 
@@ -71,30 +67,6 @@ const statSamples: PanelSample[] = [
 		}
 	}
 ];
-
-describe('rangeFromParams', () => {
-	it('uses the default preset and live refresh when no parameters are set', () => {
-		expect(DEFAULT_PRESET).toBe('1h');
-		expect(rangeFromParams(new URLSearchParams(), NOW)).toEqual({ from: NOW - 3_600, to: NOW, live: true });
-	});
-
-	it('applies a named preset and turns live off when asked', () => {
-		expect(rangeFromParams(new URLSearchParams('preset=7d&live=false'), NOW)).toEqual({
-			from: NOW - 604_800,
-			to: NOW,
-			live: false
-		});
-	});
-
-	it('uses absolute bounds when they are ordered whole seconds', () => {
-		expect(rangeFromParams(new URLSearchParams('from=100&to=200'), NOW)).toEqual({ from: 100, to: 200, live: true });
-	});
-
-	it('falls back to the default preset for bounds that are not usable', () => {
-		expect(rangeFromParams(new URLSearchParams('from=200&to=100'), NOW)).toEqual({ from: NOW - 3_600, to: NOW, live: true });
-		expect(rangeFromParams(new URLSearchParams('from=abc&to=300'), NOW)).toEqual({ from: NOW - 3_600, to: NOW, live: true });
-	});
-});
 
 describe('stepFor', () => {
 	it('keeps steps at five seconds or more and under the point budget', () => {

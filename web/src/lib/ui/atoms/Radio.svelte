@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--radio-size', '--radio-border', '--radio-bg', '--radio-accent'] as const;
-</script>
-
 <script lang="ts">
 	import { RadioGroup } from 'bits-ui';
 	import { t } from '$lib/copy/t';

@@ -143,6 +143,7 @@
 				streamFailed = true;
 				return;
 			}
+			streamFailed = false;
 			streamed = [entry, ...streamed].slice(0, STREAM_LIMIT);
 		};
 		source.addEventListener('log', onLog);
@@ -169,7 +170,11 @@
 		if (null === cursor) {
 			return;
 		}
+		const requestedKey = resetKey;
 		const result = await logs({ level: minLevel, q: '' === serverQuery ? undefined : serverQuery, cursor });
+		if (requestedKey !== resetKey) {
+			return;
+		}
 		if (false === result.ok) {
 			olderFailure = toUiError(result.error, { action: 'logs.read' });
 			return;

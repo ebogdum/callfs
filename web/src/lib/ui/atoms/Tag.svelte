@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--tag-bg', '--tag-fg', '--tag-border', '--tag-radius', '--tag-px'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import Icon from '../quarks/Icon.svelte';
@@ -20,11 +16,13 @@
 		tone = 'neutral',
 		removable = false,
 		onremove,
+		onkeydown,
 		class: className,
 		...rest
 	}: Props = $props();
 
-	function handleKeydown(event: KeyboardEvent) {
+	function handleKeydown(event: KeyboardEvent & { currentTarget: EventTarget & HTMLSpanElement }) {
+		onkeydown?.(event);
 		if (true === removable && 'Backspace' === event.key) {
 			event.preventDefault();
 			onremove?.();

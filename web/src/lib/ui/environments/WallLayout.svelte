@@ -26,10 +26,17 @@
 	$effect(() => {
 		const root = document.documentElement;
 		const previousContrast = root.dataset.contrast;
+		const previousTheme = root.dataset.theme;
+		root.dataset.theme = 'dark';
 		const previousScale = root.style.getPropertyValue('--font-scale');
 		root.dataset.contrast = 'more';
 		root.style.setProperty('--font-scale', FONT_SCALE);
 		return () => {
+			if (undefined === previousTheme) {
+				delete root.dataset.theme;
+			} else {
+				root.dataset.theme = previousTheme;
+			}
 			if (undefined === previousContrast) {
 				delete root.dataset.contrast;
 			} else {
@@ -61,6 +68,12 @@
 		padding: var(--space-6);
 		background: var(--surface);
 		color: var(--text);
+	}
+
+	.wall-layout :global(.wall-grid) {
+		grid-template-columns: minmax(0, 1fr);
+		min-block-size: calc(100dvh - 2 * var(--space-6));
+		align-content: start;
 	}
 
 	.wall-layout[data-state='idle'] {

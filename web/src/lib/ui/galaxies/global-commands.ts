@@ -23,7 +23,7 @@ export const ROUTES: readonly RouteEntry[] = [
 	{ slug: 'sharing', path: '/sharing', admin: false, shortcut: ['g', 's'] },
 	{ slug: 'cluster', path: '/cluster', admin: true, shortcut: ['g', 'c'] },
 	{ slug: 'cluster.nodes', path: '/cluster/nodes', admin: true },
-	{ slug: 'cluster.raft', path: '/cluster/raft', admin: true },
+	{ slug: 'cluster.replication', path: '/cluster/replication', admin: true },
 	{ slug: 'cluster.servers', path: '/cluster/servers', admin: true },
 	{ slug: 'cluster.storage', path: '/cluster/storage', admin: true },
 	{ slug: 'cluster.durability', path: '/cluster/durability', admin: true },

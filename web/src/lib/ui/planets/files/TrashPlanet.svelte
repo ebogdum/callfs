@@ -1,11 +1,15 @@
 <script lang="ts" module>
 	import type { RestoreOptions } from '$lib/api/trash';
 	import type { ConflictPolicy } from '$lib/stores/transfers.svelte';
+	import type { ConflictRow } from '$lib/ui/organisms/ConflictResolver.svelte';
 
 	const CONFLICT_OPTIONS: Partial<Record<ConflictPolicy, RestoreOptions['onConflict']>> = {
 		'keep-both': 'keep_both',
 		replace: 'replace'
 	};
+
+	const hasChanged = (row: ConflictRow): boolean =>
+		row.existing.size !== row.incoming.size || row.existing.mtime !== row.incoming.mtime;
 </script>
 
 <script lang="ts">
@@ -17,7 +21,6 @@
 	import { t } from '$lib/copy/t';
 	import { formatAbsolute } from '$lib/format/time';
 	import { announce } from '$lib/ui/quarks/announce';
-	import type { ConflictRow } from '$lib/ui/organisms/ConflictResolver.svelte';
 	import type { ColumnDef, MenuItem, QueryStatus, Selection, UiError } from '$lib/ui/types';
 	import PageFrame from '$lib/ui/environments/PageFrame.svelte';
 	import Button from '$lib/ui/atoms/Button.svelte';
@@ -147,9 +150,12 @@
 	const resolveConflicts = async (): Promise<void> => {
 		busy = true;
 		let restored = 0;
+		let skipped = 0;
 		for (const target of conflictTargets) {
-			const onConflict = CONFLICT_OPTIONS[overrides[target.row.path] ?? policy];
+			const choice = overrides[target.row.path] ?? policy;
+			const onConflict = 'replace-if-changed' === choice ? (hasChanged(target.row) ? 'replace' : undefined) : CONFLICT_OPTIONS[choice];
 			if (undefined === onConflict) {
+				skipped += 1;
 				continue;
 			}
 			const result = await restore(target.item.id, { onConflict });
@@ -162,6 +168,9 @@
 		}
 		if (0 < restored) {
 			announce(t('transfers-trash.trash.restored', { count: restored }), 'polite');
+		}
+		if (0 < skipped) {
+			announce(t('transfers-trash.trash.skipped', { count: skipped }), 'polite');
 		}
 		conflictOpen = false;
 		conflictTargets = [];

@@ -28,7 +28,7 @@
 
 	const FEATURE_ROWS: readonly { id: string; flag: FeatureFlag }[] = [
 		{ id: 'split_storage', flag: 'erasure' },
-		{ id: 'raft', flag: 'raft' },
+		{ id: 'nats', flag: 'nats' },
 		{ id: 'other_servers', flag: 'cross_server' },
 		{ id: 'backup_copy', flag: 'replication' },
 		{ id: 'quic', flag: 'quic' },

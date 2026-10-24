@@ -1,5 +1,4 @@
 import type { CopyKey } from '../../copy/t';
-import type { Chip } from '../types';
 
 export type QueryField =
 	| 'name'
@@ -617,19 +616,6 @@ export function format(query: SearchQuery): string {
 		parts.push(`!${tokenText(token)}`);
 	}
 	return parts.join(' ');
-}
-
-export function chipFromToken(token: QueryToken): Chip {
-	return {
-		facet: token.field,
-		op: token.negated ? '!' : ':',
-		value: `${comparatorPrefix(token.comparator)}${token.value}`,
-		label: token.raw
-	};
-}
-
-export function chipText(chip: Chip): string {
-	return `${'!' === chip.op ? '!' : ''}${chip.facet}:${quoteValue(chip.value)}`;
 }
 
 export function removeRange(text: string, start: number, end: number): string {

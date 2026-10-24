@@ -2,7 +2,6 @@
 	export type TextSize = 'caption' | 'sm' | 'body' | 'title-sm' | 'title' | 'heading' | 'display';
 	export type TextTone = 'default' | 'muted' | 'faint' | 'accent' | 'ok' | 'warn' | 'danger';
 	export type TextWeight = 400 | 500 | 600;
-	export const TOKENS = ['--text-color', '--text-weight'] as const;
 	const TONE_COLORS: Record<TextTone, string> = {
 		default: 'var(--text)',
 		muted: 'var(--text-muted)',

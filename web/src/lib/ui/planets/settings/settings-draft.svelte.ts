@@ -71,6 +71,9 @@ export function describeValue(entry: SettingsEntry, value: unknown, isSet: boole
 		}
 		return formatDuration(parsed.value, 'long');
 	}
+	if ('size' === entry.type && entry.optional && null === value) {
+		return t(`settings.unset.${entry.key}`);
+	}
 	if ('size' === entry.type && 'number' === typeof value) {
 		if (entry.zeroLabel && 0 === value) {
 			return t(`settings.zero.${entry.key}`);
@@ -113,6 +116,8 @@ export function metaFor(
 		options,
 		min: schemaMin ?? entry.min,
 		max: schemaMax ?? entry.max,
+		optional: entry.optional,
+		limitLabel: entry.optional ? t(`settings.limit.${entry.key}`) : undefined,
 		isSet
 	};
 }

@@ -44,12 +44,12 @@ export const scenarios: Record<string, MockTable> = {
 			leader_endpoint: null,
 			has_quorum: false,
 			can_lose: 0,
-			members: CLUSTER.members.map((member) => ({ ...member, state: member.is_self ? 'candidate' : 'follower' }))
+			members: CLUSTER.members.map((member) => ({ ...member, state: 'follower' }))
 		}),
 		'GET /v1/admin/health': ok({
 			status: 'down',
 			checked_at: BASE,
-			components: [{ name: 'raft', status: 'down', latency_ms: null, detail: 'No leader.', since: BASE }]
+			components: [{ name: 'nats', status: 'down', latency_ms: null, detail: 'Not connected.', since: BASE }]
 		}),
 		'PUT /v1/files/*': NO_LEADER,
 		'PATCH /v1/files/*': NO_LEADER,

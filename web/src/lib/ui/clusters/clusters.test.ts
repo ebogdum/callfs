@@ -20,20 +20,11 @@ const networkError: UiError = {
 	layer: 'network'
 };
 
-const leaderError: UiError = {
-	title: 'callfs cannot accept changes right now.',
-	body: 'The cluster has no leader. Reading still works.',
-	status: 503,
-	code: 'NO_LEADER',
-	retryable: true,
-	layer: 'leader'
-};
-
 function healthyAdmin(): void {
 	vi.mocked(loadHealth).mockResolvedValue({ ok: true, value: { status: 'ok' } as Health });
 	vi.mocked(loadCluster).mockResolvedValue({
 		ok: true,
-		value: { mode: 'raft', leader_id: 'node-1' } as ClusterInfo
+		value: { mode: 'nats', leader_id: 'node-1' } as ClusterInfo
 	});
 }
 
@@ -60,10 +51,10 @@ describe('DegradedCluster admin probes', () => {
 		expect(loadHealth).toHaveBeenCalledWith(true);
 	});
 
-	it('shows the no-leader banner and write reason when raft has no leader', async () => {
+	it('shows the no-leader banner and write reason when the cluster has no leader', async () => {
 		vi.mocked(loadCluster).mockResolvedValue({
 			ok: true,
-			value: { mode: 'raft', leader_id: null } as ClusterInfo
+			value: { mode: 'nats', leader_id: null } as ClusterInfo
 		});
 		renderCluster('admin');
 		expect(await screen.findByText(t('clusters.degraded.no_leader.title'))).toBeTruthy();
@@ -72,12 +63,6 @@ describe('DegradedCluster admin probes', () => {
 			expect('true').toBe(status.getAttribute('data-degraded'));
 		});
 		expect(status.textContent).toMatch(/^The server cannot accept changes right now\. No leader since /);
-	});
-
-	it('treats a NO_LEADER response from the cluster endpoint as no leader', async () => {
-		vi.mocked(loadCluster).mockResolvedValue({ ok: false, error: leaderError });
-		renderCluster('admin');
-		expect(await screen.findByText(t('clusters.degraded.no_leader.title'))).toBeTruthy();
 	});
 
 	it('shows the health-down banner when health reports down', async () => {
@@ -148,7 +133,7 @@ describe('navigation role filtering', () => {
 
 	it('removes cluster children whose capability is off for admins', () => {
 		const cluster = visibleNavItems('admin', []).find((item) => 'cluster' === item.id);
-		expect(cluster?.children.map((child) => child.id)).not.toContain('cluster.raft');
+		expect(cluster?.children.map((child) => child.id)).not.toContain('cluster.replication');
 		expect(cluster?.children.map((child) => child.id)).toContain('cluster.topology');
 	});
 

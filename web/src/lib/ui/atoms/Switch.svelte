@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--switch-track', '--switch-track-on', '--switch-thumb', '--switch-track-w'] as const;
-</script>
-
 <script lang="ts">
 	import { Switch } from 'bits-ui';
 	import type { ComponentProps } from 'svelte';

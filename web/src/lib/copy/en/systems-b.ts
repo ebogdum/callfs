@@ -16,7 +16,7 @@ export default {
 	'systems-b.cluster.group.runtime': 'Runtime',
 	'systems-b.cluster.topology': 'Topology',
 	'systems-b.cluster.members': 'Members',
-	'systems-b.cluster.raft': 'Raft',
+	'systems-b.cluster.replication': 'Replication',
 	'systems-b.cluster.servers': 'Servers',
 	'systems-b.cluster.storage': 'Storage',
 	'systems-b.cluster.durability': 'Durability',

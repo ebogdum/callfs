@@ -7,6 +7,7 @@ export interface Me {
 	session_expires_at: string | null;
 	csrf_token: string | null;
 	permissions_model: 'owner';
+	idle_timeout_seconds: number;
 }
 
 export interface Capabilities {
@@ -18,7 +19,7 @@ export interface Capabilities {
 	node_id: string | null;
 	features: {
 		erasure: boolean;
-		raft: boolean;
+		nats: boolean;
 		cross_server: boolean;
 		websocket: boolean;
 		replication: boolean;
@@ -433,47 +434,43 @@ export interface ValidateResult {
 
 export interface ClusterMember {
 	node_id: string;
-	raft_addr: string;
-	api_endpoint: string;
-	suffrage: 'voter' | 'nonvoter';
-	state: 'leader' | 'follower' | 'candidate' | 'shutdown' | 'unreachable';
-	is_self: boolean;
-	last_contact_ms: number | null;
-	behind_by: number | null;
 	instance_id: string | null;
-}
-
-export interface ClusterInfo {
-	mode: 'raft' | 'single';
-	self_id: string;
-	leader_id: string | null;
-	leader_endpoint: string | null;
-	term: number;
-	last_log_index: number;
-	commit_index: number;
-	applied_index: number;
-	last_snapshot: { index: number; term: number; at: string } | null;
-	voters: number;
-	has_quorum: boolean;
-	can_lose: number;
-	members: ClusterMember[];
-}
-
-export interface Preflight {
-	checks: {
-		name: 'id_unique' | 'addr_unused' | 'raft_reachable' | 'api_reachable' | 'api_https' | 'secret_ok';
-		ok: boolean;
-		detail: string;
-	}[];
-	would_replace: string[];
+	api_endpoint: string | null;
+	state: 'leader' | 'follower' | 'offline';
+	is_self: boolean;
+	online: boolean;
+	last_seen_ms: number | null;
+	behind_by: number | null;
 }
 
 export interface Snapshot {
 	id: string;
-	index: number;
-	term: number;
+	seq: number;
 	bytes: number;
 	created_at: string;
+}
+
+export interface ClusterLog {
+	first_seq: number;
+	last_seq: number;
+	messages: number;
+	bytes: number;
+	applied_seq: number;
+	last_snapshot: Snapshot | null;
+	snapshot_interval_ms: number;
+}
+
+export interface ClusterInfo {
+	mode: 'nats' | 'single';
+	self_id: string;
+	cluster_name: string;
+	leader_id: string | null;
+	leader_endpoint: string | null;
+	replicas: number;
+	has_quorum: boolean;
+	can_lose: number;
+	log: ClusterLog;
+	members: ClusterMember[];
 }
 
 export interface StateStats {
@@ -496,6 +493,8 @@ export interface ServerInfo {
 	files: number;
 	bytes: number;
 	pieces: number;
+	disk_free_bytes: number | null;
+	disk_total_bytes: number | null;
 }
 
 export interface Backend {
@@ -578,7 +577,7 @@ export interface Migrations {
 }
 
 export interface Locks {
-	type: 'local' | 'redis';
+	type: 'local' | 'redis' | 'nats';
 	wait_timeout_ms: number;
 	ttl_ms: number;
 	held: { key: string; path: string; owner_hint: string; acquired_at: string; expires_at: string }[];
@@ -589,8 +588,8 @@ export interface Locks {
 		errors: number;
 		lost: number;
 		renew_errors: number;
-		wait_p50_ms: number;
-		wait_p95_ms: number;
+		wait_p50_ms: number | null;
+		wait_p95_ms: number | null;
 	};
 }
 
@@ -731,4 +730,12 @@ export interface Worker {
 	last_result: Record<string, unknown>;
 	last_error: string | null;
 	next_run_at: string | null;
+}
+
+export interface DeadTask {
+	id: number;
+	pool: string;
+	reason: string;
+	failed_at: string;
+	summary: string;
 }

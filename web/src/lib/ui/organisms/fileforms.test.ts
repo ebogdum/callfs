@@ -27,7 +27,9 @@ const servers: ServerInfo[] = [
 		checked_at: null,
 		files: 0,
 		bytes: 0,
-		pieces: 0
+		pieces: 0,
+		disk_free_bytes: null,
+		disk_total_bytes: null
 	}
 ];
 
@@ -37,7 +39,8 @@ const me: Me = {
 	auth_method: 'session',
 	session_expires_at: null,
 	csrf_token: null,
-	permissions_model: 'owner'
+	permissions_model: 'owner',
+	idle_timeout_seconds: 3600
 };
 
 const moveOptions = (overrides: Partial<MoveOptions> = {}): MoveOptions => ({

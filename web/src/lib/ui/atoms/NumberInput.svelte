@@ -1,13 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = [
-		'--number-input-bg',
-		'--number-input-fg',
-		'--number-input-border',
-		'--number-input-radius',
-		'--number-input-step-hover-bg'
-	] as const;
-</script>
-
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { HTMLInputAttributes } from 'svelte/elements';

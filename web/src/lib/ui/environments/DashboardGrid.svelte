@@ -56,8 +56,9 @@
 
 	function movePanel(panel: DashboardPanel, step: -1 | 1): void {
 		const index = visiblePanels.indexOf(panel);
-		const target = visiblePanels.at(index + step);
-		if (0 > index || undefined === target) {
+		const targetIndex = index + step;
+		const target = visiblePanels[targetIndex];
+		if (0 > index || 0 > targetIndex || undefined === target) {
 			return;
 		}
 		const next = [...orderedIds];

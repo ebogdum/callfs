@@ -25,7 +25,7 @@ const ROUTES: readonly ScreenRoute[] = [
 	{ path: 'cluster', shell: 'console', member: false },
 	{ path: 'cluster/nodes', shell: 'console', member: false },
 	{ path: 'cluster/nodes/callfs-node-2', shell: 'console', member: false },
-	{ path: 'cluster/raft', shell: 'console', member: false },
+	{ path: 'cluster/replication', shell: 'console', member: false },
 	{ path: 'cluster/servers', shell: 'console', member: false },
 	{ path: 'cluster/storage', shell: 'console', member: false },
 	{ path: 'cluster/durability', shell: 'console', member: false },

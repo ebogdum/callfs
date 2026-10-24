@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--progress-ring-color', '--progress-ring-track', '--progress-ring-size'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import type { Size } from '../types';

@@ -1,6 +1,5 @@
 <script lang="ts" module>
 	export type CopyButtonVariant = 'icon' | 'button';
-	export const TOKENS = ['--copy-button-fg', '--copy-button-hover-bg'] as const;
 
 	type CopyState = 'idle' | 'copied' | 'failed';
 

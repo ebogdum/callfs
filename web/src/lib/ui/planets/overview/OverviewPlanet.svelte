@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { capabilities } from '$lib/stores/capabilities.svelte';
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { untrack, type ComponentProps } from 'svelte';
@@ -46,7 +47,6 @@
 	import FindingList from '../../organisms/FindingList.svelte';
 	import JobList from '../../organisms/JobList.svelte';
 	import KpiStrip from '../../organisms/KpiStrip.svelte';
-	import EmptyState from '../../molecules/EmptyState.svelte';
 	import ErrorState from '../../molecules/ErrorState.svelte';
 	import InlineAlert from '../../molecules/InlineAlert.svelte';
 	import StaleIndicator from '../../molecules/StaleIndicator.svelte';
@@ -64,6 +64,7 @@
 	const HOUR_S = 3_600;
 	const DAY_S = 86_400;
 	const DAY_MS = DAY_S * 1_000;
+	const SNAPSHOT_GRACE_INTERVALS = 3;
 	const RECENT_LIMIT = 5;
 	const ATTENTION_LIMIT = 5;
 	const CHECKLIST_KEY = 'overview.setup';
@@ -80,6 +81,7 @@
 	let jobsOutcome = $state<Outcome<Job[]>>(null);
 	let hourlyOutcome = $state<Outcome<SeriesResult>>(null);
 	let trafficOutcome = $state<Outcome<SeriesResult>>(null);
+	let trafficWindow = $state<readonly [number, number] | undefined>(undefined);
 	let speedOutcome = $state<Outcome<SeriesResult>>(null);
 	let usageOutcome = $state<Outcome<Usage>>(null);
 	let linksOutcome = $state<Outcome<LinkRecord[]>>(null);
@@ -239,6 +241,7 @@
 		usageOutcome = settle(usage, (value) => value);
 		hourlyOutcome = settle(hourly, (value) => value);
 		trafficOutcome = settle(traffic, (value) => value);
+		trafficWindow = [end - DAY_S, end];
 		speedOutcome = settle(speed, (value) => value);
 	}
 
@@ -317,7 +320,7 @@
 				: [...attention.slice(0, ATTENTION_LIMIT), ...mutedFindings]
 	);
 
-	const noLeader = $derived(null !== cluster && 'raft' === cluster.mode && null === cluster.leader_id);
+	const noLeader = $derived(null !== cluster && 'nats' === cluster.mode && null === cluster.leader_id);
 	const downComponent = $derived(health?.components.find((component) => 'down' === component.status) ?? null);
 
 	const verdict = $derived.by((): { title: string; cause: string | null; tone: VerdictTone } => {
@@ -358,7 +361,8 @@
 		'storage.localfs': 'overview.check.localfs',
 		'storage.s3': 'overview.check.s3',
 		'storage.internal_proxy': 'overview.check.internal_proxy',
-		raft: 'overview.check.raft',
+		nats: 'overview.check.nats',
+		metadata_log: 'overview.check.metadata_log',
 		erasure: 'overview.check.erasure',
 		tls: 'overview.check.tls',
 		disk: 'overview.check.disk',
@@ -454,7 +458,7 @@
 	});
 
 	const healthyMembers = $derived(
-		cluster ? cluster.members.filter((member) => !['unreachable', 'shutdown'].includes(member.state)).length : null
+		cluster ? cluster.members.filter((member) => member.online).length : null
 	);
 
 	const quorumKey = $derived.by((): 'quorum.ok' | 'quorum.at_risk' | 'quorum.lost' | undefined => {
@@ -471,6 +475,8 @@
 		const total = lastValue(requestTotals);
 		const failed = lastValue(failedTotals);
 		const previous = previousValue(requestTotals);
+		const sampledSince = hourly?.sampled_since ?? null;
+		const previousFull = null !== sampledSince && Date.parse(sampledSince) / 1_000 <= nowSeconds() - 2 * HOUR_S;
 		const nodeTotal = nodes.items.length;
 		const nodeTile: StatTileProps | null =
 			0 === nodeTotal
@@ -500,7 +506,7 @@
 							label: t('overview.kpi.cluster'),
 							value: healthyMembers,
 							unit: 'count',
-							base: { num: healthyMembers ?? 0, den: cluster.voters },
+							base: { num: healthyMembers ?? 0, den: cluster.replicas },
 							status: quorumKey
 						};
 		const clusterTile = nodeTile ?? memberTile;
@@ -509,13 +515,17 @@
 				label: t('overview.kpi.requests'),
 				value: total,
 				unit: 'count',
-				base: null === total || null === failed ? undefined : { num: failed, den: total },
 				delta:
-					null === total || null === previous
+					null === total || null === previous || !previousFull
 						? undefined
 						: { value: total - previous, goodWhen: 'none', period: t('overview.kpi.vs_prev_hour') },
 				sparkline: sumSeries(traffic?.series ?? []).map((point) => point[1]),
-				help: null === total ? (errorOf(hourlyOutcome)?.title ?? t('overview.kpi.no_data')) : undefined
+				help:
+					null === total
+						? (errorOf(hourlyOutcome)?.title ?? t('overview.kpi.no_data'))
+						: null === failed || 0 === failed
+							? t('overview.kpi.requests_help')
+							: t('overview.kpi.requests_failed', { count: formatNumber(failed) })
 			},
 			{
 				label: t('overview.kpi.speed'),
@@ -571,6 +581,20 @@
 		return null !== findingIds && false === findingIds.has(id);
 	}
 
+	const backupDone = $derived.by((): boolean => {
+		if (null === adminStatus) {
+			return false;
+		}
+		if ('nats' !== adminStatus.file_index) {
+			return capabilities.has('replication');
+		}
+		if (null === cluster || null === cluster.log.last_snapshot || 0 >= cluster.log.snapshot_interval_ms) {
+			return false;
+		}
+		const age = Date.now() - Date.parse(cluster.log.last_snapshot.created_at);
+		return age <= SNAPSHOT_GRACE_INTERVALS * cluster.log.snapshot_interval_ms;
+	});
+
 	const checklistItems: SetupItem[] = $derived([
 		{
 			id: 'https',
@@ -598,7 +622,7 @@
 			done: absent('index.sslmode_disable'),
 			href: `${base}/settings/index#metadata_store.dsn`
 		},
-		{ id: 'backup', label: t('overview.setup.backup'), done: false, href: `${base}/settings/index` }
+		{ id: 'backup', label: t('overview.setup.backup'), done: backupDone, href: `${base}/settings/index` }
 	]);
 
 	const checklistVisible = $derived(
@@ -658,6 +682,7 @@
 {#snippet requestsPanel()}
 	<TimeSeriesChart
 		series={trafficSeries}
+		domain={trafficWindow}
 		unit="per_s"
 		stacked
 		status={statusOf(trafficOutcome, 0 === trafficSeries.length)}

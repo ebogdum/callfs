@@ -6,7 +6,7 @@ test('remove the leader blocked by quorum risk, then transfer leadership first',
 	await installMocks(page, 'healthy', {
 		'DELETE /v1/admin/cluster/nodes/callfs-node-1': {
 			status: 409,
-			body: { code: 'QUORUM_RISK', message: 'Removing this member would lose quorum.' }
+			body: { code: 'CONFLICT', message: 'Removing this member would lose quorum.' }
 		},
 		'POST /v1/admin/cluster/leadership-transfer': { status: 200, body: { status: 'transferred' } }
 	});

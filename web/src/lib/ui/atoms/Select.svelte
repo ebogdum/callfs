@@ -1,6 +1,4 @@
 <script lang="ts" module>
-	export const TOKENS = ['--select-bg', '--select-fg', '--select-border', '--select-radius'] as const;
-
 	export interface SelectOption {
 		value: string;
 		label: string;

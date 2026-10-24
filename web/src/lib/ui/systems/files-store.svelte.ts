@@ -2,15 +2,9 @@ import { preferences, type FileView, type PreferencesStore } from '$lib/stores/p
 
 export const RECENT_PATH_LIMIT = 10;
 
-export interface FilesClipboard {
-	readonly mode: 'cut';
-	readonly paths: readonly string[];
-}
-
 type PreferencesSink = Pick<PreferencesStore, 'value' | 'update'>;
 
 export class FilesStore {
-	clipboard = $state<FilesClipboard | null>(null);
 	readonly #prefs: PreferencesSink;
 
 	constructor(prefs: PreferencesSink) {
@@ -60,13 +54,6 @@ export class FilesStore {
 		this.#prefs.update({ files: { recent } });
 	}
 
-	cut(paths: readonly string[]): void {
-		this.clipboard = 0 === paths.length ? null : { mode: 'cut', paths: [...paths] };
-	}
-
-	clearClipboard(): void {
-		this.clipboard = null;
-	}
 }
 
 export const filesStore = new FilesStore(preferences);

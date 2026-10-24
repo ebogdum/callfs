@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { goto } from '$app/navigation';
 import { base } from '$app/paths';
 import { audit } from '$lib/api/admin/telemetry';
-import { instances } from '$lib/api/admin/topology';
-import { locks } from '$lib/api/admin/runtime';
+import { instances, replication } from '$lib/api/admin/topology';
+import { cache, locks } from '$lib/api/admin/runtime';
 import { getSplitFile, repair, verify } from '$lib/api/erasure';
 import { listDir, readRange, stat } from '$lib/api/files';
 import { listLinks } from '$lib/api/links';
@@ -51,11 +51,13 @@ vi.mock('$lib/api/admin/telemetry', async (importOriginal) => ({
 }));
 vi.mock('$lib/api/admin/topology', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/api/admin/topology')>()),
-	instances: vi.fn()
+	instances: vi.fn(),
+	replication: vi.fn()
 }));
 vi.mock('$lib/api/admin/runtime', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/api/admin/runtime')>()),
-	locks: vi.fn()
+	locks: vi.fn(),
+	cache: vi.fn()
 }));
 
 const COMMANDS_CONTEXT = 'callfs.commands';
@@ -97,7 +99,8 @@ const memberSession = {
 	auth_method: 'session' as const,
 	session_expires_at: null,
 	csrf_token: null,
-	permissions_model: 'owner' as const
+	permissions_model: 'owner' as const,
+	idle_timeout_seconds: 3600
 };
 
 describe('hrefFor and pathFromRoute', () => {
@@ -178,6 +181,8 @@ describe('BrowsePlanet', () => {
 		vi.mocked(audit).mockReset();
 		vi.mocked(instances).mockReset();
 		vi.mocked(locks).mockReset();
+		vi.mocked(replication).mockResolvedValue({ ok: false, error: { kind: 'network' } });
+		vi.mocked(cache).mockResolvedValue({ ok: false, error: { kind: 'network' } });
 		const cached = entryFor(['dir', '/team', 'name', 'asc', false]);
 		cached.data = undefined;
 		cached.error = null;

@@ -32,7 +32,6 @@
 
 	const REFRESH_MS = 5_000;
 	const COLOR_BY_VALUES: readonly TopologyColorBy[] = ['state', 'latency', 'lag', 'disk'];
-	const DOWN_STATES: readonly string[] = ['unreachable', 'shutdown'];
 
 	const clusterQuery = createQuery<Result<ClusterInfo, UiError>>({
 		key: ['cluster'],
@@ -72,13 +71,11 @@
 	const instancesError = $derived(instancesResult && !instancesResult.ok ? instancesResult.error : null);
 	const servers = $derived(instancesResult?.ok ? instancesResult.value.items : []);
 	const members = $derived(info?.members ?? []);
-	const upMembers = $derived(
-		members.filter((member) => 'voter' === member.suffrage && !DOWN_STATES.includes(member.state)).length
-	);
-	const reachableServers = $derived(servers.filter((server) => true === server.reachable || server.is_self).length);
+	const upMembers = $derived(members.filter((member) => member.online).length);
+	const reachableServers = $derived(servers.filter((server) => 'server.up' === reachStatus(server)).length);
 	const totalFiles = $derived(servers.reduce((sum, server) => sum + server.files, 0));
 	const totalBytes = $derived(servers.reduce((sum, server) => sum + server.bytes, 0));
-	const isRaft = $derived('raft' === info?.mode);
+	const isNats = $derived('nats' === info?.mode);
 	const isSingle = $derived('single' === info?.mode);
 	const runsAlone = $derived(isSingle && 1 >= servers.length);
 
@@ -89,10 +86,10 @@
 						label: t('topology.kpi.members'),
 						value: upMembers,
 						unit: 'count',
-						base: { num: upMembers, den: info.voters },
+						base: { num: upMembers, den: info.replicas },
 						status: quorumStatus(info)
 					},
-					{ label: t('topology.kpi.term'), value: info.term, unit: 'count' },
+					{ label: t('topology.kpi.log'), value: info.log.messages, unit: 'count' },
 					{
 						label: t('topology.kpi.servers'),
 						value: reachableServers,
@@ -147,7 +144,7 @@
 {/snippet}
 
 {#snippet primary()}
-	{#if isRaft}
+	{#if isNats}
 		<Button variant="primary" iconStart="plus" onclick={addMember}>{t('topology.primary.add_member')}</Button>
 	{:else if isSingle && !runsAlone}
 		<Button variant="primary" iconStart="plus" onclick={addServer}>{t('topology.primary.add_server')}</Button>
@@ -220,9 +217,9 @@
 					{/snippet}
 					<TopologyMap {members} {servers} {colorBy} bind:selected onopen={openNode} />
 				</ClusterCard>
-				{#if isRaft}
+				{#if isNats}
 					<ClusterCard title={t('cluster.topology.quorum.title')} description={t('cluster.topology.quorum.body')} icon="shield">
-						<QuorumMeter voters={info.voters} healthy={upMembers} />
+						<QuorumMeter voters={info.replicas} healthy={upMembers} />
 					</ClusterCard>
 				{/if}
 			{/if}

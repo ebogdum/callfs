@@ -29,6 +29,7 @@
 		onsubmit?: (result: ParseResult) => void;
 		suggestions?: QuerySuggestions;
 		hint?: string;
+		placeholder?: string;
 	}
 
 	let {
@@ -38,6 +39,7 @@
 		onsubmit,
 		suggestions = {},
 		hint = t('u095query.examples'),
+		placeholder,
 		class: className,
 		...rest
 	}: Props = $props();
@@ -163,6 +165,7 @@
 					id={inputId}
 					class="input"
 					type="search"
+					{placeholder}
 					role="combobox"
 					autocomplete="off"
 					aria-autocomplete="list"

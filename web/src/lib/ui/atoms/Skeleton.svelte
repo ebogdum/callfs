@@ -1,6 +1,5 @@
 <script lang="ts" module>
 	export type SkeletonShape = 'text' | 'rect' | 'circle';
-	export const TOKENS = ['--skeleton-base', '--skeleton-shine', '--skeleton-radius', '--skeleton-line-h'] as const;
 </script>
 
 <script lang="ts">

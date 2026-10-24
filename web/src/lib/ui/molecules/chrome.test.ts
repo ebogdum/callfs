@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import StaleIndicator from './StaleIndicator.svelte';
-import ConnectionPill from './ConnectionPill.svelte';
 import ScopeChip from './ScopeChip.svelte';
-import ThemeToggle from './ThemeToggle.svelte';
 
 describe('StaleIndicator', () => {
 	it('names the refresh button and calls onrefresh on click', async () => {
@@ -61,25 +59,6 @@ describe('StaleIndicator', () => {
 	});
 });
 
-describe('ConnectionPill', () => {
-	it.each([
-		['live', 'Live'],
-		['stale', 'Stale'],
-		['reconnecting', 'Reconnecting'],
-		['offline', 'Offline'],
-		['paused', 'Paused']
-	] as const)('shows the word for the %s state', (state, word) => {
-		const { container } = render(ConnectionPill, { props: { state } });
-		expect(screen.getByText(word)).toBeTruthy();
-		expect(container.firstElementChild?.getAttribute('data-state')).toBe(state);
-	});
-
-	it('announces changes politely', () => {
-		const { container } = render(ConnectionPill, { props: { state: 'live' } });
-		expect(container.firstElementChild?.getAttribute('aria-live')).toBe('polite');
-	});
-});
-
 describe('ScopeChip', () => {
 	it('shows the server name', () => {
 		render(ScopeChip, { props: { server: 'callfs-instance-1' } });
@@ -96,34 +75,5 @@ describe('ScopeChip', () => {
 		render(ScopeChip, { props: { server: 'callfs-instance-1' } });
 		expect(screen.queryByText('Leader')).toBeNull();
 		expect(screen.queryByText(/^Member /)).toBeNull();
-	});
-});
-
-describe('ThemeToggle', () => {
-	it('names the group and shows each option', () => {
-		render(ThemeToggle, { props: { value: 'system' } });
-		expect(screen.getByLabelText('Theme')).toBeTruthy();
-		expect(screen.getByText('System')).toBeTruthy();
-		expect(screen.getByText('Light')).toBeTruthy();
-		expect(screen.getByText('Dark')).toBeTruthy();
-	});
-
-	it('marks the bound option as on', () => {
-		render(ThemeToggle, { props: { value: 'dark' } });
-		expect(screen.getByText('Dark').closest('button')?.getAttribute('data-state')).toBe('on');
-		expect(screen.getByText('Light').closest('button')?.getAttribute('data-state')).toBe('off');
-	});
-
-	it('selects an option on click', async () => {
-		render(ThemeToggle, { props: { value: 'system' } });
-		await fireEvent.click(screen.getByText('Light'));
-		expect(screen.getByText('Light').closest('button')?.getAttribute('data-state')).toBe('on');
-		expect(screen.getByText('System').closest('button')?.getAttribute('data-state')).toBe('off');
-	});
-
-	it('keeps a mode selected when the selected option is clicked again', async () => {
-		render(ThemeToggle, { props: { value: 'system' } });
-		await fireEvent.click(screen.getByText('System'));
-		expect(screen.getByText('System').closest('button')?.getAttribute('data-state')).toBe('on');
 	});
 });

@@ -14,6 +14,7 @@ export default {
 	'common.show_technical': 'Show technical details',
 	'common.unknown': 'Unknown',
 	'common.no_matches': 'Nothing matches.',
+	'common.show_options': 'Show options',
 	'common.loading_label': 'Loading…',
 	'common.file_count': '{count, plural, one {# file} other {# files}}',
 	'common.clear': 'Clear',

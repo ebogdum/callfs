@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import DurabilityMeter from './DurabilityMeter.svelte';
 import ProgressSteps, { type ProgressStep } from './ProgressSteps.svelte';
 import QuorumMeter from './QuorumMeter.svelte';
-import Stepper, { type StepperStep } from './Stepper.svelte';
 
 afterEach(cleanup);
 
@@ -91,30 +90,5 @@ describe('ProgressSteps', () => {
 		expect(screen.getByText('Done')).toBeTruthy();
 		expect(screen.getByText('Running')).toBeTruthy();
 		expect(screen.getByText('Waiting')).toBeTruthy();
-	});
-});
-
-describe('Stepper', () => {
-	const steps: StepperStep[] = [
-		{ id: 'about', label: 'About the new member', href: '#about' },
-		{ id: 'checks', label: 'Checks' },
-		{ id: 'review', label: 'Review', href: '#review' },
-		{ id: 'finish', label: 'Finish' }
-	];
-
-	it('shows the position and names every step', () => {
-		render(Stepper, { steps, current: 2 });
-		expect(screen.getByText('Step 2 of 4')).toBeTruthy();
-		expect(screen.getByText('Review')).toBeTruthy();
-		expect(screen.getByText('Finish')).toBeTruthy();
-	});
-
-	it('links completed steps that have a target and marks the current step', () => {
-		const { container } = render(Stepper, { steps, current: 2 });
-		expect(screen.getByRole('link', { name: 'About the new member' }).getAttribute('href')).toBe('#about');
-		expect(screen.queryByRole('link', { name: 'Review' })).toBeNull();
-		const items = [...container.querySelectorAll('li')];
-		expect(items.map((item) => item.getAttribute('data-state'))).toEqual(['done', 'current', 'upcoming', 'upcoming']);
-		expect(items[1].getAttribute('aria-current')).toBe('step');
 	});
 });

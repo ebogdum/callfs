@@ -135,7 +135,7 @@
 			<Button
 				variant="primary"
 				loading={transferring}
-				disabledReason={'voter' === member.suffrage ? undefined : t('members.detail.transfer.nonvoter')}
+				disabledReason={member.online ? undefined : t('members.detail.transfer.offline')}
 				onclick={transferHere}
 			>
 				{t('members.detail.transfer')}
@@ -144,7 +144,16 @@
 	{/snippet}
 	{#snippet secondary()}
 		{#if undefined !== member}
-			<Button variant="secondary" onclick={removeMember}>{t('members.menu.remove')}</Button>
+			<Button
+				variant="secondary"
+				disabledReason={'offline' === member.state && false === member.is_self ? undefined : t('members.remove.offline_only')}
+				onclick={removeMember}
+			>
+				{t('members.menu.remove')}
+			</Button>
+			{#if 'offline' !== member.state || member.is_self}
+				<span class="remove-hint">{t('members.remove.offline_only')}</span>
+			{/if}
 		{/if}
 	{/snippet}
 	{#snippet status()}
@@ -175,3 +184,10 @@
 		{/if}
 	</Stack>
 </PageFrame>
+
+<style>
+	.remove-hint {
+		color: var(--text-muted);
+		font-size: var(--text-sm-size);
+	}
+</style>

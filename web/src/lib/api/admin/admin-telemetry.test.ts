@@ -3,6 +3,7 @@ import type { ApiFailure } from '../errors';
 import { request, type ApiResponse } from '../http';
 import { API_ROUTES } from '../routes';
 import type { Job, Result, SeriesResult } from '../types';
+import { deadTasks, dropDeadTask, retryDeadTask } from './deadtasks';
 import { cancel, job, jobs, retryFailed, runWorker, workers } from './jobs';
 import { audit, eventHistory, logs, metrics, series, transfers } from './telemetry';
 
@@ -172,6 +173,27 @@ describe('admin jobs api', () => {
 	});
 });
 
+describe('admin dead tasks api', () => {
+	it('lists dead tasks before a sequence', async () => {
+		requestMock.mockResolvedValueOnce(success({ items: [], next_before: null }));
+
+		const result = await deadTasks(40);
+
+		expect(result).toEqual({ ok: true, value: { items: [], next_before: null } });
+		expect(requestMock).toHaveBeenCalledWith('/v1/admin/tasks/dead', { query: { before: 40 } });
+	});
+
+	it('retries and drops by id', async () => {
+		requestMock.mockResolvedValue(success(undefined));
+
+		await retryDeadTask(7);
+		await dropDeadTask(8);
+
+		expect(requestMock).toHaveBeenCalledWith('/v1/admin/tasks/dead/7/retry', { method: 'POST' });
+		expect(requestMock).toHaveBeenCalledWith('/v1/admin/tasks/dead/8', { method: 'DELETE' });
+	});
+});
+
 describe('route registry', () => {
 	it('gives every route a unique id', () => {
 		const ids = API_ROUTES.map((route) => route.id);
@@ -192,7 +214,7 @@ describe('route registry', () => {
 	it('gives internal routes no screens and a reason', () => {
 		const internal = API_ROUTES.filter((route) => true === route.internal);
 
-		expect(internal).toHaveLength(5);
+		expect(internal).toHaveLength(3);
 		expect(internal.every((route) => 0 === route.screens.length && 0 < (route.reason ?? '').length)).toBe(true);
 	});
 

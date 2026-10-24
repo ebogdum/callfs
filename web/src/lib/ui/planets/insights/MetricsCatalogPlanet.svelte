@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { metrics as metricsCatalog, type MetricsCatalog } from '$lib/api/admin/telemetry';
-	import type { ApiFailure } from '$lib/api/errors';
+	import { toUiError, type ApiFailure } from '$lib/api/errors';
 	import type { MetricFamily, Result } from '$lib/api/types';
 	import { t } from '$lib/copy/t';
 	import { createQuery } from '$lib/data/query.svelte';
@@ -66,9 +66,14 @@
 		{ name: 'callfs_replication_total', matches: ['callfs_replication_total'], type: 'counter', labels: 'result', meaning: 'storage-insights.metric.replication.meaning' },
 		{ name: 'callfs_transfers_active', matches: ['callfs_transfers_active'], type: 'gauge', labels: 'kind', meaning: 'storage-insights.metric.transfers_active.meaning' },
 		{ name: 'callfs_auth_failures_total', matches: ['callfs_auth_failures_total'], type: 'counter', labels: 'reason', meaning: 'storage-insights.metric.auth_failures.meaning' },
-		{ name: 'callfs_raft_apply_duration_seconds', matches: ['callfs_raft_apply_duration_seconds'], type: 'histogram', labels: '', meaning: 'storage-insights.metric.raft_apply.meaning' },
-		{ name: 'callfs_raft_forward_duration_seconds', matches: ['callfs_raft_forward_duration_seconds'], type: 'histogram', labels: 'result', meaning: 'storage-insights.metric.raft_forward.meaning' },
-		{ name: 'callfs_raft_leader_changes_total', matches: ['callfs_raft_leader_changes_total'], type: 'counter', labels: '', meaning: 'storage-insights.metric.raft_leader_changes.meaning' },
+		{ name: 'callfs_nats_connected', matches: ['callfs_nats_connected'], type: 'gauge', labels: '', meaning: 'storage-insights.metric.nats_connected.meaning' },
+		{ name: 'callfs_nats_routes', matches: ['callfs_nats_routes'], type: 'gauge', labels: '', meaning: 'storage-insights.metric.nats_routes.meaning' },
+		{ name: 'callfs_nats_slow_consumers', matches: ['callfs_nats_slow_consumers'], type: 'counter', labels: '', meaning: 'storage-insights.metric.nats_slow_consumers.meaning' },
+		{ name: 'callfs_nats_in_msgs', matches: ['callfs_nats_in_msgs'], type: 'counter', labels: '', meaning: 'storage-insights.metric.nats_in_msgs.meaning' },
+		{ name: 'callfs_nats_out_bytes', matches: ['callfs_nats_out_bytes'], type: 'counter', labels: '', meaning: 'storage-insights.metric.nats_out_bytes.meaning' },
+		{ name: 'callfs_nats_js_api_errors', matches: ['callfs_nats_js_api_errors'], type: 'counter', labels: '', meaning: 'storage-insights.metric.nats_js_api_errors.meaning' },
+		{ name: 'callfs_nats_stream_messages', matches: ['callfs_nats_stream_messages'], type: 'gauge', labels: 'stream', meaning: 'storage-insights.metric.nats_stream_messages.meaning' },
+		{ name: 'callfs_nats_stream_bytes', matches: ['callfs_nats_stream_bytes'], type: 'gauge', labels: 'stream', meaning: 'storage-insights.metric.nats_stream_bytes.meaning' },
 		{ name: 'callfs_jobs_total', matches: ['callfs_jobs_total'], type: 'counter', labels: 'kind, result', meaning: 'storage-insights.metric.jobs.meaning' },
 		{ name: 'callfs_erasure_pieces_repaired_total', matches: ['callfs_erasure_pieces_repaired_total'], type: 'counter', labels: '', meaning: 'storage-insights.metric.erasure_repaired.meaning' },
 		{ name: 'callfs_usage_bytes', matches: ['callfs_usage_bytes'], type: 'gauge', labels: 'storage', meaning: 'storage-insights.metric.usage_bytes.meaning' },
@@ -78,7 +83,7 @@
 
 	async function loadCatalog(): Promise<MetricsCatalog> {
 		const outcome: Result<MetricsCatalog, ApiFailure> = await metricsCatalog();
-		return outcome.ok ? outcome.value : Promise.reject(outcome.error);
+		return outcome.ok ? outcome.value : Promise.reject(toUiError(outcome.error, { action: 'explore.action.families', read: true }));
 	}
 
 	const catalogQuery = createQuery({
@@ -103,7 +108,7 @@
 
 	const buildRow = (definition: MetricDefinition, families: MetricFamily[]): CatalogRow => {
 		const matched = familiesFor(definition, families);
-		const reported = matched.some((family) => true === family.emitted);
+		const reported = matched.some((family) => true === family.emitted) && 0 < sumOf(matched);
 		const isExact = definition.matches.every((match) => !match.endsWith('_'));
 		const type = definition.type.length > 0 ? definition.type : DASH;
 		return {
@@ -195,7 +200,7 @@
 	{#snippet toolbar()}
 		<div class="toolbar">
 			<div class="search">
-				<SearchInput label={t('insights.metrics.search')} bind:value={search} resultCount={'' === search ? null : visibleRows.length} />
+				<SearchInput label={t('insights.metrics.search')} placeholder={t('insights.metrics.placeholder')} bind:value={search} resultCount={'' === search ? null : visibleRows.length} />
 			</div>
 			<SegmentedControl label={t('insights.metrics.filter.label')} options={showOptions} bind:value={show} />
 			<span class="count">

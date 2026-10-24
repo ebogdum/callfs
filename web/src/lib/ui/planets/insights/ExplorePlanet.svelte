@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { getContext } from 'svelte';
-	import { toUiError, type ApiFailure } from '$lib/api/errors';
+	import { toUiError } from '$lib/api/errors';
 	import { metrics, series } from '$lib/api/admin/telemetry';
 	import type { MetricFamily, Result, SeriesResult } from '$lib/api/types';
 	import type { CommandRegistry } from '$lib/commands/registry.svelte';
@@ -73,6 +73,7 @@
 		current: SeriesResult;
 		previous: SeriesResult | null;
 		shiftSeconds: number;
+		window: readonly [number, number];
 	}
 
 	interface ExploreRow {
@@ -149,13 +150,13 @@
 		}
 		const shiftSeconds = request.to - request.from;
 		if (!query.compare) {
-			return { ok: true, value: { current: current.value, previous: null, shiftSeconds } };
+			return { ok: true, value: { current: current.value, previous: null, shiftSeconds, window: [request.from, request.to] } };
 		}
 		const previous = await series({ ...request, from: request.from - shiftSeconds, to: request.from });
 		if (!previous.ok) {
 			return { ok: false, error: toUiError(previous.error, { action: 'explore.action.load' }) };
 		}
-		return { ok: true, value: { current: current.value, previous: previous.value, shiftSeconds } };
+		return { ok: true, value: { current: current.value, previous: previous.value, shiftSeconds, window: [request.from, request.to] } };
 	}
 
 	const loaded = $derived(exploreQuery.data);
@@ -358,7 +359,7 @@
 	{/snippet}
 
 	{#snippet primary()}
-		<Button variant="primary" iconStart="play" disabledReason={'' === explore.metric ? t('explore.empty.body') : undefined} onclick={run}>
+		<Button variant="primary" iconStart="play" disabledReason={'' === explore.metric ? t('explore.run.disabled') : undefined} onclick={run}>
 			{t('explore.run')}
 		</Button>
 	{/snippet}
@@ -379,6 +380,7 @@
 					id={IDS.metric}
 					aria-describedby={`${IDS.metric}-help`}
 					label={t('explore.metric.label')}
+					placeholder={t('explore.metric.placeholder')}
 					items={families.map((entry) => ({ value: entry.name, label: entry.name }))}
 					bind:value={() => ('' === explore.metric ? [] : [explore.metric]), chooseMetric}
 				/>
@@ -401,6 +403,7 @@
 					id={IDS.group}
 					aria-describedby={`${IDS.group}-help`}
 					label={t('explore.group.label')}
+					placeholder={t('explore.group.placeholder')}
 					multiple
 					items={labelKeys.map((key) => ({ value: key, label: key }))}
 					bind:value={() => explore.by, (next) => commit({ ...explore, by: next })}
@@ -413,6 +416,7 @@
 					id={IDS.filter}
 					aria-describedby={`${IDS.filter}-help`}
 					label={t('explore.filter.label')}
+					placeholder={t('explore.filter.placeholder')}
 					multiple
 					creatable
 					items={filterItems}
@@ -533,6 +537,7 @@
 							{:else}
 								<TimeSeriesChart
 									series={chartList}
+									domain={payload?.window}
 									{unit}
 									stacked={'stacked' === explore.chart}
 									status={chartStatus}

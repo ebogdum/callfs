@@ -35,7 +35,7 @@
 		position: sticky;
 		inset-block-start: 0;
 		display: grid;
-		grid-template-columns: minmax(calc(var(--space-4) * 8), 1fr) minmax(calc(var(--space-4) * 12), calc(var(--space-4) * 28)) auto;
+		grid-template-columns: minmax(0, 1fr) minmax(calc(var(--space-4) * 12), calc(var(--space-4) * 28)) auto;
 		align-items: center;
 		gap: var(--space-4);
 		block-size: var(--topbar-h);
@@ -63,7 +63,7 @@
 		align-items: center;
 		justify-content: flex-end;
 		gap: var(--space-2);
-		min-inline-size: 0;
+		min-inline-size: max-content;
 	}
 
 	.divider {

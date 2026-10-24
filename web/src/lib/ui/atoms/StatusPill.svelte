@@ -1,13 +1,5 @@
 <script lang="ts" module>
 	export type StatusPillSize = 'sm' | 'md';
-
-	export const TOKENS = [
-		'--pill-bg',
-		'--pill-fg',
-		'--pill-border',
-		'--pill-radius',
-		'--pill-px'
-	] as const;
 </script>
 
 <script lang="ts">

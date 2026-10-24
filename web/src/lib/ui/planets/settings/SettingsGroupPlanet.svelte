@@ -164,6 +164,10 @@
 		return metaFor(entry, draft.keyStates[entry.key], draft.baselineOf(entry), schemaKey?.min ?? null, schemaKey?.max ?? null);
 	}
 
+	function shownValue(entry: SettingsEntry, value: unknown): unknown {
+		return true === entry.invert && 'boolean' === typeof value ? !value : value;
+	}
+
 	function riskOf(entry: SettingsEntry): boolean {
 		return riskApplies(entry, draft.draftOf(entry), draft.isSet(entry.key), draft.dirtyKeys.includes(entry.key));
 	}
@@ -268,8 +272,8 @@
 										<SettingRow
 											id={`setting-${entry.key}`}
 											meta={metaOf(entry)}
-											value={draft.baselineOf(entry)}
-											bind:draft={() => draft.draftOf(entry), (next: unknown) => void draft.setValue(entry, next)}
+											value={shownValue(entry, draft.baselineOf(entry))}
+											bind:draft={() => shownValue(entry, draft.draftOf(entry)), (next: unknown) => void draft.setValue(entry, shownValue(entry, next))}
 											status={statusOf(entry.key)}
 											error={errorOf(entry.key)}
 											onreset={() => void draft.setValue(entry, entry.defaultValue)}

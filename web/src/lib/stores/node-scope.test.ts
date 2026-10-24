@@ -207,10 +207,10 @@ describe('NodeDirectory', () => {
 });
 
 describe('roleOf', () => {
-	it('prefers the reported raft state in any case', async () => {
+	it('prefers the reported role in any case', async () => {
 		const { roleOf } = await vi.importActual<typeof import('$lib/api/nodes')>('$lib/api/nodes');
-		expect(roleOf(node('node-1', { raft_state: 'Leader' }))).toBe('leader');
-		expect(roleOf(node('node-1', { raft_state: 'follower' }))).toBe('follower');
+		expect(roleOf(node('node-1', { role: 'Leader' }))).toBe('leader');
+		expect(roleOf(node('node-1', { role: 'follower' }))).toBe('follower');
 		expect(roleOf(node('node-1'))).toBe('none');
 	});
 

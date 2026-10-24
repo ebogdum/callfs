@@ -36,7 +36,7 @@ export default {
 	'galaxy.route.sharing': 'Go to Sharing',
 	'galaxy.route.cluster': 'Go to Topology',
 	'galaxy.route.cluster.nodes': 'Go to Members',
-	'galaxy.route.cluster.raft': 'Go to Raft',
+	'galaxy.route.cluster.replication': 'Go to Replication',
 	'galaxy.route.cluster.servers': 'Go to Servers',
 	'galaxy.route.cluster.storage': 'Go to Storage',
 	'galaxy.route.cluster.durability': 'Go to Durability',

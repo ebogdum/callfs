@@ -14,8 +14,8 @@
 	export const TOKENS = ['--planner-list-gap'] as const;
 
 	const presets = [
-		{ id: '2+1', data: 2, spare: 1, recommended: false },
-		{ id: '4+2', data: 4, spare: 2, recommended: true },
+		{ id: '2+1', data: 2, spare: 1, recommended: true },
+		{ id: '4+2', data: 4, spare: 2, recommended: false },
 		{ id: '6+3', data: 6, spare: 3, recommended: false },
 		{ id: '8+4', data: 8, spare: 4, recommended: false }
 	];
@@ -108,10 +108,10 @@
 				{#each presets as preset (preset.id)}
 					<Button variant="secondary" size="sm" aria-pressed={isActive(preset)} onclick={() => applyPreset(preset)}>
 						{t('findings.planner.preset', { data: preset.data, spare: preset.spare })}
+						{#if preset.recommended}
+							<Badge tone="accent">{t('findings.planner.recommended')}</Badge>
+						{/if}
 					</Button>
-					{#if preset.recommended}
-						<Badge tone="accent">{t('findings.planner.recommended')}</Badge>
-					{/if}
 				{/each}
 			</Cluster>
 		</div>
@@ -143,8 +143,9 @@
 				<Text size="sm" tone="muted">{t('findings.planner.per_server')}</Text>
 				<ul class="servers">
 					{#each perServer as server (server.id)}
-						<li>
-							<ProgressBar value={server.count} max={barMax} label={server.id} showValue />
+						<li class="server">
+							<span class="server-name">{server.id}</span>
+							<ProgressBar class="server-bar" value={server.count} max={barMax} label={server.id} showValue />
 						</li>
 					{/each}
 				</ul>
@@ -164,6 +165,27 @@
 	.placement-planner {
 		display: grid;
 		min-inline-size: 0;
+	}
+
+	.server {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		min-inline-size: 0;
+	}
+
+	.server-name {
+		flex: none;
+		max-inline-size: 40%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: var(--text-sm-size);
+		line-height: var(--text-sm-line);
+	}
+
+	.server :global(.server-bar) {
+		flex: 1 1 auto;
 	}
 
 	.servers,

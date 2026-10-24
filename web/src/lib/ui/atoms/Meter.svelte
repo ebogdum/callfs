@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--meter-track', '--meter-h', '--meter-fill', '--meter-tick'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import type { Threshold, Unit } from '../types';

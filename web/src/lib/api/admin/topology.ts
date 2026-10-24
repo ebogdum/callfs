@@ -23,6 +23,8 @@ export interface InstanceItem {
 	files: number;
 	bytes: number;
 	pieces: number;
+	disk_free_bytes: number | null;
+	disk_total_bytes: number | null;
 }
 
 export interface InstanceList {

@@ -220,7 +220,11 @@
 
 	const retry = (): void => {
 		failed = false;
-		if (!tail) void loadNext();
+		if (tail) {
+			void tailTick();
+		} else {
+			void loadNext();
+		}
 	};
 
 	const onFindInput = (): void => {

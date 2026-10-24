@@ -1,6 +1,4 @@
 <script lang="ts" module>
-	export const TOKENS = ['--sort-header-fg'] as const;
-
 	const ARIA_SORT = { asc: 'ascending', desc: 'descending' } as const;
 	const SORT_ICON = { asc: 'sort-asc', desc: 'sort-desc' } as const;
 </script>

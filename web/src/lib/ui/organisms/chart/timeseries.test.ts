@@ -6,12 +6,12 @@ import type { Series } from '../../types';
 import TimeSeriesChart from './TimeSeriesChart.svelte';
 import { CrosshairState, crosshairGroup } from './crosshair.svelte';
 import {
-	bandScale,
 	downsampleSeries,
 	linearScale,
 	lttb,
 	nearestIndex,
 	niceTicks,
+	tickDigits,
 	timeScale,
 	type Point,
 	type SeriesPoint
@@ -49,12 +49,6 @@ describe('scale', () => {
 
 	it('spaces time ticks on a readable step', () => {
 		expect(timeScale([0, 2 * HOUR], [0, 100]).ticks(4)).toHaveLength(5);
-	});
-
-	it('places band starts with centred bands', () => {
-		const bands = bandScale(4, [0, 100], 0.2);
-		expect(bands.bandwidth).toBe(20);
-		expect(bands.start(1)).toBe(27.5);
 	});
 
 	it('keeps the first and last point when downsampling with LTTB', () => {
@@ -171,5 +165,14 @@ describe('TimeSeriesChart', () => {
 	it('shows a legend row for two series', () => {
 		render(TimeSeriesChart, { props: { series: [okSeries, errorSeries], unit: 'count', status: 'success' } });
 		expect(screen.getByRole('button', { name: 'Errors' })).toBeTruthy();
+	});
+});
+
+describe('tickDigits', () => {
+	it('keeps small tick steps distinct', () => {
+		expect(tickDigits(0.05)).toBe(2);
+		expect(tickDigits(0.1)).toBe(1);
+		expect(tickDigits(1)).toBe(0);
+		expect(tickDigits(5)).toBe(0);
 	});
 });

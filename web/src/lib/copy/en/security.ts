@@ -27,6 +27,8 @@ export default {
 	'security.word.ok': 'Good',
 	'security.word.warn': 'Fix soon',
 	'security.word.danger': 'Fix now',
+	'security.word.unused': 'Not used',
+	'security.check.detail.unused': 'This is not set up here.',
 	'security.word.info': 'Note',
 	'security.headers.label': 'Response headers',
 	'security.secrets.title': 'Secrets',

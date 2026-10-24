@@ -4,9 +4,10 @@
 	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import { cancel as cancelAdminJob, jobs, retryFailed as retryAdminJob, runWorker, workers } from '$lib/api/admin/jobs';
+	import { deadTasks, dropDeadTask, retryDeadTask } from '$lib/api/admin/deadtasks';
 	import { toUiError, type ApiFailure } from '$lib/api/errors';
 	import { cancelJob, myJobs, retryJobFailed } from '$lib/api/session';
-	import type { Job, Result, Worker } from '$lib/api/types';
+	import type { DeadTask, Job, Result, Worker } from '$lib/api/types';
 	import type { CommandRegistry } from '$lib/commands/registry.svelte';
 	import { t } from '$lib/copy/t';
 	import { invalidate } from '$lib/data/cache';
@@ -15,6 +16,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { ColumnDef, QueryStatus, UiError } from '$lib/ui/types';
 	import Button from '$lib/ui/atoms/Button.svelte';
+	import Heading from '$lib/ui/atoms/Heading.svelte';
 	import Duration from '$lib/ui/atoms/Duration.svelte';
 	import Skeleton from '$lib/ui/atoms/Skeleton.svelte';
 	import TextCell from '$lib/ui/cells/TextCell.svelte';
@@ -28,6 +30,7 @@
 	import InlineAlert from '$lib/ui/molecules/InlineAlert.svelte';
 	import StaleIndicator from '$lib/ui/molecules/StaleIndicator.svelte';
 	import SegmentedControl from '$lib/ui/molecules/SegmentedControl.svelte';
+	import Cluster from '$lib/ui/quarks/Cluster.svelte';
 	import Stack from '$lib/ui/quarks/Stack.svelte';
 
 	type ListTab = 'running' | 'failed' | 'done';
@@ -44,6 +47,10 @@
 	const ACTION_RETRY = 'jobs.action.retry';
 	const ACTION_WORKERS = 'jobs.action.workers';
 	const ACTION_RUN = 'jobs.action.run';
+	const ACTION_DEAD = 'jobs.action.dead';
+	const ACTION_DEAD_RETRY = 'jobs.action.dead_retry';
+	const ACTION_DEAD_DROP = 'jobs.action.dead_drop';
+	const DEAD_INTERVAL_MS = 10000;
 
 	const LIST_STATES: Record<ListTab, readonly Job['state'][]> = {
 		running: ACTIVE_STATES,
@@ -62,6 +69,10 @@
 		running: { title: 'jobs.empty.running.title', body: 'jobs.empty.running.body' },
 		failed: { title: 'jobs.empty.failed.title', body: 'jobs.empty.failed.body' },
 		done: { title: 'jobs.empty.done.title', body: 'jobs.empty.done.body' }
+	};
+
+	const POOL_KEY: Record<string, string> = {
+		replicate: 'jobs.pool.replicate'
 	};
 
 	const WORKER_NAME_KEY: Record<Worker['name'], string> = {
@@ -128,6 +139,13 @@
 		return true === result.ok ? { ok: true, value: result.value.items } : fromAdmin(result, ACTION_WORKERS);
 	}
 
+	async function listDeadTasks(): Promise<Result<{ items: DeadTask[]; next: number | null }, UiError>> {
+		const result = await deadTasks();
+		return true === result.ok
+			? { ok: true, value: { items: result.value.items, next: result.value.next_before } }
+			: fromAdmin(result, ACTION_DEAD);
+	}
+
 	async function cancelById(id: string): Promise<Result<Job, UiError>> {
 		if (session.isAdmin) {
 			return fromAdmin(await cancelAdminJob(id), ACTION_CANCEL);
@@ -161,6 +179,12 @@
 	let cancelTarget = $state<Job | null>(null);
 	let actionError = $state<UiError | null>(null);
 	let runningWorker = $state<string | null>(null);
+	let dropOpen = $state(false);
+	let dropTarget = $state<DeadTask | null>(null);
+	let busyDead = $state<number | null>(null);
+	let olderDead = $state<DeadTask[]>([]);
+	let olderNext = $state<number | null>(null);
+	let loadingOlder = $state(false);
 
 	const cancelTitle = $derived(t(isDeleteJob(cancelTarget) ? 'jobs.cancel.delete.title' : 'jobs.cancel.generic.title'));
 	const cancelBody = $derived(t(isDeleteJob(cancelTarget) ? 'jobs.cancel.delete.body' : 'jobs.cancel.generic.body'));
@@ -182,7 +206,16 @@
 		revalidateOnFocus: true
 	}));
 
+	const deadQuery = createQuery(() => ({
+		key: ['dead-tasks'],
+		fetch: () => listDeadTasks(),
+		enabled: () => session.isAdmin && 'background' === tab,
+		staleMs: DEAD_INTERVAL_MS,
+		revalidateOnFocus: true
+	}));
+
 	$effect(() => jobsQuery.attach());
+	$effect(() => deadQuery.attach());
 	$effect(() => workersQuery.attach());
 
 	$effect(() => {
@@ -227,12 +260,29 @@
 		return workersResult.value.some((worker) => null !== worker.last_error) ? 'partial' : 'success';
 	});
 
+	const deadResult = $derived(deadQuery.data);
+	const deadError = $derived(false === deadResult?.ok ? deadResult.error : null);
+	const deadRows = $derived(true === deadResult?.ok ? [...deadResult.value.items, ...olderDead] : []);
+	const deadNext = $derived(
+		true === deadResult?.ok ? (0 < olderDead.length ? olderNext : deadResult.value.next) : null
+	);
+	const deadState = $derived.by((): QueryStatus => {
+		if (undefined === deadResult) {
+			return 'loading';
+		}
+		if (false === deadResult.ok) {
+			return 'error';
+		}
+		return 0 === deadRows.length ? 'empty' : 'success';
+	});
+
 	const activeUpdatedAt = $derived('background' === tab ? workersQuery.updatedAt : jobsQuery.updatedAt);
 	const activeIntervalMs = $derived('background' === tab ? WORKERS_INTERVAL_MS : JOBS_INTERVAL_MS);
 
 	function refresh(): void {
 		void jobsQuery.refetch();
 		void workersQuery.refetch();
+		void deadQuery.refetch();
 	}
 
 	function openJob(job: Job): void {
@@ -287,6 +337,69 @@
 		toasts.push({ tone: 'ok', title: t('jobs.workers.started', { name: t(WORKER_NAME_KEY[worker.name]) }) });
 	}
 
+	function reloadDead(): void {
+		olderDead = [];
+		olderNext = null;
+		invalidate(['dead-tasks']);
+	}
+
+	async function showOlder(): Promise<void> {
+		if (null === deadNext) {
+			return;
+		}
+		loadingOlder = true;
+		const result = await deadTasks(deadNext);
+		loadingOlder = false;
+		if (false === result.ok) {
+			actionError = toUiError(result.error, { action: ACTION_DEAD });
+			return;
+		}
+		actionError = null;
+		olderDead = [...olderDead, ...result.value.items];
+		olderNext = result.value.next_before;
+	}
+
+	async function retryDead(task: DeadTask): Promise<void> {
+		busyDead = task.id;
+		const result = await retryDeadTask(task.id);
+		busyDead = null;
+		if (false === result.ok) {
+			actionError = toUiError(result.error, { action: ACTION_DEAD_RETRY });
+			return;
+		}
+		actionError = null;
+		reloadDead();
+		toasts.push({ tone: 'ok', title: t('jobs.dead.retried') });
+	}
+
+	function askDrop(task: DeadTask): void {
+		dropTarget = task;
+		dropOpen = true;
+	}
+
+	async function confirmDrop(): Promise<void> {
+		const target = dropTarget;
+		dropOpen = false;
+		if (null === target) {
+			return;
+		}
+		busyDead = target.id;
+		const result = await dropDeadTask(target.id);
+		busyDead = null;
+		if (false === result.ok) {
+			actionError = toUiError(result.error, { action: ACTION_DEAD_DROP });
+			return;
+		}
+		actionError = null;
+		reloadDead();
+		toasts.push({ tone: 'ok', title: t('jobs.dead.dropped') });
+	}
+
+	function poolLabel(pool: string): string {
+		const key = POOL_KEY[pool];
+		return undefined === key ? pool : t(key);
+	}
+
 	function workerResult(worker: Worker): string {
 		if (null === worker.last_run_at) {
 			return t('jobs.workers.result.never');
@@ -326,6 +439,16 @@
 		{ id: 'action', header: t('jobs.workers.col.action'), cell: workerActionCell, align: 'end' }
 	];
 
+	const deadColumns: ColumnDef<DeadTask>[] = [
+		{ id: 'task', header: t('jobs.dead.col.task'), cell: deadTaskCell },
+		{ id: 'pool', header: t('jobs.dead.col.pool'), cell: deadPoolCell },
+		{ id: 'reason', header: t('jobs.dead.col.reason'), cell: deadReasonCell },
+		{ id: 'failed', header: t('jobs.dead.col.failed'), cell: deadFailedCell },
+		{ id: 'action', header: t('jobs.dead.col.action'), cell: deadActionCell, align: 'end' }
+	];
+
+	const deadKey = (task: DeadTask): string => String(task.id);
+
 	const workerKey = (worker: Worker): string => worker.name;
 </script>
 
@@ -360,6 +483,33 @@
 	>
 		{t('jobs.workers.run')}
 	</Button>
+{/snippet}
+
+{#snippet deadTaskCell(task: DeadTask)}
+	<TextCell value={task.summary} />
+{/snippet}
+
+{#snippet deadPoolCell(task: DeadTask)}
+	<TextCell value={poolLabel(task.pool)} />
+{/snippet}
+
+{#snippet deadReasonCell(task: DeadTask)}
+	<TextCell value={task.reason} />
+{/snippet}
+
+{#snippet deadFailedCell(task: DeadTask)}
+	<TimeCell value={task.failed_at} />
+{/snippet}
+
+{#snippet deadActionCell(task: DeadTask)}
+	<Cluster gap="2" justify="end">
+		<Button size="sm" variant="secondary" loading={busyDead === task.id} onclick={() => void retryDead(task)}>
+			{t('jobs.dead.retry')}
+		</Button>
+		<Button size="sm" variant="secondary" onclick={() => askDrop(task)}>
+			{t('jobs.dead.drop')}
+		</Button>
+	</Cluster>
 {/snippet}
 
 <PageFrame title={t('jobs.title')} job={t('jobs.job')} class={className}>
@@ -405,6 +555,32 @@
 					{/snippet}
 				</DataTable>
 			{/if}
+			<Heading level={2} size="title-sm" id="jobs-dead-tasks">{t('jobs.dead.title')}</Heading>
+			{#if null !== deadError}
+				<ErrorState error={deadError} onretry={() => void deadQuery.refetch()} />
+			{:else}
+				<DataTable
+					rows={deadRows}
+					columns={deadColumns}
+					rowKey={deadKey}
+					label={t('jobs.dead.label')}
+					status={deadState}
+				>
+					{#snippet empty()}
+						<EmptyState
+							variant="cleared"
+							icon="jobs"
+							title={t('jobs.dead.empty.title')}
+							body={t('jobs.dead.empty.body')}
+						/>
+					{/snippet}
+				</DataTable>
+				{#if null !== deadNext}
+					<Button variant="secondary" loading={loadingOlder} onclick={() => void showOlder()}>
+						{t('jobs.dead.more')}
+					</Button>
+				{/if}
+			{/if}
 		{:else if null !== jobsError}
 			<ErrorState error={jobsError} onretry={() => void jobsQuery.refetch()} />
 		{:else if 'loading' === jobsState}
@@ -434,4 +610,13 @@
 	confirmLabel={t('jobs.cancel.confirm')}
 	tone="danger"
 	onconfirm={() => void confirmCancel()}
+/>
+
+<AlertDialog
+	bind:open={dropOpen}
+	title={t('jobs.dead.drop.title')}
+	body={t('jobs.dead.drop.body')}
+	confirmLabel={t('jobs.dead.drop.confirm')}
+	tone="danger"
+	onconfirm={() => void confirmDrop()}
 />

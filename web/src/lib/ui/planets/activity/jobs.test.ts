@@ -1,9 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cancel as cancelAdminJob, jobs, job as adminJob, retryFailed as retryAdminJob, runWorker, workers } from '$lib/api/admin/jobs';
+import { deadTasks, dropDeadTask, retryDeadTask } from '$lib/api/admin/deadtasks';
 import { toUiError, type ApiFailure } from '$lib/api/errors';
 import { cancelJob, job as ownJob, myJobs, retryJobFailed } from '$lib/api/session';
-import type { Job, Worker } from '$lib/api/types';
+import type { DeadTask, Job, Worker } from '$lib/api/types';
 import { goto } from '$app/navigation';
 import { t } from '$lib/copy/t';
 import { invalidateAll } from '$lib/data/cache';
@@ -22,6 +23,12 @@ vi.mock('$lib/api/admin/jobs', async (importOriginal) => ({
 	retryFailed: vi.fn(),
 	workers: vi.fn(),
 	runWorker: vi.fn()
+}));
+
+vi.mock('$lib/api/admin/deadtasks', () => ({
+	deadTasks: vi.fn(),
+	retryDeadTask: vi.fn(),
+	dropDeadTask: vi.fn()
 }));
 
 vi.mock('$lib/api/session', async (importOriginal) => ({
@@ -67,6 +74,15 @@ const worker = (overrides: Partial<Worker> = {}): Worker => ({
 	last_result: {},
 	last_error: null,
 	next_run_at: '2026-10-23T10:00:00Z',
+	...overrides
+});
+
+const deadTask = (overrides: Partial<DeadTask> = {}): DeadTask => ({
+	id: 12,
+	pool: 'replicate',
+	reason: 'max deliveries exceeded',
+	failed_at: '2026-10-23T09:00:00Z',
+	summary: '/team/report.pdf',
 	...overrides
 });
 
@@ -117,11 +133,53 @@ describe('JobsPlanet', () => {
 	it('lists the background workers for admins and starts one with Run now', async () => {
 		pageState.url = new URL('http://127.0.0.1:4173/activity/jobs?tab=background');
 		vi.mocked(workers).mockResolvedValue({ ok: true, value: { items: [worker()] } });
+		vi.mocked(deadTasks).mockResolvedValue({ ok: true, value: { items: [], next_before: null } });
 		vi.mocked(runWorker).mockResolvedValue({ ok: true, value: { job_id: 'job-9' } });
 		render(JobsPlanet);
 		const run = await waitFor(() => screen.getByRole('button', { name: t('jobs.workers.run') }));
 		await fireEvent.click(run);
 		await waitFor(() => expect(runWorker).toHaveBeenCalledWith('link_cleanup'));
+	});
+
+	it('lists failed background tasks and retries one', async () => {
+		pageState.url = new URL('http://127.0.0.1:4173/activity/jobs?tab=background');
+		vi.mocked(workers).mockResolvedValue({ ok: true, value: { items: [] } });
+		vi.mocked(deadTasks).mockResolvedValue({ ok: true, value: { items: [deadTask()], next_before: null } });
+		vi.mocked(retryDeadTask).mockResolvedValue({ ok: true, value: undefined });
+		render(JobsPlanet);
+		await waitFor(() => expect(screen.getAllByText('/team/report.pdf').length).toBeGreaterThan(0));
+		await fireEvent.click(screen.getByRole('button', { name: t('jobs.dead.retry') }));
+		await waitFor(() => expect(retryDeadTask).toHaveBeenCalledWith(12));
+	});
+
+	it('asks before dropping a failed background task', async () => {
+		pageState.url = new URL('http://127.0.0.1:4173/activity/jobs?tab=background');
+		vi.mocked(workers).mockResolvedValue({ ok: true, value: { items: [] } });
+		vi.mocked(deadTasks).mockResolvedValue({ ok: true, value: { items: [deadTask()], next_before: null } });
+		vi.mocked(dropDeadTask).mockResolvedValue({ ok: true, value: undefined });
+		render(JobsPlanet);
+		await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: t('jobs.dead.drop') })));
+		expect(dropDeadTask).not.toHaveBeenCalled();
+		await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: t('jobs.dead.drop.confirm') })));
+		await waitFor(() => expect(dropDeadTask).toHaveBeenCalledWith(12));
+	});
+
+	it('shows the empty copy when no background task failed', async () => {
+		pageState.url = new URL('http://127.0.0.1:4173/activity/jobs?tab=background');
+		vi.mocked(workers).mockResolvedValue({ ok: true, value: { items: [] } });
+		vi.mocked(deadTasks).mockResolvedValue({ ok: true, value: { items: [], next_before: null } });
+		render(JobsPlanet);
+		await waitFor(() => expect(screen.getByText(t('jobs.dead.empty.title'))).toBeTruthy());
+	});
+
+	it('shows the error state when failed background tasks cannot be loaded', async () => {
+		pageState.url = new URL('http://127.0.0.1:4173/activity/jobs?tab=background');
+		const failure: ApiFailure = { kind: 'network' };
+		vi.mocked(workers).mockResolvedValue({ ok: true, value: { items: [] } });
+		vi.mocked(deadTasks).mockResolvedValue({ ok: false, error: failure });
+		render(JobsPlanet);
+		const title = toUiError(failure, { action: 'jobs.action.dead' }).title;
+		await waitFor(() => expect(screen.getAllByText(title).length).toBeGreaterThan(0));
 	});
 
 	it('hides the background group from members and loads only their own jobs', async () => {

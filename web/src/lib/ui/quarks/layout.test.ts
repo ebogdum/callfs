@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import Cluster from './Cluster.svelte';
 import Frame from './Frame.svelte';
 import Grid from './Grid.svelte';
-import Inset from './Inset.svelte';
 import Stack from './Stack.svelte';
 import Surface from './Surface.svelte';
 
@@ -111,26 +110,6 @@ describe('Grid', () => {
 		expect(rootOf(container).style.getPropertyValue('--grid-columns')).toBe(
 			'repeat(3, minmax(0, 1fr))'
 		);
-	});
-});
-
-describe('Inset', () => {
-	it('applies one padding token on both axes when only pad is set', () => {
-		const { container } = render(Inset, { props: { pad: '3', children: content } });
-		const root = rootOf(container);
-		expect(root.classList.contains('inset')).toBe(true);
-		expect(root.style.getPropertyValue('--inset-block')).toBe('var(--space-3)');
-		expect(root.style.getPropertyValue('--inset-inline')).toBe('var(--space-3)');
-	});
-
-	it('lets padInline and padBlock override the axis padding', () => {
-		const { container } = render(Inset, {
-			props: { pad: '2', padInline: '6', padBlock: '1', class: 'panel', children: content }
-		});
-		const root = rootOf(container);
-		expect(root.classList.contains('panel')).toBe(true);
-		expect(root.style.getPropertyValue('--inset-block')).toBe('var(--space-1)');
-		expect(root.style.getPropertyValue('--inset-inline')).toBe('var(--space-6)');
 	});
 });
 

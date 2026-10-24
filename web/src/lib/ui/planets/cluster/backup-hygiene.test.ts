@@ -10,7 +10,7 @@ import {
 	staging
 } from '$lib/api/admin/topology';
 import { reassignOwner } from '$lib/api/admin/users';
-import { invalidateAll } from '$lib/data/cache';
+import { clearCache } from '$lib/data/cache';
 import type { StagingList } from '$lib/api/admin/topology';
 import type { Hygiene, Migrations, Replication } from '$lib/api/types';
 import { t } from '$lib/copy/t';
@@ -99,7 +99,7 @@ function mockHygieneSources(): void {
 }
 
 beforeEach(() => {
-	invalidateAll();
+	clearCache();
 });
 
 afterEach(() => {

@@ -237,6 +237,7 @@
 									tabindex={card.index === activeIndex ? 0 : -1}
 									aria-selected={selected}
 									data-index={card.index}
+									data-entry-path={card.entry.path}
 									data-state={selected ? 'selected' : undefined}
 									title={card.entry.name}
 									onclick={() => selectOnly(card.entry, card.index)}

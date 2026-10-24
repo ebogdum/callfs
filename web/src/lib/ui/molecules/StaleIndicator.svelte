@@ -1,10 +1,4 @@
 <script lang="ts" module>
-	export const TOKENS = [
-		'--stale-indicator-fg',
-		'--stale-indicator-warn',
-		'--stale-indicator-danger'
-	] as const;
-
 	export type IndicatorState = 'live' | 'stale' | 'paused' | 'offline';
 </script>
 

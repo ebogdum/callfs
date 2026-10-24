@@ -328,7 +328,7 @@
 		</div>
 
 		<div class="query">
-			<QueryBar bind:value={text} grammar={queryGrammar.grammar} label={t('search.query.label')} onsubmit={submit} />
+			<QueryBar bind:value={text} grammar={queryGrammar.grammar} label={t('search.query.label')} placeholder={t('search.query.placeholder')} onsubmit={submit} />
 		</div>
 
 		<Stack gap="4" class="search-results">

@@ -1,9 +1,8 @@
-import { cleanup, fireEvent, render } from '@testing-library/svelte';
+import { cleanup, render } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { t } from '$lib/copy/t';
 import CodeCell from './CodeCell.svelte';
 import IPCell from './IPCell.svelte';
-import KeyCell from './KeyCell.svelte';
 import PieceCell from './PieceCell.svelte';
 import ValueCell from './ValueCell.svelte';
 
@@ -23,28 +22,6 @@ afterEach(() => {
 	cleanup();
 	vi.unstubAllGlobals();
 	Reflect.deleteProperty(navigator, 'clipboard');
-});
-
-describe('KeyCell', () => {
-	it('renders the setting key in mono with the full key as title and a named copy button', () => {
-		const { container, getByRole } = render(KeyCell, { props: { value: 'server.max_upload_size' } });
-		const key = container.querySelector('.middle-truncate');
-		expect(key?.getAttribute('title')).toBe('server.max_upload_size');
-		expect(getByRole('button', { name: t('u065cells.copy_key') })).not.toBeNull();
-	});
-
-	it('copies the key to the clipboard when the copy button is pressed', async () => {
-		const writeText = vi.fn(() => Promise.resolve());
-		Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-		const { getByRole } = render(KeyCell, { props: { value: 'server.max_upload_size' } });
-		await fireEvent.click(getByRole('button', { name: t('u065cells.copy_key') }));
-		expect(writeText).toHaveBeenCalledWith('server.max_upload_size');
-	});
-
-	it('passes class through to the root element', () => {
-		const { container } = render(KeyCell, { props: { value: 'a.b', class: 'extra' } });
-		expect(container.querySelector('.key-cell.extra')).not.toBeNull();
-	});
 });
 
 describe('ValueCell', () => {

@@ -1,7 +1,5 @@
 <script lang="ts" module>
 	export type AvatarSize = 'sm' | 'md' | 'lg';
-
-	export const TOKENS = ['--avatar-bg', '--avatar-fg', '--avatar-radius'] as const;
 </script>
 
 <script lang="ts">
@@ -48,7 +46,8 @@
 <style>
 	.avatar {
 		--tone-soft: var(--surface-sunken);
-		--tone-text: var(--text-muted);
+		--tone-text: var(--text);
+		--tone-border: var(--border);
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -57,6 +56,8 @@
 		border-radius: var(--avatar-radius, var(--radius-full));
 		background: var(--avatar-bg, var(--tone-soft));
 		color: var(--avatar-fg, var(--tone-text));
+		border: var(--hairline) solid var(--tone-border);
+		box-sizing: border-box;
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
 		overflow: hidden;
@@ -65,16 +66,19 @@
 	.avatar[data-tone='accent'] {
 		--tone-soft: var(--accent-soft);
 		--tone-text: var(--accent-text);
+		--tone-border: var(--accent-border);
 	}
 
 	.avatar[data-tone='info'] {
 		--tone-soft: var(--info-soft);
 		--tone-text: var(--info-text);
+		--tone-border: var(--info-border);
 	}
 
 	.avatar[data-tone='ok'] {
 		--tone-soft: var(--ok-soft);
 		--tone-text: var(--ok-text);
+		--tone-border: var(--ok-border);
 	}
 
 	.avatar[data-size='sm'] {

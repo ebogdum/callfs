@@ -8,7 +8,7 @@ export interface MenuItem { id: string; label: string; icon?: IconName; shortcut
 export interface ColumnDef<T> { id: string; header: string; cell: import('svelte').Snippet<[T]>; sortKey?: string; align?: 'start' | 'end' | 'center'; width?: number; minWidth?: number; hidden?: boolean; pinned?: boolean; priority?: 1 | 2 | 3; csv?: (row: T) => string; headerHelp?: string }
 export interface SortState { key: string; dir: 'asc' | 'desc' }
 export interface Selection { mode: 'none' | 'single' | 'multi'; ids: Set<string>; allMatching: boolean }
-export interface UiError { title: string; body: string; status?: number; code?: string; requestId?: string; retryable: boolean; layer?: 'network' | 'auth' | 'permission' | 'not_found' | 'conflict' | 'locked' | 'precondition' | 'limit' | 'peer' | 'leader' | 'server' | 'unknown'; fixAction?: { label: string; href?: string; run?: () => void } }
+export interface UiError { title: string; body: string; status?: number; code?: string; requestId?: string; retryable: boolean; layer?: 'network' | 'auth' | 'permission' | 'not_found' | 'conflict' | 'locked' | 'precondition' | 'limit' | 'peer' | 'server' | 'unknown'; fixAction?: { label: string; href?: string; run?: () => void } }
 export type QueryStatus = 'loading' | 'empty' | 'error' | 'partial' | 'success';
 export interface Series { id: string; label: string; unit: Unit; points: [number, number | null][]; dashed?: boolean; colorIndex?: number }
 export type Unit = 'bytes' | 'bytes_per_s' | 'count' | 'per_s' | 'ms' | 's' | 'percent' | 'ratio' | 'none';

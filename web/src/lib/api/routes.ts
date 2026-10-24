@@ -79,8 +79,7 @@ export const API_ROUTES: ApiRoute[] = [
 	{ id: 'D10', method: 'GET', path: '/v1/admin/config/export', admin: true, module: 'admin/config', fn: 'exportConfig', screens: ['S33'], commands: ['settings.export-config'] },
 	{ id: 'D11', method: 'POST', path: '/v1/admin/restart', admin: true, module: 'admin/status', fn: 'restart', screens: ['S33'], commands: ['settings.restart-server'] },
 	{ id: 'D12', method: 'GET', path: '/v1/admin/cluster', admin: true, module: 'admin/cluster', fn: 'cluster', screens: ['S02', 'S10', 'S11', 'S12'], commands: [] },
-	{ id: 'D13', method: 'POST', path: '/v1/admin/cluster/preflight', admin: true, module: 'admin/cluster', fn: 'preflight', screens: ['S11'], commands: [] },
-	{ id: 'D14', method: 'POST', path: '/v1/admin/cluster/nodes', admin: true, module: 'admin/cluster', fn: 'join', screens: ['S11'], commands: ['cluster.add-member'] },
+	{ id: 'D13', method: 'GET', path: '/v1/admin/cluster/join-config', admin: true, module: 'admin/cluster', fn: 'joinConfig', screens: ['S11'], commands: ['cluster.add-member'] },
 	{ id: 'D15', method: 'DELETE', path: '/v1/admin/cluster/nodes/{node_id}', admin: true, module: 'admin/cluster', fn: 'removeNode', screens: ['S11'], commands: ['cluster.remove-member'] },
 	{ id: 'D16', method: 'POST', path: '/v1/admin/cluster/leadership-transfer', admin: true, module: 'admin/cluster', fn: 'transferLeadership', screens: ['S11'], commands: ['cluster.transfer-leadership'] },
 	{ id: 'D17', method: 'POST', path: '/v1/admin/cluster/snapshot', admin: true, module: 'admin/cluster', fn: 'snapshot', screens: ['S12'], commands: ['cluster.take-snapshot'] },
@@ -131,9 +130,10 @@ export const API_ROUTES: ApiRoute[] = [
 	{ id: 'D53.retry-failed', method: 'POST', path: '/v1/admin/jobs/{id}/retry-failed', admin: true, module: 'admin/jobs', fn: 'retryFailed', screens: ['S28'], commands: ['activity.retry-failed'] },
 	{ id: 'D54', method: 'GET', path: '/v1/admin/workers', admin: true, module: 'admin/jobs', fn: 'workers', screens: ['S08'], commands: [] },
 	{ id: 'D54.run', method: 'POST', path: '/v1/admin/workers/{name}/run', admin: true, module: 'admin/jobs', fn: 'runWorker', screens: ['S08'], commands: ['sharing.cleanup-links'] },
+	{ id: 'D55', method: 'GET', path: '/v1/admin/tasks/dead', admin: true, module: 'admin/deadtasks', fn: 'deadTasks', screens: ['S08'], commands: [] },
+	{ id: 'D55.retry', method: 'POST', path: '/v1/admin/tasks/dead/{id}/retry', admin: true, module: 'admin/deadtasks', fn: 'retryDeadTask', screens: ['S08'], commands: [] },
+	{ id: 'D55.drop', method: 'DELETE', path: '/v1/admin/tasks/dead/{id}', admin: true, module: 'admin/deadtasks', fn: 'dropDeadTask', screens: ['S08'], commands: [] },
 	{ id: 'I1', method: 'PUT', path: '/v1/internal/shards/*', admin: false, module: '', fn: '', screens: [], commands: [], internal: true, reason: NODE_TO_NODE },
 	{ id: 'I2', method: 'GET', path: '/v1/internal/shards/*', admin: false, module: '', fn: '', screens: [], commands: [], internal: true, reason: NODE_TO_NODE },
-	{ id: 'I3', method: 'DELETE', path: '/v1/internal/shards/*', admin: false, module: '', fn: '', screens: [], commands: [], internal: true, reason: NODE_TO_NODE },
-	{ id: 'I4', method: 'POST', path: '/v1/internal/raft/join', admin: false, module: '', fn: '', screens: [], commands: [], internal: true, reason: NODE_TO_NODE },
-	{ id: 'I5', method: 'DELETE', path: '/internal/raft/servers/{id}', admin: false, module: '', fn: '', screens: [], commands: [], internal: true, reason: NODE_TO_NODE }
+	{ id: 'I3', method: 'DELETE', path: '/v1/internal/shards/*', admin: false, module: '', fn: '', screens: [], commands: [], internal: true, reason: NODE_TO_NODE }
 ];

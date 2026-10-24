@@ -40,7 +40,7 @@
 		pinned: string[];
 		load: (path: string) => Promise<Result<FileEntry[], UiError>>;
 		storages: string[];
-		servers: ServerInfo[];
+		servers: Pick<ServerInfo, 'instance_id'>[];
 		options: MoveOptions;
 		capabilities: Capabilities;
 		count?: number;

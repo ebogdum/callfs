@@ -4,6 +4,8 @@ export default {
 	'u082molecules.drop.dragging': 'Drop to upload',
 	'u082molecules.drop.ready': 'Ready to upload: {count}.',
 	'u082molecules.drop.rejected': 'Not added: {count}. {reason}',
+	'u082molecules.drop.unreadable': 'Could not read {count, plural, one {# item} other {# items}} in the folder.',
+	'u082molecules.drop.empty_folder': 'That folder has no files.',
 	'u082molecules.drop.reason_type': 'That file type is not allowed.',
 	'u082molecules.drop.reason_size': 'That file is too big. Files can be up to {max}.',
 	'u082molecules.range.preset': 'Range',

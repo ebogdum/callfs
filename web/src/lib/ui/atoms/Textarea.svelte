@@ -1,13 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = [
-		'--textarea-bg',
-		'--textarea-fg',
-		'--textarea-border',
-		'--textarea-radius',
-		'--textarea-count-fg'
-	] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLTextareaAttributes } from 'svelte/elements';
 	import { t } from '$lib/copy/t';

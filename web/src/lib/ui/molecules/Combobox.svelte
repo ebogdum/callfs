@@ -154,6 +154,9 @@
 				oninput={readInput}
 				onkeydown={readKey}
 			/>
+			<ComboboxPrimitive.Trigger class="combobox-trigger" aria-label={t('common.show_options')}>
+				<Icon name="chevron-down" size="sm" />
+			</ComboboxPrimitive.Trigger>
 		</div>
 		<ComboboxPrimitive.Portal>
 			<ComboboxPrimitive.Content
@@ -235,6 +238,16 @@
 
 	.combobox-control:focus-within {
 		box-shadow: var(--focus-ring);
+	}
+
+	:global(.combobox-trigger) {
+		display: inline-flex;
+		align-items: center;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--text-muted);
+		cursor: pointer;
 	}
 
 	:global(.combobox-input) {

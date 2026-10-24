@@ -1,6 +1,5 @@
 <script lang="ts" module>
 	export type PopoverSide = 'top' | 'right' | 'bottom' | 'left';
-	export const TOKENS = ['--popover-bg', '--popover-fg', '--popover-border', '--popover-radius'] as const;
 </script>
 
 <script lang="ts">

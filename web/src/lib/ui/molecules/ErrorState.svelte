@@ -17,12 +17,17 @@
 	interface Props extends HTMLAttributes<HTMLDivElement> {
 		error: UiError;
 		onretry?: () => void;
+		onreplace?: () => void;
 		variant?: ErrorStateVariant;
 	}
 
-	let { error, onretry, variant = 'region', class: className, ...rest }: Props = $props();
+	let { error, onretry, onreplace, variant = 'region', class: className, ...rest }: Props = $props();
 
 	const fixAction = $derived(error.fixAction);
+	const fixRun = $derived(
+		fixAction?.run ?? ('locked' === error.layer ? onretry : 'conflict' === error.layer ? onreplace : undefined)
+	);
+	const showRetry = $derived(undefined !== onretry && error.retryable && 'locked' !== error.layer);
 	const details = $derived(
 		[error.status, error.code, error.requestId, formatTimestamp(Date.now())]
 			.filter((part): part is string | number => undefined !== part)
@@ -37,14 +42,14 @@
 	</div>
 	<p class="body">{error.body}</p>
 	<div class="actions">
-		{#if undefined !== onretry && error.retryable}
+		{#if showRetry}
 			<Button variant="primary" onclick={onretry}>{t('common.retry')}</Button>
 		{/if}
 		{#if undefined !== fixAction && t('errors.server.fix') !== fixAction.label}
 			{#if undefined !== fixAction.href}
 				<Link href={fixAction.href}>{fixAction.label}</Link>
-			{:else}
-				<Button variant="secondary" onclick={() => fixAction.run?.()}>{fixAction.label}</Button>
+			{:else if undefined !== fixRun}
+				<Button variant="secondary" onclick={fixRun}>{fixAction.label}</Button>
 			{/if}
 		{/if}
 		<CopyButton value={details} label={t('errors.server.fix')} variant="button" />

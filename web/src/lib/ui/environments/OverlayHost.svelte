@@ -6,32 +6,6 @@
 	const layers: OverlayLayer[] = ['dropdown', 'scrim', 'drawer', 'dialog', 'palette', 'popover-top', 'toast', 'tooltip'];
 
 	let { class: className, ...rest }: HTMLAttributes<HTMLDivElement> = $props();
-
-	function createClaimSlot() {
-		let owner: string | null = null;
-		return {
-			claim(next: string): boolean {
-				if (null === owner || next === owner) {
-					owner = next;
-					return true;
-				}
-				return false;
-			},
-			release(next: string): void {
-				if (next === owner) {
-					owner = null;
-				}
-			}
-		};
-	}
-
-	const dialogSlot = createClaimSlot();
-	const bannerSlot = createClaimSlot();
-
-	export const claimDialog = dialogSlot.claim;
-	export const releaseDialog = dialogSlot.release;
-	export const claimBanner = bannerSlot.claim;
-	export const releaseBanner = bannerSlot.release;
 </script>
 
 <div class={['overlay-host', className]} {...rest}>

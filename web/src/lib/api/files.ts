@@ -49,6 +49,7 @@ export interface DeleteResult {
 
 export interface DownloadOptions {
 	onProgress?: (received: number, total: number | null) => void;
+	signal?: AbortSignal;
 }
 
 const CSRF_HEADER = 'X-CallFS-CSRF';
@@ -92,13 +93,18 @@ export function listDir(path: string, opts: ListDirOptions = {}) {
 	});
 }
 
-async function readRangeBody(path: string, from: number, to: number): Promise<Result<ArrayBuffer, ApiFailure>> {
+async function readRangeBody<T>(
+	path: string,
+	from: number,
+	to: number,
+	read: (response: Response) => Promise<T>
+): Promise<Result<T, ApiFailure>> {
 	const response = await fetch(fileUrl(path), {
 		headers: { Range: `bytes=${from}-${to}` },
 		credentials: 'same-origin'
 	});
 	if (response.ok) {
-		return { ok: true, value: await response.arrayBuffer() };
+		return { ok: true, value: await read(response) };
 	}
 	const text = await response.text();
 	return {
@@ -109,7 +115,15 @@ async function readRangeBody(path: string, from: number, to: number): Promise<Re
 
 export async function readRange(path: string, from: number, to: number): Promise<Result<ArrayBuffer, ApiFailure>> {
 	try {
-		return await readRangeBody(path, from, to);
+		return await readRangeBody(path, from, to, (response) => response.arrayBuffer());
+	} catch {
+		return { ok: false, error: { kind: 'network' } };
+	}
+}
+
+export async function readRangeBlob(path: string, from: number, to: number): Promise<Result<Blob, ApiFailure>> {
+	try {
+		return await readRangeBody(path, from, to, (response) => response.blob());
 	} catch {
 		return { ok: false, error: { kind: 'network' } };
 	}
@@ -225,6 +239,10 @@ export function planDelete(path: string) {
 
 export function wsDownload(path: string, opts: DownloadOptions = {}): Promise<Result<Blob, ApiFailure>> {
 	return new Promise((resolve) => {
+		if (true === opts.signal?.aborted) {
+			resolve({ ok: false, error: { kind: 'aborted' } });
+			return;
+		}
 		let socket: WebSocket;
 		try {
 			socket = new WebSocket(websocketUrl(nodePath(`/v1/files/ws/${filePath(path)}`)));
@@ -236,13 +254,19 @@ export function wsDownload(path: string, opts: DownloadOptions = {}): Promise<Re
 		let total: number | null = null;
 		let downloaded = 0;
 		let settled = false;
+		const abort = (): void => {
+			settle({ ok: false, error: { kind: 'aborted' } });
+			socket.close();
+		};
 		const settle = (result: Result<Blob, ApiFailure>): void => {
 			if (settled) {
 				return;
 			}
 			settled = true;
+			opts.signal?.removeEventListener('abort', abort);
 			resolve(result);
 		};
+		opts.signal?.addEventListener('abort', abort);
 		socket.binaryType = 'arraybuffer';
 		socket.onmessage = (event: MessageEvent) => {
 			if ('string' === typeof event.data) {

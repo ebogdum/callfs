@@ -97,6 +97,8 @@
 
 	const toBar = (row: TwinRow): BarDatum => ({ label: row.label, value: row.bytes ?? 0 });
 
+	const SPLIT_ROW_KEY = '\u0000split';
+	const S3_ROW_KEY = '\u0000s3';
 	const bucketRows = (buckets: Record<string, UsageBucket> | undefined, labelOf: (key: string) => string): TwinRow[] =>
 		Object.entries(buckets ?? {})
 			.map(([key, bucket]): TwinRow => ({ key, label: labelOf(key), bytes: bucket.bytes, files: bucket.files }))
@@ -179,7 +181,33 @@
 			.sort(bySizeDesc)
 	);
 	const storageRows = $derived(bucketRows(readyUsage?.by_storage, storageLabel));
-	const serverRows = $derived(bucketRows(readyUsage?.by_instance, (key) => key));
+	const splitRow = $derived<TwinRow[]>(
+		0 < (readyUsage?.erasure_raw_bytes ?? 0)
+			? [
+					{
+						key: SPLIT_ROW_KEY,
+						label: t('storage-insights.server.split'),
+						bytes: readyUsage?.erasure_raw_bytes ?? 0,
+						files: readyUsage?.erasure_files ?? 0
+					}
+				]
+			: []
+	);
+	const bucketRow = $derived<TwinRow[]>(
+		0 < (readyUsage?.by_storage?.s3?.bytes ?? 0)
+			? [
+					{
+						key: S3_ROW_KEY,
+						label: storageLabel('s3'),
+						bytes: readyUsage?.by_storage?.s3?.bytes ?? 0,
+						files: readyUsage?.by_storage?.s3?.files ?? 0
+					}
+				]
+			: []
+	);
+	const serverRows = $derived(
+		[...bucketRows(readyUsage?.by_instance, (key) => key), ...splitRow, ...bucketRow].sort(bySizeDesc)
+	);
 	const ownerRows = $derived(
 		(ownersQuery.data ?? [])
 			.map(
@@ -200,6 +228,30 @@
 
 	const sizeBuckets = $derived(readyUsage?.size_histogram ?? []);
 	const ageBuckets = $derived((readyUsage?.age_histogram ?? []).map((bucket) => ({ le: bucket.le_days, count: bucket.count })));
+	const SIZE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
+	const shortSize = (bytes: number): string => {
+		let index = 0;
+		let scaled = bytes;
+		while (1024 <= scaled && index < SIZE_UNITS.length - 1) {
+			scaled /= 1024;
+			index += 1;
+		}
+		return `${Number(scaled.toFixed(1))} ${SIZE_UNITS[index]}`;
+	};
+	const sizeEdgeLabels = $derived(
+		sizeBuckets.map((bucket, index) =>
+			Number.isFinite(bucket.le) && 0 <= bucket.le
+				? shortSize(bucket.le)
+				: t('storage-insights.sizes.over', { size: 0 < index ? shortSize(sizeBuckets[index - 1].le) : '' })
+		)
+	);
+	const ageEdgeLabels = $derived(
+		ageBuckets.map((bucket, index) =>
+			Number.isFinite(bucket.le) && 0 <= bucket.le
+				? t('storage-insights.age.edge', { days: bucket.le })
+				: t('storage-insights.age.over', { days: 0 < index ? ageBuckets[index - 1].le : 0 })
+		)
+	);
 	const sizeRows = $derived(
 		sizeBuckets.map(
 			(bucket): TwinRow => ({
@@ -271,11 +323,11 @@
 {/snippet}
 
 {#snippet sizeChart()}
-	<Histogram buckets={sizeBuckets} unit="bytes" label={t('storage-insights.sizes.label')} />
+	<Histogram buckets={sizeBuckets} edgeLabels={sizeEdgeLabels} unit="bytes" label={t('storage-insights.sizes.label')} />
 {/snippet}
 
 {#snippet ageChart()}
-	<Histogram buckets={ageBuckets} unit="none" label={t('storage-insights.age.label')} />
+	<Histogram buckets={ageBuckets} edgeLabels={ageEdgeLabels} unit="none" label={t('storage-insights.age.label')} />
 {/snippet}
 
 <PageFrame title={t('storage-insights.title')} job={t('storage-insights.job')}>

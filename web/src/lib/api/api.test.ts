@@ -218,8 +218,6 @@ describe('error mapping', () => {
 		{ name: '404 missing', failure: fail(404, { code: 'FILE_NOT_FOUND' }), context: CONTEXT, title: t('errors.not_found.title', { object: 'Notes.txt' }), layer: 'not_found', retryable: false },
 		{ name: '404 feature off', failure: fail(404, { code: 'FEATURE_DISABLED' }), context: { action: 'common.retry', object: 'Trash' }, title: t('errors.feature_disabled.title', { feature: 'Trash' }), layer: 'not_found', retryable: false },
 		{ name: '409 locked', failure: fail(409, { code: 'RESOURCE_LOCKED' }), context: CONTEXT, title: t('errors.locked.title'), layer: 'locked', retryable: true },
-		{ name: '409 quorum risk', failure: fail(409, { code: 'QUORUM_RISK', details: { voters_after: 2 } }), context: CONTEXT, title: t('errors.quorum_risk.title'), layer: 'conflict', retryable: false },
-		{ name: '409 not leader', failure: fail(409, { code: 'NOT_LEADER', details: { leader_id: 'node-b' } }), context: CONTEXT, title: t('errors.not_leader.title'), layer: 'leader', retryable: false },
 		{ name: '409 already exists', failure: fail(409, { code: 'FILE_ALREADY_EXISTS' }), context: CONTEXT, title: t('errors.conflict.title', { object: 'Notes.txt' }), layer: 'conflict', retryable: false },
 		{ name: '410 link gone', failure: fail(410, {}), context: CONTEXT, title: t('errors.gone.title'), layer: 'not_found', retryable: false },
 		{ name: '412 changed since opened', failure: fail(412, {}), context: CONTEXT, title: t('errors.precondition.title'), layer: 'precondition', retryable: false },
@@ -227,8 +225,7 @@ describe('error mapping', () => {
 		{ name: '429 rate limited', failure: fail(429, { code: 'RATE_LIMIT_EXCEEDED' }, '5'), context: CONTEXT, title: t('errors.rate_limited.title'), layer: 'limit', retryable: true },
 		{ name: '500 on a write', failure: fail(500, { code: 'INTERNAL_ERROR' }), context: CONTEXT, title: t('errors.server.title', { action: RENAME }), layer: 'server', retryable: false },
 		{ name: '500 on a read', failure: fail(500, { code: 'INTERNAL_ERROR' }), context: { ...CONTEXT, read: true }, title: t('errors.server.title', { action: RENAME }), layer: 'server', retryable: true },
-		{ name: '502 peer did not answer', failure: fail(502, { code: 'PEER_UNAVAILABLE', details: { instance: 'node-b' } }), context: CONTEXT, title: t('errors.peer.title'), layer: 'peer', retryable: true },
-		{ name: '503 no leader', failure: fail(503, { code: 'NO_LEADER' }), context: CONTEXT, title: t('errors.no_leader.title'), layer: 'leader', retryable: true }
+		{ name: '502 peer did not answer', failure: fail(502, { code: 'PEER_UNAVAILABLE', details: { instance: 'node-b' } }), context: CONTEXT, title: t('errors.peer.title'), layer: 'peer', retryable: true }
 	];
 
 	it.each(rows)('maps $name', ({ failure, context, title, layer, retryable }) => {
@@ -236,16 +233,6 @@ describe('error mapping', () => {
 	});
 
 	it('keeps status, code and request id and fills body and fix links', () => {
-		expect(toUiError(fail(409, { code: 'QUORUM_RISK', details: { voters_after: 2 } }), CONTEXT)).toMatchObject({
-			status: 409,
-			code: 'QUORUM_RISK',
-			requestId: 'req-9',
-			body: t('errors.quorum_risk.body', { voters_after: 2 }),
-			fixAction: { label: t('errors.quorum_risk.fix'), href: '/cluster/nodes' }
-		});
-		expect(toUiError(fail(409, { code: 'NOT_LEADER', details: { leader_endpoint: 'https://b.example:8443' } }), CONTEXT)).toMatchObject({
-			fixAction: { href: 'https://b.example:8443' }
-		});
 		expect(toUiError(fail(404, { code: 'FEATURE_DISABLED' }), { action: 'common.retry', object: 'Trash' })).toMatchObject({
 			fixAction: { href: '/settings' }
 		});

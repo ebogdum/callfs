@@ -1,6 +1,4 @@
 <script lang="ts" module>
-	export const TOKENS = ['--path-cell-fg', '--path-cell-mark-bg', '--path-cell-mark-fg'] as const;
-
 	interface PathSegment {
 		text: string;
 		marked: boolean;

@@ -20,7 +20,7 @@
 	const ICONS: Readonly<Record<string, IconName>> = {
 		'cluster.topology': 'network',
 		'cluster.members': 'users',
-		'cluster.raft': 'leader',
+		'cluster.replication': 'leader',
 		'cluster.servers': 'server',
 		'cluster.storage': 'hard-drive',
 		'cluster.durability': 'shield',

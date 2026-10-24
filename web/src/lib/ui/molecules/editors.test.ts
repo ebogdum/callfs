@@ -178,7 +178,7 @@ describe('OctalModeEditor', () => {
 	it('shows the symbolic form of the stored mode', () => {
 		const { props } = withBinding({ value: '0644', label: 'Permissions' }, 'value');
 		place(OctalModeEditor, props);
-		expect(screen.getByText('rw-r--r--')).toBeTruthy();
+		expect((screen.getByRole('textbox', { name: 'Letters, like u=rw,go=r' }) as HTMLInputElement).value).toBe('rw-r--r--');
 	});
 
 	it('flags a value that is not octal and names the rule', () => {
@@ -205,6 +205,6 @@ describe('OctalModeEditor', () => {
 			target: { value: '755' }
 		});
 		expect(owner.getByRole('checkbox', { name: 'Run' }).getAttribute('aria-checked')).toBe('true');
-		expect(screen.getByText('rwxr-xr-x')).toBeTruthy();
+		expect((screen.getByRole('textbox', { name: 'Letters, like u=rw,go=r' }) as HTMLInputElement).value).toBe('rwxr-xr-x');
 	});
 });

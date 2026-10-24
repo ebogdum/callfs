@@ -23,10 +23,11 @@
 	import { base } from '$app/paths';
 	import { getConfig, save, type ConfigChanges } from '$lib/api/admin/config';
 	import { findings, type FindingPage } from '$lib/api/admin/findings';
+	import { status as loadStatus } from '$lib/api/admin/status';
 	import { tls } from '$lib/api/admin/users';
 	import { toUiError } from '$lib/api/errors';
 	import { linkStats } from '$lib/api/links';
-	import type { Finding, LinkStats, TlsInfo } from '$lib/api/types';
+	import type { AdminStatus, Finding, LinkStats, TlsInfo } from '$lib/api/types';
 	import { t } from '$lib/copy/t';
 	import { createQuery } from '$lib/data/query.svelte';
 	import { formatAbsolute } from '$lib/format/time';
@@ -48,7 +49,7 @@
 	import SettingsCard from './SettingsCard.svelte';
 	import SettingsItem from './SettingsItem.svelte';
 
-	type CheckTone = 'ok' | 'warn' | 'danger' | 'info';
+	type CheckTone = 'ok' | 'warn' | 'danger' | 'info' | 'unused';
 
 	interface Check {
 		id: string;
@@ -71,6 +72,7 @@
 		findings: Result<FindingPage, UiError>;
 		config: Result<ConfigView, UiError>;
 		links: Result<LinkStats, UiError>;
+		status?: Result<AdminStatus, UiError>;
 	}
 
 	interface Outcome {
@@ -100,7 +102,8 @@
 		ok: t('security.word.ok'),
 		warn: t('security.word.warn'),
 		danger: t('security.word.danger'),
-		info: t('security.word.info')
+		info: t('security.word.info'),
+		unused: t('security.word.unused')
 	};
 
 	const checks: Check[] = [
@@ -119,7 +122,7 @@
 			findingIds: ['peers.http', 'peers.skip_verify'],
 			route: '/settings/security'
 		},
-		{ id: 'cluster', label: t('security.check.cluster.label'), findingIds: ['raft.plain_transport'], route: '/settings/security' },
+		{ id: 'cluster', label: t('security.check.cluster.label'), findingIds: ['nats.plain_transport'], route: '/settings/security' },
 		{ id: 'index', label: t('security.check.index.label'), findingIds: ['index.sslmode_disable'], route: '/settings/index' },
 		{ id: 'redis', label: t('security.check.redis.label'), findingIds: ['redis.no_password'], route: '/settings/coordination' },
 		{ id: 's3_acl', label: t('security.check.s3_acl.label'), findingIds: ['s3.public_acl'], route: '/settings/storage' },
@@ -145,13 +148,14 @@
 	}
 
 	async function loadSecurity(): Promise<SecurityData> {
-		const [tlsResult, findingsResult, configResult, linksResult] = await Promise.all([
+		const [tlsResult, findingsResult, configResult, linksResult, statusResult] = await Promise.all([
 			loadTls(),
 			findings('security'),
 			getConfig(),
-			linkStats('24h')
+			linkStats('24h'),
+			loadStatus()
 		]);
-		return { tls: tlsResult, findings: findingsResult, config: configResult, links: linksResult };
+		return { tls: tlsResult, findings: findingsResult, config: configResult, links: linksResult, status: statusResult };
 	}
 
 	const securityQuery = createQuery({ key: ['security-page'], fetch: loadSecurity });
@@ -161,6 +165,7 @@
 	const findingsResult = $derived(undefined === data ? null : data.findings);
 	const configResult = $derived(undefined === data ? null : data.config);
 	const linksResult = $derived(undefined === data ? null : data.links);
+	const adminStatus = $derived(valueOf(data?.status ?? null));
 	const tlsInfo = $derived(valueOf(tlsResult));
 	const configView = $derived(valueOf(configResult));
 	const findingList = $derived(valueOf(findingsResult)?.items ?? []);
@@ -207,7 +212,30 @@
 		return t('security.check.detail.ok');
 	}
 
-	function rowFor(check: Check, list: Finding[], info: TlsInfo): CheckRow {
+	function isUnused(id: string, state: AdminStatus | null): boolean {
+		if (null === state) {
+			return false;
+		}
+		if ('redis' === id) {
+			return 'redis' !== state.file_index && 'redis' !== state.lock_type;
+		}
+		if ('s3_acl' === id || 's3_sse' === id) {
+			return false === state.storages.s3;
+		}
+		return false;
+	}
+
+	function rowFor(check: Check, list: Finding[], info: TlsInfo, state: AdminStatus | null): CheckRow {
+		if (isUnused(check.id, state)) {
+			return {
+				id: check.id,
+				label: check.label,
+				tone: 'unused',
+				word: wordOf.unused,
+				detail: t('security.check.detail.unused'),
+				route: check.route
+			};
+		}
 		const finding = worstFinding(list, check.findingIds);
 		if (null !== finding) {
 			const tone = toneOfSeverity[finding.severity];
@@ -225,9 +253,15 @@
 		};
 	}
 
-	const checkRows = $derived(null === tlsInfo ? [] : checks.map((check) => rowFor(check, findingList, tlsInfo)));
-	const badgeTone: Record<CheckTone, 'ok' | 'warn' | 'danger' | 'info'> = { ok: 'ok', warn: 'warn', danger: 'danger', info: 'info' };
-	const attentionCount = $derived(checkRows.filter((row) => 'ok' !== row.tone && 'info' !== row.tone).length);
+	const checkRows = $derived(null === tlsInfo ? [] : checks.map((check) => rowFor(check, findingList, tlsInfo, adminStatus)));
+	const badgeTone: Record<CheckTone, 'ok' | 'warn' | 'danger' | 'info' | 'neutral'> = {
+		ok: 'ok',
+		warn: 'warn',
+		danger: 'danger',
+		info: 'info',
+		unused: 'neutral'
+	};
+	const attentionCount = $derived(checkRows.filter((row) => 'ok' !== row.tone && 'info' !== row.tone && 'unused' !== row.tone).length);
 	const checklistSummary = $derived(
 		null === tlsInfo
 			? undefined
@@ -387,11 +421,11 @@
 					{#each checkRows as row (row.id)}
 						<SettingsItem label={row.label} detail={row.detail}>
 							{#snippet lead()}
-								<StatusGlyph tone={row.tone} />
+								<StatusGlyph tone={'unused' === row.tone ? 'info' : row.tone} />
 							{/snippet}
 							{#snippet trail()}
 								<Badge tone={badgeTone[row.tone]}>{row.word}</Badge>
-								{#if 'ok' !== row.tone}
+								{#if 'ok' !== row.tone && 'unused' !== row.tone}
 									<Link href={hrefOf(row.route)} aria-label={`${t('security.check.fix')}: ${row.label}`}>{t('security.check.fix')}</Link>
 								{/if}
 							{/snippet}
@@ -463,7 +497,9 @@
 				<div class="headers">
 					<Text weight={600}>{t('security.headers.label')}</Text>
 					<Text size="sm" tone="muted">{t('settings-screens.security.headers.desc')}</Text>
-					<CodeView code={headerCode} language="http" label={t('security.headers.label')} />
+					<div class="header-code">
+						<CodeView code={headerCode} language="http" label={t('security.headers.label')} />
+					</div>
 				</div>
 			</SettingsCard>
 		{/if}
@@ -502,6 +538,11 @@
 
 	.secret + .secret {
 		border-block-start: var(--hairline) solid var(--border-subtle);
+	}
+
+	.header-code :global(.line) {
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 
 	.headers {

@@ -4,7 +4,6 @@ import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import CopyButton from './CopyButton.svelte';
 import MiddleTruncate from './MiddleTruncate.svelte';
-import Separator from './Separator.svelte';
 import Thumb from './Thumb.svelte';
 import Tooltip from './Tooltip.svelte';
 
@@ -78,24 +77,6 @@ describe('Tooltip', () => {
 		await waitFor(() => {
 			expect(screen.getByRole('tooltip')).toHaveTextContent('Quorum at risk');
 		});
-	});
-});
-
-describe('Separator', () => {
-	afterEach(() => {
-		cleanup();
-	});
-
-	it('exposes a horizontal separator role by default', () => {
-		render(Separator);
-		const separator = screen.getByRole('separator');
-		expect(separator).toHaveAttribute('aria-orientation', 'horizontal');
-		expect(separator).toHaveAttribute('data-orientation', 'horizontal');
-	});
-
-	it('marks vertical separators', () => {
-		render(Separator, { props: { orientation: 'vertical' } });
-		expect(screen.getByRole('separator')).toHaveAttribute('aria-orientation', 'vertical');
 	});
 });
 

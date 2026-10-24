@@ -1,6 +1,5 @@
 <script lang="ts" module>
 	export type NumStyle = 'int' | 'compact' | 'decimal';
-	export const TOKENS = ['--num-color', '--num-weight'] as const;
 </script>
 
 <script lang="ts">

@@ -7,6 +7,7 @@
 	import { createMutation } from '$lib/data/mutation.svelte';
 	import { createQuery } from '$lib/data/query.svelte';
 	import { formatDuration } from '$lib/format/duration';
+	import { formatBytes } from '$lib/format/bytes';
 	import { DASH } from '$lib/format/number';
 	import type { StatusKey } from '$lib/status/catalog';
 	import { controlNode, nodes } from '$lib/stores/nodes.svelte';
@@ -51,11 +52,12 @@
 	const SERVER_REFRESH_MS = 5000;
 	const NODE_REFRESH_MS = 10000;
 	const FINDINGS_REFRESH_MS = 30000;
-	const CONNECTION_MIN_PX = 570;
-	const VERSION_MIN_PX = 670;
-	const DATA_MIN_PX = 765;
-	const PIECES_MIN_PX = 845;
-	const WIDE_MIN_PX = 830;
+	const CONNECTION_MIN_PX = 660;
+	const VERSION_MIN_PX = 760;
+	const DATA_MIN_PX = 855;
+	const PIECES_MIN_PX = 935;
+	const DISK_MIN_PX = 860;
+	const WIDE_MIN_PX = 920;
 
 	const serversQuery = createQuery({
 		key: ['instances'],
@@ -370,7 +372,7 @@
 	const fits = (minPx: number): boolean => 0 === tableWidth || minPx <= tableWidth;
 
 	const allColumns: ColumnDef<ServerRow>[] = $derived([
-		{ id: 'server', header: t('nodes.servers.column.server'), cell: serverCell, sortKey: 'id', width: fits(WIDE_MIN_PX) ? 210 : 150, priority: 1 },
+		{ id: 'server', header: t('nodes.servers.column.server'), cell: serverCell, sortKey: 'id', width: fits(WIDE_MIN_PX) ? 260 : 220, priority: 1 },
 		{ id: 'status', header: t('nodes.servers.column.status'), cell: statusCell, sortKey: 'up', width: 140, priority: 1 },
 		{
 			id: 'connection',
@@ -407,6 +409,14 @@
 			width: 80,
 			hidden: noPieces || false === fits(PIECES_MIN_PX)
 		},
+		{
+			id: 'disk',
+			header: t('nodes.servers.column.disk'),
+			cell: diskCell,
+			align: 'end',
+			width: 120,
+			hidden: false === fits(DISK_MIN_PX)
+		},
 		{ id: 'control', header: t('nodes.servers.column.action'), cell: controlCell, width: 110, priority: 1 }
 	]);
 	const columns = $derived(allColumns.filter((column) => true !== column.hidden));
@@ -423,7 +433,7 @@
 				<span class="sub">{t(sourceKeys[row.source])}</span>
 			{/if}
 		</Cluster>
-		<span class="sub mono ellipsis" title={row.endpoint}>{row.endpoint}</span>
+		<span class="sub mono wrapped" title={row.endpoint}>{row.endpoint}</span>
 		{#if connectionInline && false === row.secure}
 			<span class="fixed"><StatusPill status="tls.off" size="sm" /></span>
 		{/if}
@@ -460,6 +470,17 @@
 		<span class="stacked end">
 			<Bytes value={row.bytes} />
 			<span class="sub">{t('nodes.servers.files', { count: row.files })}</span>
+		</span>
+	{/if}
+{/snippet}
+
+{#snippet diskCell(row: ServerRow)}
+	{#if null === row.instance || null === row.instance.disk_free_bytes || null === row.instance.disk_total_bytes}
+		<span class="sub">{DASH}</span>
+	{:else}
+		<span class="stacked end">
+			<Bytes value={row.instance.disk_free_bytes} />
+			<span class="sub">{t('nodes.servers.disk_of', { total: formatBytes(row.instance.disk_total_bytes).text })}</span>
 		</span>
 	{/if}
 {/snippet}
@@ -635,10 +656,8 @@
 		font-size: var(--text-caption-size);
 	}
 
-	.ellipsis {
-		max-inline-size: 100%;
-		overflow: hidden;
-		text-overflow: ellipsis;
+	.wrapped {
+		white-space: nowrap;
 	}
 
 	.strong {

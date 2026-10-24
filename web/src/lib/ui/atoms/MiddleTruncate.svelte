@@ -1,6 +1,4 @@
 <script lang="ts" module>
-	export const TOKENS = ['--middle-truncate-fg'] as const;
-
 	const ELLIPSIS = '…';
 	const PROTECTED_MAX_LENGTH = 24;
 	const NUMBER_OR_ID_PATTERN = /^[0-9A-Za-z_.:,+\-−]+$/;

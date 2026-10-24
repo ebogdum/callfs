@@ -211,7 +211,30 @@ export function setCommandContext(context: CommandContext): void {
 	commandScope.context = context;
 }
 
-export const commands = new CommandRegistry({ context: () => commandScope.context });
+const RECENT_STORAGE_KEY = 'callfs.recent-commands';
+
+function readRecent(): string[] {
+	try {
+		const parsed: unknown = JSON.parse(globalThis.localStorage?.getItem(RECENT_STORAGE_KEY) ?? '[]');
+		return Array.isArray(parsed) ? parsed.filter((id): id is string => 'string' === typeof id) : [];
+	} catch {
+		return [];
+	}
+}
+
+function writeRecent(ids: string[]): void {
+	try {
+		globalThis.localStorage?.setItem(RECENT_STORAGE_KEY, JSON.stringify(ids));
+	} catch {
+		return;
+	}
+}
+
+export const commands = new CommandRegistry({
+	context: () => commandScope.context,
+	recent: readRecent(),
+	persistRecent: writeRecent
+});
 
 export function register(entries: readonly Command[]): () => void {
 	return commands.register(entries);

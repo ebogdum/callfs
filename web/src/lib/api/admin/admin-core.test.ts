@@ -8,8 +8,7 @@ import { findings, mute, unmute } from './findings';
 import { exportConfig, getConfig, patchRuntime, save, schema, validate } from './config';
 import {
 	cluster,
-	join,
-	preflight,
+	joinConfig,
 	removeNode,
 	snapshot,
 	snapshots,
@@ -32,7 +31,7 @@ function networkFailure(): Result<ApiResponse<unknown>, ApiFailure> {
 }
 
 function conflictFailure(): Result<ApiResponse<unknown>, ApiFailure> {
-	return { ok: false, error: httpFailure(409, JSON.stringify({ code: 'QUORUM_RISK' }), null, 'req-9') };
+	return { ok: false, error: httpFailure(409, JSON.stringify({ code: 'CONFLICT' }), null, 'req-9') };
 }
 
 function lastCall(): { path: string; opts: RequestOptions | undefined } {
@@ -40,7 +39,7 @@ function lastCall(): { path: string; opts: RequestOptions | undefined } {
 	return { path: call?.[0] ?? '', opts: call?.[1] };
 }
 
-const NODE = { node_id: 'node-b', raft_addr: '10.0.0.2:7000', api_endpoint: 'https://10.0.0.2:8080' };
+const NODE = { node_id: 'node-b', api_endpoint: 'https://10.0.0.2:8080', cluster_addr: '10.0.0.2:6222' };
 
 beforeEach(() => {
 	requestMock.mockReset();
@@ -209,51 +208,34 @@ describe('admin cluster', () => {
 		expect(result.ok).toBe(true);
 	});
 
-	it('posts the node request to the preflight endpoint', async () => {
-		requestMock.mockResolvedValueOnce(success({ checks: [], would_replace: [] }));
-		await preflight(NODE);
+	it('reads the join config with the new member in the query', async () => {
+		requestMock.mockResolvedValueOnce(success({ yaml: 'nats:\n  enabled: true\n', steps: ['Start the node.'] }));
+		const result = await joinConfig(NODE);
 		expect(lastCall()).toEqual({
-			path: '/v1/admin/cluster/preflight',
-			opts: { method: 'POST', body: NODE }
+			path: '/v1/admin/cluster/join-config',
+			opts: { query: { node_id: 'node-b', api_endpoint: 'https://10.0.0.2:8080', cluster_addr: '10.0.0.2:6222' } }
 		});
+		expect(result).toEqual({ ok: true, value: { yaml: 'nats:\n  enabled: true\n', steps: ['Start the node.'] } });
 	});
 
-	it('posts the node request to the nodes endpoint on join', async () => {
-		requestMock.mockResolvedValueOnce(success({ status: 'joined', leader_id: 'node-a', replaced: [] }));
-		const result = await join(NODE);
-		expect(lastCall()).toEqual({
-			path: '/v1/admin/cluster/nodes',
-			opts: { method: 'POST', body: NODE }
-		});
-		expect(result).toEqual({ ok: true, value: { status: 'joined', leader_id: 'node-a', replaced: [] } });
-	});
-
-	it('deletes the encoded node without a force flag by default', async () => {
-		requestMock.mockResolvedValueOnce(success({ status: 'removed', leader_id: 'node-a', voters_after: 2 }));
-		await removeNode('node b');
+	it('deletes the encoded node', async () => {
+		requestMock.mockResolvedValueOnce(success({ status: 'removed', remaining: 2 }));
+		const result = await removeNode('node b');
 		expect(lastCall()).toEqual({
 			path: '/v1/admin/cluster/nodes/node%20b',
-			opts: { method: 'DELETE', query: { force: undefined } }
+			opts: { method: 'DELETE' }
 		});
+		expect(result).toEqual({ ok: true, value: { status: 'removed', remaining: 2 } });
 	});
 
-	it('sends force=true when removal is forced', async () => {
-		requestMock.mockResolvedValueOnce(success({ status: 'removed', leader_id: 'node-a', voters_after: 1 }));
-		await removeNode('node-b', true);
-		expect(lastCall()).toEqual({
-			path: '/v1/admin/cluster/nodes/node-b',
-			opts: { method: 'DELETE', query: { force: true } }
-		});
-	});
-
-	it('maps a QUORUM_RISK conflict to a UiError with status 409', async () => {
+	it('maps a conflict on removal to a UiError with status 409', async () => {
 		requestMock.mockResolvedValueOnce(conflictFailure());
 		const result = await removeNode('node-b');
 		expect(result.ok).toBe(false);
 		if (result.ok) {
 			return;
 		}
-		expect(result.error).toMatchObject({ status: 409, code: 'QUORUM_RISK' });
+		expect(result.error).toMatchObject({ status: 409 });
 	});
 
 	it('posts the target node to leadership transfer', async () => {
@@ -266,7 +248,7 @@ describe('admin cluster', () => {
 	});
 
 	it('posts a snapshot request', async () => {
-		requestMock.mockResolvedValueOnce(success({ index: 10, term: 2, bytes: 512, took_ms: 4 }));
+		requestMock.mockResolvedValueOnce(success({ id: 'snap-10', seq: 10, bytes: 512, took_ms: 4 }));
 		await snapshot();
 		expect(lastCall()).toEqual({ path: '/v1/admin/cluster/snapshot', opts: { method: 'POST' } });
 	});

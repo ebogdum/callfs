@@ -15,7 +15,7 @@
 		stat: Stat;
 		server: ServerInfo | null;
 		lock: LockInfo | null;
-		cache: { hit: boolean } | null;
+		cache: { enabled: boolean; hits: number; misses: number } | null;
 		class?: string;
 	}
 
@@ -35,9 +35,19 @@
 				})
 	);
 
-	const cacheText = $derived(
-		null === cache ? t('common.unknown') : cache.hit ? t('inspector.cache.hit') : t('inspector.cache.miss')
-	);
+	const cacheText = $derived.by(() => {
+		if (null === cache) {
+			return t('common.unknown');
+		}
+		if (false === cache.enabled) {
+			return t('inspector.cache.off');
+		}
+		const reads = cache.hits + cache.misses;
+		if (0 === reads) {
+			return t('inspector.cache.idle');
+		}
+		return t('inspector.cache.rate', { percent: Math.round((cache.hits / reads) * 100) });
+	});
 
 	const items: DescriptionItem[] = $derived([
 		{ term: t('inspector.placement.storage'), value: storageLabel(stat.storage) },

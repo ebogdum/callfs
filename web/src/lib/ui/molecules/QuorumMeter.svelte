@@ -1,6 +1,4 @@
 <script lang="ts" module>
-	export const TOKENS = ['--quorum-meter-up', '--quorum-meter-down'] as const;
-
 	export type QuorumState = 'can_lose' | 'at_risk' | 'lost';
 </script>
 

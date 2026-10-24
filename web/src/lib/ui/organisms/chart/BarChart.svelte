@@ -1,10 +1,9 @@
 <script lang="ts" module>
 	import type { HTMLAttributes } from 'svelte/elements';
 	import { formatBytes } from '../../../format/bytes';
-	import { DASH, formatNumber } from '../../../format/number';
+	import { DASH, defaultLocale, formatFixed, formatNumber } from '../../../format/number';
+	import { tickDigits } from './scale';
 	import type { Series, Unit } from '../../types';
-
-	export type ChartScale = (value: number) => number;
 
 	export interface ChartTable {
 		columns: string[];
@@ -41,11 +40,16 @@
 		none: ''
 	};
 
-	export const formatChartValue = (value: number | null, unit: Unit): string => {
+	export const formatChartValue = (value: number | null, unit: Unit, step?: number): string => {
 		if (null === value) {
 			return DASH;
 		}
-		const base = 'bytes' === unit || 'bytes_per_s' === unit ? formatBytes(value).text : formatNumber(value, 'compact');
+		const isBytes = 'bytes' === unit || 'bytes_per_s' === unit;
+		const base = isBytes
+			? formatBytes(value).text
+			: undefined !== step && 0 < step && step < 1 && 1000 > Math.abs(value)
+				? formatFixed(value, tickDigits(step), defaultLocale())
+				: formatNumber(value, 'compact');
 		return `${base}${unitSuffixes[unit]}`;
 	};
 </script>
@@ -134,7 +138,9 @@
 
 	const fit = (text: string, room: number): string => {
 		const limit = Math.max(3, Math.floor(room / CHAR_WIDTH));
-		return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+		if (text.length <= limit) return text;
+		const tail = Math.ceil((limit - 1) / 2);
+		return `${text.slice(0, limit - 1 - tail)}…${text.slice(text.length - tail)}`;
 	};
 
 	const labelStride = $derived.by(() => {
@@ -217,7 +223,7 @@
 			: linearScale([0, valueSpan], [baseline, PLOT_TOP])
 	);
 
-	const formatTick = (value: number): string => formatChartValue(value, unit);
+	const formatTick = (value: number, step: number): string => formatChartValue(value, unit, step);
 
 	const summary = $derived(ordered.map((row) => `${row.label}: ${formatChartValue(row.total, unit)}`).join('; '));
 

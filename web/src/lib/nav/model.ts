@@ -88,7 +88,7 @@ export const navItems: readonly NavItem[] = [
 		children: [
 			child('cluster.topology', '/cluster', 'admin', null, 'Members'),
 			child('cluster.members', '/cluster/nodes', 'admin', null, 'Members'),
-			child('cluster.raft', '/cluster/raft', 'admin', 'raft', 'Members'),
+			child('cluster.replication', '/cluster/replication', 'admin', 'nats', 'Members'),
 			child('cluster.servers', '/cluster/servers', 'admin', null, 'Members'),
 			child('cluster.storage', '/cluster/storage', 'admin', null, 'Data'),
 			child('cluster.durability', '/cluster/durability', 'admin', null, 'Data'),

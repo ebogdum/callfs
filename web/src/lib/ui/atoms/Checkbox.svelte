@@ -1,14 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = [
-		'--checkbox-box',
-		'--checkbox-radius',
-		'--checkbox-border',
-		'--checkbox-bg',
-		'--checkbox-accent',
-		'--checkbox-mark'
-	] as const;
-</script>
-
 <script lang="ts">
 	import { Checkbox } from 'bits-ui';
 	import type { HTMLButtonAttributes } from 'svelte/elements';

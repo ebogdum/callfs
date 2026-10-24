@@ -1,6 +1,4 @@
 <script lang="ts" module>
-	export const TOKENS = ['--range-input-field-basis'] as const;
-
 	type RangePreset = 'first' | 'last' | 'custom';
 	type RangeFault = 'outside' | 'order';
 

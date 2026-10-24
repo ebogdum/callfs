@@ -4,9 +4,7 @@ import { t } from '$lib/copy/t';
 import { formatBytes } from '$lib/format/bytes';
 import { formatNumber } from '$lib/format/number';
 import { STATUS } from '$lib/status/catalog';
-import BarCell from './BarCell.svelte';
 import CountCell from './CountCell.svelte';
-import DeltaCell from './DeltaCell.svelte';
 import ProgressCell from './ProgressCell.svelte';
 import SparklineCell from './SparklineCell.svelte';
 
@@ -46,60 +44,6 @@ describe('SparklineCell', () => {
 	it('exposes the tone on the root', () => {
 		const { container } = render(SparklineCell, { props: { values: [1, 2], tone: 'ok' } });
 		expect(container.querySelector('svg')?.getAttribute('data-tone')).toBe('ok');
-	});
-});
-
-describe('BarCell', () => {
-	it('sets the fill width from value over max', () => {
-		const { container } = render(BarCell, { props: { value: 50, max: 100 } });
-		expect(container.querySelector<HTMLElement>('.fill')?.style.width).toBe('50%');
-	});
-
-	it('clamps the fill to the full track and to empty', () => {
-		const over = render(BarCell, { props: { value: 150, max: 100 } });
-		expect(over.container.querySelector<HTMLElement>('.fill')?.style.width).toBe('100%');
-		cleanup();
-		const noMax = render(BarCell, { props: { value: 5, max: 0 } });
-		expect(noMax.container.querySelector<HTMLElement>('.fill')?.style.width).toBe('0%');
-	});
-
-	it('renders bytes with the SI text', () => {
-		const { container } = render(BarCell, { props: { value: 1500, max: 3000, unit: 'bytes' } });
-		expect(container.querySelector('.value')?.textContent).toContain(formatBytes(1500).text);
-	});
-
-	it('renders a percent value with its unit', () => {
-		const { container } = render(BarCell, { props: { value: 50, max: 100, unit: 'percent' } });
-		const text = container.querySelector('.value')?.textContent ?? '';
-		expect(text).toContain(formatNumber(50, 'int'));
-		expect(text).toContain('%');
-	});
-
-	it('defaults the tone to accent and exposes an explicit tone', () => {
-		const defaults = render(BarCell, { props: { value: 1, max: 2 } });
-		expect(defaults.container.querySelector('.bar-cell')?.getAttribute('data-tone')).toBe('accent');
-		cleanup();
-		const warned = render(BarCell, { props: { value: 1, max: 2, tone: 'warn' } });
-		expect(warned.container.querySelector('.bar-cell')?.getAttribute('data-tone')).toBe('warn');
-	});
-});
-
-describe('DeltaCell', () => {
-	it('shows the period and a good tone when the change moves the right way', () => {
-		const { container } = render(DeltaCell, { props: { value: 5, unit: 'count', goodWhen: 'up', period: 'vs previous hour' } });
-		const root = container.querySelector('.delta');
-		expect(root?.getAttribute('data-tone')).toBe('ok');
-		expect(root?.textContent).toContain('vs previous hour');
-	});
-
-	it('marks a rise as a danger tone when a fall is good', () => {
-		const { container } = render(DeltaCell, { props: { value: 5, unit: 'count', goodWhen: 'down', period: 'vs previous day' } });
-		expect(container.querySelector('.delta')?.getAttribute('data-tone')).toBe('danger');
-	});
-
-	it('stays neutral when no direction is good', () => {
-		const { container } = render(DeltaCell, { props: { value: 5, unit: 'count', goodWhen: 'none', period: 'vs previous day' } });
-		expect(container.querySelector('.delta')?.getAttribute('data-tone')).toBe('neutral');
 	});
 });
 

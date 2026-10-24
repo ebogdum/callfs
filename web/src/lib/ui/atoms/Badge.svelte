@@ -1,13 +1,5 @@
 <script lang="ts" module>
 	export type BadgeVariant = 'soft' | 'solid' | 'outline';
-
-	export const TOKENS = [
-		'--badge-bg',
-		'--badge-fg',
-		'--badge-border',
-		'--badge-radius',
-		'--badge-px'
-	] as const;
 </script>
 
 <script lang="ts">

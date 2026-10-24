@@ -244,6 +244,7 @@
 {#snippet nameCell(entry: FileEntry)}
 	<span
 		class="name-slot"
+		data-entry-path={entry.path}
 		data-drop-target={isFolder(entry) ? String(entry.path === dropTarget) : undefined}
 		ondragover={(event: DragEvent) => allowDrop(entry, event)}
 		ondragleave={() => leaveDrop(entry)}

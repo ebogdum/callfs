@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--bytes-color', '--bytes-weight'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import { formatBytes } from '$lib/format/bytes';

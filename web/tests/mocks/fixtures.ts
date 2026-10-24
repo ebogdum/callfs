@@ -150,7 +150,7 @@ const JOBS = [
 
 const EVENTS = [
 	{ id: 'evt-1', type: 'config.changed', level: 'info', message: 'Log level changed to info.' },
-	{ id: 'evt-2', type: 'cluster.leader_changed', level: 'warn', message: 'Leader changed to callfs-node-1.' },
+	{ id: 'evt-2', type: 'cluster.member_joined', level: 'info', message: 'callfs-node-1 joined the cluster.' },
 	{ id: 'evt-3', type: 'server.started', level: 'info', message: 'callfs-node-1 started.' },
 	{ id: 'evt-4', type: 'job.failed', level: 'error', message: 'Erasure repair failed for 3 pieces.' },
 	{ id: 'evt-5', type: 'link.created', level: 'info', message: 'Download link created for /team/report.pdf.' },
@@ -272,7 +272,8 @@ const HEALTH_COMPONENTS = [
 	'storage.localfs',
 	'storage.s3',
 	'storage.internal_proxy',
-	'raft',
+	'nats',
+	'metadata_log',
 	'erasure',
 	'tls',
 	'disk',
@@ -287,10 +288,10 @@ const HEALTH_COMPONENTS = [
 }));
 
 const INSTANCES = [
-	{ instance_id: 'callfs-node-1', endpoint: 'https://node-1.example.test', source: 'self', is_self: true, scheme: 'https', reachable: true, rtt_ms: 0, checked_at: BASE, files: 16403, bytes: 400000000000, pieces: 4 },
-	{ instance_id: 'callfs-node-2', endpoint: 'https://node-2.example.test', source: 'config', is_self: false, scheme: 'https', reachable: true, rtt_ms: 14, checked_at: BASE, files: 16104, bytes: 400000000000, pieces: 4 },
-	{ instance_id: 'callfs-node-3', endpoint: 'https://node-3.example.test', source: 'config', is_self: false, scheme: 'https', reachable: true, rtt_ms: 18, checked_at: BASE, files: 15703, bytes: 400000000000, pieces: 4 },
-	{ instance_id: 'archive-1', endpoint: 'http://archive.example.test', source: 'joined', is_self: false, scheme: 'http', reachable: false, rtt_ms: null, checked_at: BASE, files: 0, bytes: 0, pieces: 0 }
+	{ instance_id: 'callfs-node-1', endpoint: 'https://node-1.example.test', source: 'self', is_self: true, scheme: 'https', reachable: true, rtt_ms: 0, checked_at: BASE, files: 16403, bytes: 400000000000, pieces: 4, disk_free_bytes: null, disk_total_bytes: null },
+	{ instance_id: 'callfs-node-2', endpoint: 'https://node-2.example.test', source: 'config', is_self: false, scheme: 'https', reachable: true, rtt_ms: 14, checked_at: BASE, files: 16104, bytes: 400000000000, pieces: 4, disk_free_bytes: null, disk_total_bytes: null },
+	{ instance_id: 'callfs-node-3', endpoint: 'https://node-3.example.test', source: 'config', is_self: false, scheme: 'https', reachable: true, rtt_ms: 18, checked_at: BASE, files: 15703, bytes: 400000000000, pieces: 4, disk_free_bytes: null, disk_total_bytes: null },
+	{ instance_id: 'archive-1', endpoint: 'http://archive.example.test', source: 'joined', is_self: false, scheme: 'http', reachable: false, rtt_ms: null, checked_at: BASE, files: 0, bytes: 0, pieces: 0, disk_free_bytes: null, disk_total_bytes: null }
 ];
 
 const BACKENDS = [
@@ -301,24 +302,29 @@ const BACKENDS = [
 ];
 
 const CLUSTER_MEMBERS = [
-	{ node_id: 'callfs-node-1', raft_addr: '10.0.0.1:7000', api_endpoint: 'https://node-1.example.test', suffrage: 'voter', state: 'leader', is_self: true, last_contact_ms: 0, behind_by: null, instance_id: 'callfs-node-1' },
-	{ node_id: 'callfs-node-2', raft_addr: '10.0.0.2:7000', api_endpoint: 'https://node-2.example.test', suffrage: 'voter', state: 'follower', is_self: false, last_contact_ms: 22, behind_by: 0, instance_id: 'callfs-node-2' },
-	{ node_id: 'callfs-node-3', raft_addr: '10.0.0.3:7000', api_endpoint: 'https://node-3.example.test', suffrage: 'voter', state: 'follower', is_self: false, last_contact_ms: 31, behind_by: 2, instance_id: 'callfs-node-3' }
+	{ node_id: 'callfs-node-1', instance_id: 'callfs-node-1', api_endpoint: 'https://node-1.example.test', state: 'leader', is_self: true, online: true, last_seen_ms: 0, behind_by: 0 },
+	{ node_id: 'callfs-node-2', instance_id: 'callfs-node-2', api_endpoint: 'https://node-2.example.test', state: 'follower', is_self: false, online: true, last_seen_ms: 22, behind_by: 0 },
+	{ node_id: 'callfs-node-3', instance_id: 'callfs-node-3', api_endpoint: 'https://node-3.example.test', state: 'follower', is_self: false, online: true, last_seen_ms: 31, behind_by: 2 }
 ];
 
 export const CLUSTER = {
-	mode: 'raft',
+	mode: 'nats',
 	self_id: 'callfs-node-1',
+	cluster_name: 'callfs',
 	leader_id: 'callfs-node-1',
 	leader_endpoint: 'https://node-1.example.test',
-	term: 7,
-	last_log_index: 49426,
-	commit_index: 49426,
-	applied_index: 49426,
-	last_snapshot: { index: 48000, term: 7, at: BASE },
-	voters: 3,
+	replicas: 3,
 	has_quorum: true,
 	can_lose: 1,
+	log: {
+		first_seq: 1,
+		last_seq: 49426,
+		messages: 49426,
+		bytes: 8123450,
+		applied_seq: 49426,
+		last_snapshot: { id: 'snap-2', seq: 48000, bytes: 2090000, created_at: BASE },
+		snapshot_interval_ms: 300000
+	},
 	members: CLUSTER_MEMBERS
 };
 
@@ -349,9 +355,9 @@ const METRIC_FAMILIES = [
 	['callfs_replication_total', 'counter', 'Backup copies'],
 	['callfs_transfers_active', 'gauge', 'Transfers running'],
 	['callfs_auth_failures_total', 'counter', 'Failed sign-ins'],
-	['callfs_raft_apply_duration_seconds', 'histogram', 'Cluster save time'],
-	['callfs_raft_forward_duration_seconds', 'histogram', 'Pass-to-leader time'],
-	['callfs_raft_leader_changes_total', 'counter', 'Leader changes'],
+	['callfs_nats_connected', 'gauge', 'NATS running'],
+	['callfs_nats_routes', 'gauge', 'Cluster routes'],
+	['callfs_nats_stream_messages', 'gauge', 'Stored messages'],
 	['callfs_jobs_total', 'counter', 'Jobs finished'],
 	['callfs_erasure_pieces_repaired_total', 'counter', 'Pieces repaired'],
 	['callfs_usage_bytes', 'gauge', 'Bytes stored'],
@@ -439,10 +445,10 @@ export const fixtures: MockTable = {
 		go_version: 'go1.25.0',
 		instance_id: 'callfs-node-1',
 		node_id: 'callfs-node-1',
-		features: { erasure: true, raft: true, cross_server: true, websocket: true, replication: true, quic: false, metrics_listener: true, trash: true, resumable_uploads: true, search: true, ui: true },
+		features: { erasure: true, nats: true, cross_server: true, websocket: true, replication: true, quic: false, metrics_listener: true, trash: true, resumable_uploads: true, search: true, ui: true },
 		storages: ['localfs', 's3'],
 		default_storage: 'localfs',
-		file_index: 'raft',
+		file_index: 'nats',
 		lock_type: 'redis',
 		external_url: 'https://files.example.test',
 		limits: { max_upload_bytes: 10737418240, max_split_upload_bytes: 1073741824, max_ws_upload_bytes: 100000000, ws_frame_bytes: 1048576, max_patch_body_bytes: 1048576, link_expiry_min_s: 1, link_expiry_max_s: 86400, list_page_max: 1000, upload_part_bytes: 8388608 },
@@ -538,7 +544,7 @@ export const fixtures: MockTable = {
 		listeners: [{ kind: 'https', addr: '0.0.0.0:8443', tls: true, auth: true }, { kind: 'metrics', addr: '127.0.0.1:9090', tls: false, auth: false }],
 		protocol_configured: 'auto',
 		protocol_effective: 'https',
-		file_index: 'raft',
+		file_index: 'nats',
 		lock_type: 'redis',
 		storages: { localfs: true, s3: true, internal_proxy: true, erasure: true },
 		runtime: { goroutines: 214, heap_bytes: 134217728, open_fds: 88, cpu_seconds: 412.5 }
@@ -555,22 +561,18 @@ export const fixtures: MockTable = {
 	'GET /v1/admin/config/export': ok('server:\n  protocol: auto\n  read_timeout: 30s\n'),
 	'POST /v1/admin/restart': accepted({ restarting: true }),
 	'GET /v1/admin/cluster': ok(CLUSTER),
-	'POST /v1/admin/cluster/preflight': ok({
-		checks: [
-			{ name: 'id_unique', ok: true, detail: 'Member ID is free.' },
-			{ name: 'addr_unused', ok: true, detail: 'Address is free.' },
-			{ name: 'raft_reachable', ok: true, detail: 'Reachable.' },
-			{ name: 'api_reachable', ok: true, detail: 'Reachable.' },
-			{ name: 'api_https', ok: true, detail: 'Uses HTTPS.' },
-			{ name: 'secret_ok', ok: true, detail: 'Secret matches.' }
-		],
-		would_replace: []
+	'GET /v1/admin/cluster/join-config': ok({
+		yaml: 'nats:\n  enabled: true\n  server_name: callfs-node-4\n  cluster_name: callfs\n  cluster_listen: 10.0.0.14:6222\n  routes:\n    - nats://10.0.0.1:6222\n    - nats://10.0.0.14:6222\nmetadata_store:\n  type: nats\ndlm:\n  type: nats\n',
+		steps: [
+			'Copy auth.internal_proxy_secret, auth.single_use_link_secret and the API keys from an existing node.',
+			'Start the new node with this config.',
+			'Add its route and peer endpoint to the other nodes on their next restart.'
+		]
 	}),
-	'POST /v1/admin/cluster/nodes': created({ status: 'joined', leader_id: 'callfs-node-1', replaced: [] }),
-	'DELETE /v1/admin/cluster/nodes/*': ok({ status: 'removed', leader_id: 'callfs-node-1', voters_after: 2 }),
+	'DELETE /v1/admin/cluster/nodes/*': ok({ status: 'removed', remaining: 2 }),
 	'POST /v1/admin/cluster/leadership-transfer': ok({ status: 'transferred', leader_id: 'callfs-node-2' }),
-	'POST /v1/admin/cluster/snapshot': created({ index: 49426, term: 7, bytes: 2097152, took_ms: 38 }),
-	'GET /v1/admin/cluster/snapshots': ok({ retain: 3, items: [{ id: 'snap-1', index: 49426, term: 7, bytes: 2097152, created_at: BASE }, { id: 'snap-2', index: 48000, term: 7, bytes: 2090000, created_at: '2026-10-23T06:00:00Z' }, { id: 'snap-3', index: 46500, term: 6, bytes: 2080000, created_at: '2026-10-22T18:00:00Z' }] }),
+	'POST /v1/admin/cluster/snapshot': created({ id: 'snap-4', seq: 49426, bytes: 2097152, took_ms: 38 }),
+	'GET /v1/admin/cluster/snapshots': ok({ retain: 3, items: [{ id: 'snap-1', seq: 49426, bytes: 2097152, created_at: BASE }, { id: 'snap-2', seq: 48000, bytes: 2090000, created_at: '2026-10-23T06:00:00Z' }, { id: 'snap-3', seq: 46500, bytes: 2080000, created_at: '2026-10-22T18:00:00Z' }] }),
 	'GET /v1/admin/cluster/state-stats': ok({ files: 48210, directories: 1204, links: linkCounts, erasure_entries: 12, index_entries: 49426 }),
 	'GET /v1/admin/instances': ok({ self: { instance_id: 'callfs-node-1', external_url: 'https://files.example.test', started_at: BASE }, items: INSTANCES }),
 	'PUT /v1/admin/instances/*/endpoint': ok(INSTANCES[1]),

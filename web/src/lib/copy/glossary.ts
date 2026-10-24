@@ -52,7 +52,7 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
 	cluster_member: {
 		word: 'Cluster member',
 		means: 'A server that keeps the shared file index.',
-		technical: 'voter'
+		technical: 'replica'
 	},
 	leader: { word: 'Leader', means: 'The cluster member that accepts changes right now.' },
 	quorum: { word: 'Quorum', means: 'Enough cluster members agree to accept changes.' },

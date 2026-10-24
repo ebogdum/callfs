@@ -47,6 +47,7 @@ const ME: Me = {
 	session_expires_at: null,
 	csrf_token: 'csrf-1',
 	permissions_model: 'owner',
+	idle_timeout_seconds: 3600
 };
 
 const CAPABILITIES: Capabilities = {
@@ -58,7 +59,7 @@ const CAPABILITIES: Capabilities = {
 	node_id: null,
 	features: {
 		erasure: false,
-		raft: false,
+		nats: false,
 		cross_server: true,
 		websocket: true,
 		replication: false,
@@ -156,7 +157,7 @@ describe('SessionStore', () => {
 		const store = new SessionStore(clock);
 		vi.mocked(sessionApi.signIn).mockResolvedValue({
 			ok: true,
-			value: { user_id: 'bob', is_admin: false, expires_at: new Date(BASE + 3_600_000).toISOString(), csrf_token: 'csrf-2' },
+			value: { user_id: 'bob', is_admin: false, expires_at: new Date(BASE + 3_600_000).toISOString(), csrf_token: 'csrf-2', idle_timeout_seconds: 3600 },
 		});
 		const result = await store.signIn('key-1');
 		expect(sessionApi.signIn).toHaveBeenCalledWith('key-1');
@@ -192,6 +193,14 @@ describe('SessionStore', () => {
 		vi.mocked(sessionApi.me).mockResolvedValue({ ok: true, value: ME });
 		await store.refresh();
 		store.tick(BASE + IDLE_TIMEOUT_MS - EXPIRY_WARNING_MS);
+		expect(store.warning).toEqual({ reason: 'idle', secondsLeft: 120 });
+	});
+
+	it('uses the idle timeout reported by the server', async () => {
+		const store = new SessionStore(clock);
+		vi.mocked(sessionApi.me).mockResolvedValue({ ok: true, value: { ...ME, idle_timeout_seconds: 600 } as Me });
+		await store.refresh();
+		store.tick(BASE + 600_000 - EXPIRY_WARNING_MS);
 		expect(store.warning).toEqual({ reason: 'idle', secondsLeft: 120 });
 	});
 
@@ -270,7 +279,7 @@ describe('CapabilitiesStore', () => {
 		expect(sessionApi.capabilities).toHaveBeenCalledTimes(1);
 		expect(store.status).toBe('success');
 		expect(store.has('trash')).toBe(true);
-		expect(store.has('raft')).toBe(false);
+		expect(store.has('nats')).toBe(false);
 	});
 
 	it('records the error when loading fails', async () => {

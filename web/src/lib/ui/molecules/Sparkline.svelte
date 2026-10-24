@@ -1,6 +1,5 @@
 <script lang="ts" module>
 	export type SparklineHeight = 'sm' | 'md';
-	export const TOKENS = ['--sparkline-stroke', '--sparkline-w', '--sparkline-h'] as const;
 
 	const VIEW_WIDTH = 64;
 	const VIEW_HEIGHT = 20;

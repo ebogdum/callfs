@@ -9,7 +9,7 @@
 
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
-	import { DASH, defaultLocale, formatNumber } from '../../../format/number';
+	import { DASH, defaultLocale, formatFixed, formatNumber } from '../../../format/number';
 	import type { Unit } from '../../types';
 	import ChartFrame from './ChartFrame.svelte';
 	import { formatChartValue, type ChartTable } from './BarChart.svelte';
@@ -31,6 +31,9 @@
 	const EPOCH_SECONDS_LIMIT = 1e11;
 	const plotLeft = 96;
 	const clockFormat = new Intl.DateTimeFormat(defaultLocale(), { hour: 'numeric', minute: '2-digit' });
+	const clockSecondsFormat = new Intl.DateTimeFormat(defaultLocale(), { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+	const MINUTE_SPAN_SECONDS = 600;
+	const MAX_BUCKET_DIGITS = 6;
 
 	let frameWidth = $state(0);
 	const chartWidth = $derived(0 < frameWidth ? frameWidth : FALLBACK_WIDTH);
@@ -79,11 +82,22 @@
 		new Map(cells.flatMap((cell) => (undefined === cell.yLabel ? [] : [[cell.y, cell.yLabel] as const])))
 	);
 
+	const bucketDigits = $derived.by(() => {
+		for (let digits = 0; MAX_BUCKET_DIGITS >= digits; digits += 1) {
+			const seen = new Set(yValues.map((value) => value.toFixed(digits)));
+			if (seen.size === yValues.length) return digits;
+		}
+		return MAX_BUCKET_DIGITS;
+	});
+	const bucketLabel = (value: number): string => {
+		if ('bytes' === yUnit || 'bytes_per_s' === yUnit) return formatChartValue(value, yUnit);
+		return `${formatFixed(value, bucketDigits, defaultLocale())}${'s' === yUnit ? ' s' : ''}`;
+	};
 	const tickLabels = $derived(
 		yValues.map((value, index) => ({
 			key: index,
-			full: rowLabels.get(value) ?? formatChartValue(value, yUnit),
-			text: shorten(rowLabels.get(value) ?? formatChartValue(value, yUnit)),
+			full: rowLabels.get(value) ?? bucketLabel(value),
+			text: shorten(rowLabels.get(value) ?? bucketLabel(value)),
 			y: rowOf(value) + cellHeight / 2
 		}))
 	);
@@ -96,13 +110,21 @@
 			values.reduce((best, value) => (Math.abs(apply(value) - position) < Math.abs(apply(best) - position) ? value : best), values[0] ?? 0),
 		ticks: (count) => {
 			const every = Math.max(1, Math.ceil(values.length / Math.max(1, count)));
-			return values.filter((_, index) => 0 === index % every);
+			const picked = values.filter((_, index) => 0 === index % every);
+			const lastPicked = Math.floor((values.length - 1) / every) * every;
+			return every / 2 <= values.length - 1 - lastPicked ? [...picked, values[values.length - 1] ?? 0] : picked;
 		}
 	});
 
+	const spanSeconds = $derived.by(() => {
+		const first = xValues[0] ?? 0;
+		const last = xValues[xValues.length - 1] ?? 0;
+		return EPOCH_SECONDS_LIMIT > Math.abs(last) ? last - first : (last - first) / 1000;
+	});
 	const formatX = (value: number): string => {
 		if (EPOCH_FLOOR > Math.abs(value)) return formatChartValue(value, xUnit);
-		return clockFormat.format(EPOCH_SECONDS_LIMIT > Math.abs(value) ? value * 1000 : value);
+		const format = MINUTE_SPAN_SECONDS > spanSeconds ? clockSecondsFormat : clockFormat;
+		return format.format(EPOCH_SECONDS_LIMIT > Math.abs(value) ? value * 1000 : value);
 	};
 
 	const xScale = $derived(
@@ -115,7 +137,7 @@
 	const table: ChartTable = $derived({
 		columns: [label, ...xValues.map((value) => formatChartValue(value, xUnit))],
 		rows: yValues.map((y) => [
-			rowLabels.get(y) ?? formatChartValue(y, yUnit),
+			rowLabels.get(y) ?? bucketLabel(y),
 			...xValues.map((x) => {
 				const cell = cells.find((candidate) => candidate.x === x && candidate.y === y);
 				return undefined === cell ? DASH : formatNumber(cell.value, 'compact');

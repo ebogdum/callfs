@@ -10,7 +10,7 @@
 	import { usage } from '$lib/api/search';
 	import type { Result, SeriesResult } from '$lib/api/types';
 	import { formatTimestamp } from '$lib/format/time';
-	import { t } from '$lib/copy/t';
+	import { hasCopy, t } from '$lib/copy/t';
 	import type { StatusKey } from '$lib/status/catalog';
 	import type { Series, UiError } from '$lib/ui/types';
 	import Button from '$lib/ui/atoms/Button.svelte';
@@ -26,7 +26,6 @@
 	import NumberCell from '$lib/ui/cells/NumberCell.svelte';
 	import StorageCell from '$lib/ui/cells/StorageCell.svelte';
 	import TextCell from '$lib/ui/cells/TextCell.svelte';
-	import ValueCell from '$lib/ui/cells/ValueCell.svelte';
 	import Cluster from '$lib/ui/quarks/Cluster.svelte';
 	import Stack from '$lib/ui/quarks/Stack.svelte';
 
@@ -42,6 +41,7 @@
 
 	const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 	const windowStart = (span: number): number => nowSeconds() - span;
+	const chartWindow: readonly [number, number] = [windowStart(DAY_S), nowSeconds()];
 
 	const valueOrReject = <T, E>(outcome: Result<T, E>): Promise<T> =>
 		outcome.ok ? Promise.resolve(outcome.value) : Promise.reject(outcome.error);
@@ -81,8 +81,8 @@
 					name: 'callfs_http_requests_total',
 					measure: 'rate',
 					by: ['status_code'],
-					from: windowStart(DAY_S),
-					to: nowSeconds(),
+					from: chartWindow[0],
+					to: chartWindow[1],
 					stepS: 300
 				})
 			)
@@ -94,8 +94,8 @@
 				await series({
 					name: 'callfs_http_request_duration_seconds',
 					measure: 'p95',
-					from: windowStart(DAY_S),
-					to: nowSeconds(),
+					from: chartWindow[0],
+					to: chartWindow[1],
 					stepS: 300
 				})
 			)
@@ -130,9 +130,15 @@
 	function memberStatus(state: string): StatusKey {
 		if ('leader' === state) return 'member.leader';
 		if ('follower' === state) return 'member.follower';
-		if ('candidate' === state) return 'member.candidate';
-		if ('shutdown' === state) return 'member.shutdown';
 		return 'member.unreachable';
+	}
+
+	function valueText(value: unknown, secret: boolean, isSet: boolean): string {
+		if (secret) return isSet ? t('u065cells.set') : t('u065cells.not_set');
+		if (null === value || undefined === value || '' === value) return t('u065cells.not_set');
+		if ('boolean' === typeof value) return value ? t('u065cells.yes') : t('u065cells.no');
+		if ('object' === typeof value) return JSON.stringify(value);
+		return String(value);
 	}
 
 	function latest(points: [number, number | null][]): number | null {
@@ -183,11 +189,11 @@
 	const attention = $derived(
 		openFindings.filter((finding) => 'critical' === finding.severity || 'warning' === finding.severity).length
 	);
-	const healthyVoters = $derived(
-		(clusterQuery.data?.members ?? []).filter(
-			(member) => 'voter' === member.suffrage && 'unreachable' !== member.state && 'shutdown' !== member.state
-		).length
+	const problems = $derived(
+		openFindings.filter((finding) => 'critical' === finding.severity || 'warning' === finding.severity)
 	);
+	const notes = $derived(openFindings.filter((finding) => 'critical' !== finding.severity && 'warning' !== finding.severity));
+	const healthyVoters = $derived((clusterQuery.data?.members ?? []).filter((member) => member.online).length);
 	const verdict = $derived(verdictOf(healthQuery.data?.status, clusterQuery.data?.has_quorum, attention));
 	const verdictLine = $derived(verdictText(verdict, attention));
 	const downComponent = $derived(
@@ -233,6 +239,23 @@
 	{/if}
 {/snippet}
 
+{#snippet findingList(list: typeof openFindings)}
+	<Stack as="ul" gap="4">
+		{#each list as finding (finding.id)}
+			<li>
+				<Stack gap="1">
+					<Cluster gap="3" align="center">
+						<StatusPill status={findingStatus(finding.severity)} />
+						<Text weight={600}>{finding.title}</Text>
+					</Cluster>
+					<Text tone="muted">{finding.body}</Text>
+					<Text>{t('wall-report.report.fix', { label: finding.fix.label })}</Text>
+				</Stack>
+			</li>
+		{/each}
+	</Stack>
+{/snippet}
+
 <article class={['report', className]} aria-busy={undefined === healthQuery.data} {...rest}>
 	<Cluster gap="4" align="center" class="actions">
 		<Button variant="primary" onclick={print}>{t('wall-report.report.print')}</Button>
@@ -247,6 +270,9 @@
 		{#if downComponent}
 			<Text tone="danger">{t('wall-report.cause.down', { component: downComponent })}</Text>
 		{/if}
+		{#if 'health.ok' === verdict && 0 < notes.length}
+			<Text tone="muted">{t('wall-report.verdict.notes', { count: notes.length })}</Text>
+		{/if}
 		<Text tone="muted">
 			{t('wall-report.report.generated', { date: formatTimestamp(generatedAt), server: serverName })}
 		</Text>
@@ -259,20 +285,15 @@
 		{:else if 0 === openFindings.length}
 			<Text tone="muted">{t('wall-report.report.no_findings')}</Text>
 		{:else}
-			<Stack as="ul" gap="4">
-				{#each openFindings as finding (finding.id)}
-					<li>
-						<Stack gap="1">
-							<Cluster gap="3" align="center">
-								<StatusPill status={findingStatus(finding.severity)} />
-								<Text weight={600}>{finding.title}</Text>
-							</Cluster>
-							<Text tone="muted">{finding.body}</Text>
-							<Text>{t('wall-report.report.fix', { label: finding.fix.label })}</Text>
-						</Stack>
-					</li>
-				{/each}
-			</Stack>
+			{#if 0 === problems.length}
+				<Text tone="muted">{t('wall-report.report.no_problems')}</Text>
+			{:else}
+				{@render findingList(problems)}
+			{/if}
+			{#if 0 < notes.length}
+				<Heading level={3}>{t('wall-report.report.notes')}</Heading>
+				{@render findingList(notes)}
+			{/if}
 		{/if}
 	</Stack>
 
@@ -335,7 +356,9 @@
 
 	<Stack gap="4">
 		<Heading level={2}>{t('wall-report.report.charts')}</Heading>
+		<Heading level={3}>{t('wall-report.report.chart.requests_title')}</Heading>
 		<TimeSeriesChart
+			domain={chartWindow}
 			series={requestSeries}
 			unit="per_s"
 			status={requestsQuery.status}
@@ -343,14 +366,18 @@
 			height="sm"
 			stacked
 		/>
+		<Heading level={3}>{t('wall-report.report.chart.errors_title')}</Heading>
 		<TimeSeriesChart
+			domain={chartWindow}
 			series={errorSeries}
 			unit="per_s"
 			status={requestsQuery.status}
 			error={requestsQuery.error ?? undefined}
 			height="sm"
 		/>
+		<Heading level={3}>{t('wall-report.report.chart.p95_title')}</Heading>
 		<TimeSeriesChart
+			domain={chartWindow}
 			series={latencySeries}
 			unit="ms"
 			thresholds={slowThreshold}
@@ -376,9 +403,17 @@
 				</thead>
 				<tbody>
 					{#each changedSettings as setting (setting.path)}
+						{@const labelKey = `settings.label.${setting.path}`}
 						<tr>
-							<td><CodeCell value={setting.path} /></td>
-							<td><ValueCell value={setting.value} secret={setting.secret} source={setting.source} /></td>
+							<td>
+								{#if !hasCopy(labelKey)}
+									<CodeCell value={setting.path} />
+								{:else}
+									<span class="setting-label">{t(labelKey)}</span>
+									<span class="setting-key">{setting.path}</span>
+								{/if}
+							</td>
+							<td class="value">{valueText(setting.value, setting.secret, setting.set)}</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -410,6 +445,25 @@
 		padding-inline: var(--cell-px);
 		text-align: start;
 		border-block-end: var(--hairline) solid var(--border-subtle);
+	}
+
+	.setting-label,
+	.setting-key {
+		display: block;
+	}
+
+	.setting-key {
+		font-family: var(--font-mono);
+		font-size: var(--text-caption-size);
+		line-height: var(--text-caption-line);
+		color: var(--text-muted);
+		overflow-wrap: anywhere;
+	}
+
+	.value {
+		font-family: var(--font-mono);
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
 	}
 
 	@media print {

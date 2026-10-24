@@ -143,23 +143,4 @@ describe('OverlayHost', () => {
 		expect(layers).toEqual(['dropdown', 'scrim', 'drawer', 'dialog', 'palette', 'popover-top', 'toast', 'tooltip']);
 		expect(container.querySelector('#overlay-dialog')).not.toBeNull();
 	});
-
-	it('refuses a second modal dialog until the first one releases', () => {
-		const view = render(OverlayHost);
-		expect(view.component.claimDialog('first')).toBe(true);
-		expect(view.component.claimDialog('second')).toBe(false);
-		expect(view.component.claimDialog('first')).toBe(true);
-		view.component.releaseDialog('second');
-		expect(view.component.claimDialog('second')).toBe(false);
-		view.component.releaseDialog('first');
-		expect(view.component.claimDialog('second')).toBe(true);
-	});
-
-	it('allows one global banner at a time', () => {
-		const view = render(OverlayHost);
-		expect(view.component.claimBanner('restart')).toBe(true);
-		expect(view.component.claimBanner('leader')).toBe(false);
-		view.component.releaseBanner('restart');
-		expect(view.component.claimBanner('leader')).toBe(true);
-	});
 });

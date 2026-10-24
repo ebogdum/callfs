@@ -106,7 +106,7 @@
 	</div>
 {:else if false === signedIn}
 	{#if onLogin}
-		<AuthGalaxy />
+		<AuthGalaxy expired={session.expired} />
 	{:else}
 		<div class="boot" aria-busy="true">
 			<Spinner label={t('shell.boot.loading')} />

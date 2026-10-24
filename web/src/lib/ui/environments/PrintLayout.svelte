@@ -1,15 +1,12 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
-	import { formatAbsolute } from '$lib/format/time';
 
 	interface Props extends HTMLAttributes<HTMLDivElement> {
 		children: Snippet;
 	}
 
 	let { children, class: className, ...rest }: Props = $props();
-
-	const generatedAt = new Date();
 
 	$effect(() => {
 		const root = document.documentElement;
@@ -29,9 +26,6 @@
 	<main class="print-body">
 		{@render children()}
 	</main>
-	<div class="print-footer">
-		<time datetime={generatedAt.toISOString()}>{formatAbsolute(generatedAt)}</time>
-	</div>
 </div>
 
 <style>
@@ -55,12 +49,5 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-6);
-	}
-
-	.print-footer {
-		display: flex;
-		justify-content: space-between;
-		gap: var(--space-2);
-		color: var(--text-muted);
 	}
 </style>

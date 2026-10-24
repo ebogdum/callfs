@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { TransferState } from '$lib/stores/transfers.svelte';
+	import type { ConflictPolicy, TransferState } from '$lib/stores/transfers.svelte';
 	import type { StatusKey } from '$lib/ui/types';
 	import { formatBytes } from '$lib/format/bytes';
 	import { t } from '$lib/copy/t';
@@ -30,6 +30,13 @@
 	const RETRYABLE: readonly TransferState[] = ['failed', 'cancelled'];
 	const CANCELLABLE: readonly TransferState[] = ['queued', 'uploading', 'downloading', 'paused', 'stalled', 'verifying', 'conflict'];
 
+	const CONFLICT_CHOICES: readonly { policy: ConflictPolicy; key: string }[] = [
+		{ policy: 'replace', key: 'transfers-trash.transfers.conflict.replace' },
+		{ policy: 'keep-both', key: 'transfers-trash.transfers.conflict.keep_both' },
+		{ policy: 'replace-if-changed', key: 'transfers-trash.transfers.conflict.replace_if_changed' },
+		{ policy: 'skip', key: 'transfers-trash.transfers.conflict.skip' }
+	];
+
 	const speedText = (bytesPerSecond: number): string =>
 		t('transfers-trash.transfers.speed', { value: formatBytes(bytesPerSecond).text });
 </script>
@@ -46,18 +53,21 @@
 	import { formatNumber } from '$lib/format/number';
 	import { parentPath } from '$lib/format/path';
 	import { session } from '$lib/stores/session.svelte';
-	import { transfers, type ConflictPolicy, type Transfer } from '$lib/stores/transfers.svelte';
+	import { toasts } from '$lib/stores/toasts.svelte';
+	import { transfers, type ResumableRecord, type Transfer } from '$lib/stores/transfers.svelte';
 	import type { ColumnDef, MenuItem, QueryStatus, Selection, UiError } from '$lib/ui/types';
 	import PageFrame from '$lib/ui/environments/PageFrame.svelte';
 	import Button from '$lib/ui/atoms/Button.svelte';
 	import NumberInput from '$lib/ui/atoms/NumberInput.svelte';
 	import Select from '$lib/ui/atoms/Select.svelte';
+	import Text from '$lib/ui/atoms/Text.svelte';
 	import SizeInput from '$lib/ui/molecules/SizeInput.svelte';
 	import FormField from '$lib/ui/molecules/FormField.svelte';
 	import Popover from '$lib/ui/molecules/Popover.svelte';
 	import Tabs from '$lib/ui/molecules/Tabs.svelte';
 	import DescriptionList from '$lib/ui/molecules/DescriptionList.svelte';
 	import EmptyState from '$lib/ui/molecules/EmptyState.svelte';
+	import InlineAlert from '$lib/ui/molecules/InlineAlert.svelte';
 	import TextCell from '$lib/ui/cells/TextCell.svelte';
 	import PathCell from '$lib/ui/cells/PathCell.svelte';
 	import ProgressCell from '$lib/ui/cells/ProgressCell.svelte';
@@ -81,6 +91,40 @@
 	let parallel = $state<number | null>(transfers.settings.parallel);
 	let partBytes = $state(transfers.settings.partBytes);
 	let conflictDefault = $state<ConflictPolicy>('skip');
+	let resumeInput = $state<HTMLInputElement | null>(null);
+	let resumeTarget = $state<ResumableRecord | null>(null);
+
+	const interrupted = $derived(
+		transfers.resumable.filter((record) => !transfers.items.some((item) => record.uploadId === item.resumeId))
+	);
+
+	const pickResume = (record: ResumableRecord): void => {
+		resumeTarget = record;
+		resumeInput?.click();
+	};
+
+	const resumeChosen = async (event: Event): Promise<void> => {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = '';
+		const target = resumeTarget;
+		resumeTarget = null;
+		if (undefined === file || null === target) {
+			return;
+		}
+		const outcome = await transfers.resumeFrom(target.uploadId, file);
+		if (!outcome.ok) {
+			toasts.push({ tone: 'warn', title: t(`transfers-trash.transfers.resume.${outcome.error}`) });
+		}
+	};
+
+	const discardInterrupted = async (record: ResumableRecord): Promise<void> => {
+		const outcome = await transfers.discardResumable(record.uploadId);
+		if (!outcome.ok) {
+			const failure = toUiError(outcome.error, { action: 'files.upload', object: record.name });
+			toasts.push({ tone: 'danger', title: failure.title, body: failure.body });
+		}
+	};
 
 	const localRows = $derived(transfers.items.filter((item) => TAB_STATES[tab].includes(item.state)));
 	const localStatus = $derived<QueryStatus>(0 === localRows.length ? 'empty' : 'success');
@@ -137,6 +181,15 @@
 		}
 		if (RETRYABLE.includes(row.state)) {
 			items.push({ id: 'retry', label: t('transfers-trash.transfers.action.retry'), onselect: () => transfers.retry(row.id) });
+		}
+		if ('conflict' === row.state) {
+			for (const choice of CONFLICT_CHOICES) {
+				items.push({
+					id: `conflict-${choice.policy}`,
+					label: t(choice.key),
+					onselect: () => transfers.resolveConflict(row.id, choice.policy)
+				});
+			}
 		}
 		if (CANCELLABLE.includes(row.state)) {
 			items.push({
@@ -284,6 +337,22 @@
 	/>
 {/snippet}
 
+{#snippet interruptedList()}
+	{#if 0 < interrupted.length}
+		<InlineAlert tone="warn" title={t('transfers-trash.transfers.resume.title')} body={t('transfers-trash.transfers.resume.body')} />
+		<ul class="interrupted">
+			{#each interrupted as record (record.uploadId)}
+				<li class="interrupted-row">
+					<Text>{record.name}</Text>
+					<Text tone="muted">{formatBytes(record.size).text}</Text>
+					<Button variant="secondary" size="sm" onclick={() => pickResume(record)}>{t('transfers-trash.transfers.resume.pick')}</Button>
+					<Button variant="ghost" size="sm" onclick={() => void discardInterrupted(record)}>{t('transfers-trash.transfers.resume.discard')}</Button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+{/snippet}
+
 {#snippet retryFailedPrimary()}
 	{#if 0 < failedCount}
 		<Button variant="primary" onclick={() => transfers.retryFailed()}>{t('transfers-trash.transfers.action.retry_failed')}</Button>
@@ -335,6 +404,7 @@
 			empty={emptyServer}
 		/>
 	{:else}
+		{@render interruptedList()}
 		<DataTable
 			rows={localRows}
 			columns={localColumns}
@@ -342,7 +412,7 @@
 			label={tabLabel(tab)}
 			status={localStatus}
 			selection={noSelection}
-			rowInline={(row) => menuFor(row).slice(0, 2)}
+			rowInline={(row) => menuFor(row).slice(0, 'conflict' === row.state ? 4 : 2)}
 			rowMenu={menuFor}
 			empty={emptyLocal}
 		/>
@@ -352,3 +422,21 @@
 <Drawer bind:open={diagnosticsOpen} title={t('transfers-trash.transfers.diagnostics.title')}>
 	<DescriptionList items={diagnosticItems} />
 </Drawer>
+
+<input bind:this={resumeInput} type="file" hidden onchange={(event) => void resumeChosen(event)} />
+
+<style>
+	.interrupted {
+		display: grid;
+		gap: var(--space-2);
+		padding: 0;
+		list-style: none;
+	}
+
+	.interrupted-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2);
+	}
+</style>

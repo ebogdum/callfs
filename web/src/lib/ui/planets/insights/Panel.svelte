@@ -238,6 +238,7 @@
 				stacked={'stacked' === definition.chart}
 				area={'area' === definition.chart}
 				{syncKey}
+				domain={[range.from, range.to]}
 				height="md"
 				status={hasData ? 'success' : 'empty'}
 				emptyReason={reason}
@@ -348,6 +349,10 @@
 		display: flex;
 		flex: none;
 		gap: var(--space-1);
+	}
+
+	.body[data-chart='stat'] {
+		justify-content: center;
 	}
 
 	.body {

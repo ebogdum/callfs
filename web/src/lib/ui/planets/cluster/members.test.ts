@@ -3,22 +3,21 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	cluster,
-	join,
-	preflight,
+	joinConfig,
 	removeNode,
 	snapshot,
 	snapshots,
 	stateStats,
 	transferLeadership
 } from '$lib/api/admin/cluster';
-import type { ClusterInfo, ClusterMember, Preflight, Snapshot, StateStats } from '$lib/api/types';
+import type { ClusterInfo, ClusterMember, Snapshot, StateStats } from '$lib/api/types';
 import { CommandRegistry, type CommandContext } from '$lib/commands/registry.svelte';
 import { entryFor, invalidate } from '$lib/data/cache';
 import { t } from '$lib/copy/t';
 import type { UiError } from '$lib/ui/types';
 import MembersPlanet, { COMMANDS_CONTEXT } from './MembersPlanet.svelte';
 import MemberDetailPlanet from './MemberDetailPlanet.svelte';
-import RaftPlanet from './RaftPlanet.svelte';
+import ReplicationPlanet from './ReplicationPlanet.svelte';
 
 const pageState = vi.hoisted(() => ({ url: new URL('http://127.0.0.1:4173/ui/cluster/nodes') }));
 
@@ -26,8 +25,7 @@ vi.mock('$app/state', () => ({ page: pageState }));
 
 vi.mock('$lib/api/admin/cluster', () => ({
 	cluster: vi.fn(),
-	join: vi.fn(),
-	preflight: vi.fn(),
+	joinConfig: vi.fn(),
 	removeNode: vi.fn(),
 	transferLeadership: vi.fn(),
 	snapshot: vi.fn(),
@@ -44,22 +42,9 @@ const UNREACHABLE: UiError = {
 	layer: 'network'
 };
 
-const PASSING_CHECKS: Preflight = {
-	checks: [
-		{ name: 'id_unique', ok: true, detail: '' },
-		{ name: 'addr_unused', ok: true, detail: '' },
-		{ name: 'raft_reachable', ok: true, detail: '' },
-		{ name: 'api_reachable', ok: true, detail: '' },
-		{ name: 'api_https', ok: true, detail: '' },
-		{ name: 'secret_ok', ok: true, detail: '' }
-	],
-	would_replace: []
-};
-
 const SNAPSHOT: Snapshot = {
 	id: 'snap-100',
-	index: 100,
-	term: 3,
+	seq: 100,
 	bytes: 2048,
 	created_at: '2026-10-22T10:00:00Z'
 };
@@ -77,34 +62,38 @@ const CLUSTER_KEYS = [['cluster'], ['cluster', 'snapshots'], ['cluster', 'state-
 function member(nodeId: string, overrides: Partial<ClusterMember> = {}): ClusterMember {
 	return {
 		node_id: nodeId,
-		raft_addr: `${nodeId}.internal:7000`,
+		instance_id: null,
 		api_endpoint: `https://${nodeId}.example.com:8443`,
-		suffrage: 'voter',
 		state: 'follower',
 		is_self: false,
-		last_contact_ms: 12,
+		online: true,
+		last_seen_ms: 12,
 		behind_by: 0,
-		instance_id: null,
 		...overrides
 	};
 }
 
 function healthyCluster(overrides: Partial<ClusterInfo> = {}): ClusterInfo {
 	return {
-		mode: 'raft',
+		mode: 'nats',
 		self_id: 'callfs-node-1',
+		cluster_name: 'callfs',
 		leader_id: 'callfs-node-1',
 		leader_endpoint: 'https://callfs-node-1.example.com:8443',
-		term: 4,
-		last_log_index: 120,
-		commit_index: 120,
-		applied_index: 120,
-		last_snapshot: { index: 100, term: 3, at: '2026-10-22T10:00:00Z' },
-		voters: 3,
+		replicas: 3,
 		has_quorum: true,
 		can_lose: 1,
+		log: {
+			first_seq: 1,
+			last_seq: 120,
+			messages: 120,
+			bytes: 4096,
+			applied_seq: 120,
+			last_snapshot: { id: 'snap-100', seq: 100, bytes: 2048, created_at: '2026-10-22T10:00:00Z' },
+			snapshot_interval_ms: 300000
+		},
 		members: [
-			member('callfs-node-1', { state: 'leader', is_self: true, last_contact_ms: null, behind_by: null }),
+			member('callfs-node-1', { state: 'leader', is_self: true, last_seen_ms: null, behind_by: null }),
 			member('callfs-node-2'),
 			member('callfs-node-3')
 		],
@@ -124,10 +113,10 @@ function resetCache(): void {
 
 function fillNewMember(): void {
 	fireEvent.input(screen.getByLabelText(t('members.add.id.label')), { target: { value: 'callfs-node-4' } });
-	fireEvent.input(screen.getByLabelText(t('members.add.raft.label')), { target: { value: '10.0.0.14:7000' } });
 	fireEvent.input(screen.getByLabelText(t('members.add.api.label')), {
 		target: { value: 'https://callfs-node-4.example.com:8443' }
 	});
+	fireEvent.input(screen.getByLabelText(t('members.add.cluster.label')), { target: { value: '10.0.0.14:6222' } });
 }
 
 beforeEach(() => {
@@ -135,20 +124,16 @@ beforeEach(() => {
 	resetCache();
 	pageState.url = new URL('http://127.0.0.1:4173/ui/cluster/nodes');
 	vi.mocked(cluster).mockResolvedValue({ ok: true, value: healthyCluster() });
-	vi.mocked(preflight).mockResolvedValue({ ok: true, value: PASSING_CHECKS });
-	vi.mocked(join).mockResolvedValue({
+	vi.mocked(joinConfig).mockResolvedValue({
 		ok: true,
-		value: { status: 'joined', leader_id: 'callfs-node-1', replaced: [] }
+		value: { yaml: 'nats:\n  enabled: true\n', steps: ['Start the new node.'] }
 	});
-	vi.mocked(removeNode).mockResolvedValue({
-		ok: true,
-		value: { status: 'removed', leader_id: 'callfs-node-1', voters_after: 2 }
-	});
+	vi.mocked(removeNode).mockResolvedValue({ ok: true, value: { status: 'removed', remaining: 2 } });
 	vi.mocked(transferLeadership).mockResolvedValue({
 		ok: true,
 		value: { status: 'transferred', leader_id: 'callfs-node-2' }
 	});
-	vi.mocked(snapshot).mockResolvedValue({ ok: true, value: { index: 120, term: 4, bytes: 2048, took_ms: 8 } });
+	vi.mocked(snapshot).mockResolvedValue({ ok: true, value: { id: 'snap-120', seq: 120, bytes: 2048, took_ms: 8 } });
 	vi.mocked(snapshots).mockResolvedValue({ ok: true, value: { retain: 2, items: [SNAPSHOT] } });
 	vi.mocked(stateStats).mockResolvedValue({ ok: true, value: STATS });
 });
@@ -195,7 +180,7 @@ describe('MembersPlanet', () => {
 			ok: true,
 			value: healthyCluster({
 				mode: 'single',
-				voters: 1,
+				replicas: 1,
 				members: [member('callfs-node-1', { state: 'leader', is_self: true })]
 			})
 		});
@@ -204,76 +189,61 @@ describe('MembersPlanet', () => {
 		expect(screen.queryByRole('link', { name: 'callfs-node-1' })).toBeNull();
 	});
 
-	it('asks for a member ID before running the checks', async () => {
+	it('asks for a member ID before creating the config', async () => {
 		render(MembersPlanet);
 		fireEvent.click(await screen.findByRole('button', { name: t('members.add.button') }));
 		const dialog = await screen.findByRole('dialog');
-		fireEvent.click(within(dialog).getByRole('button', { name: t('members.add.next') }));
+		fireEvent.click(within(dialog).getByRole('button', { name: t('members.add.generate') }));
 		expect(await screen.findByText(t('members.add.error.id_required'))).toBeInTheDocument();
-		expect(preflight).not.toHaveBeenCalled();
+		expect(joinConfig).not.toHaveBeenCalled();
 	});
 
-	it('runs the checks for a new member and joins it after review', async () => {
+	it('creates the config for a new member and shows the yaml and the steps', async () => {
 		render(MembersPlanet);
 		fireEvent.click(await screen.findByRole('button', { name: t('members.add.button') }));
 		const dialog = await screen.findByRole('dialog');
 		fillNewMember();
-		fireEvent.click(within(dialog).getByRole('button', { name: t('members.add.next') }));
+		fireEvent.click(within(dialog).getByRole('button', { name: t('members.add.generate') }));
 		await waitFor(() => {
-			expect(preflight).toHaveBeenCalledWith({
+			expect(joinConfig).toHaveBeenCalledWith({
 				node_id: 'callfs-node-4',
-				raft_addr: '10.0.0.14:7000',
-				api_endpoint: 'https://callfs-node-4.example.com:8443'
+				api_endpoint: 'https://callfs-node-4.example.com:8443',
+				cluster_addr: '10.0.0.14:6222'
 			});
 		});
-		await waitFor(() => {
-			expect(within(dialog).getByRole('button', { name: t('members.add.next') })).not.toHaveAttribute(
-				'aria-disabled',
-				'true'
-			);
-		});
-		fireEvent.click(within(dialog).getByRole('button', { name: t('members.add.next') }));
-		expect(
-			await screen.findByText(
-				t('members.review.sentence', { node: 'callfs-node-4', before: '3', after: '4', quorum: '3' })
-			)
-		).toBeInTheDocument();
-		fireEvent.click(within(dialog).getByRole('button', { name: t('members.add.button') }));
-		await waitFor(() => {
-			expect(join).toHaveBeenCalledWith({
-				node_id: 'callfs-node-4',
-				raft_addr: '10.0.0.14:7000',
-				api_endpoint: 'https://callfs-node-4.example.com:8443'
-			});
-		});
+		expect(await within(dialog).findByText('Start the new node.')).toBeInTheDocument();
+		expect(within(dialog).getByText(/enabled: true/)).toBeInTheDocument();
+		expect(within(dialog).getByRole('button', { name: new RegExp(t('common.copy')) })).toBeInTheDocument();
 	});
 
-	it('blocks removing a member when the cluster would lose quorum', async () => {
-		pageState.url = new URL('http://127.0.0.1:4173/ui/cluster/nodes?remove=callfs-node-2');
+	it('removes an offline member after confirmation', async () => {
+		pageState.url = new URL('http://127.0.0.1:4173/ui/cluster/nodes?remove=callfs-node-3');
 		vi.mocked(cluster).mockResolvedValue({
 			ok: true,
 			value: healthyCluster({
 				members: [
 					member('callfs-node-1', { state: 'leader', is_self: true }),
-					member('callfs-node-2', { state: 'unreachable' }),
-					member('callfs-node-3', { state: 'unreachable' })
+					member('callfs-node-2'),
+					member('callfs-node-3', { state: 'offline', online: false, last_seen_ms: null, behind_by: null })
 				]
 			})
 		});
 		render(MembersPlanet);
-		expect(
-			await screen.findByText(t('members.remove.blocked.title', { node: 'callfs-node-2' }))
-		).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: t('members.remove.anyway') })).toBeInTheDocument();
-	});
-
-	it('removes a member that keeps quorum after confirmation', async () => {
-		pageState.url = new URL('http://127.0.0.1:4173/ui/cluster/nodes?remove=callfs-node-3');
-		render(MembersPlanet);
 		fireEvent.click(await screen.findByRole('button', { name: t('members.remove.confirm') }));
 		await waitFor(() => {
-			expect(removeNode).toHaveBeenCalledWith('callfs-node-3', false);
+			expect(removeNode).toHaveBeenCalledWith('callfs-node-3');
 		});
+	});
+
+	it('explains a conflict when the member to remove is still online', async () => {
+		pageState.url = new URL('http://127.0.0.1:4173/ui/cluster/nodes?remove=callfs-node-3');
+		vi.mocked(removeNode).mockResolvedValueOnce({
+			ok: false,
+			error: { title: 'Conflict', body: 'Conflict', status: 409, retryable: false, layer: 'conflict' }
+		});
+		render(MembersPlanet);
+		fireEvent.click(await screen.findByRole('button', { name: t('members.remove.confirm') }));
+		expect(await screen.findByText(t('members.remove.online.title', { node: 'callfs-node-3' }))).toBeInTheDocument();
 	});
 
 	it('registers the add member command while mounted and removes it on destroy', async () => {
@@ -328,41 +298,58 @@ describe('MemberDetailPlanet', () => {
 	});
 });
 
-describe('RaftPlanet', () => {
+describe('ReplicationPlanet', () => {
 	it('shows the job title and takes a snapshot from the primary action', async () => {
-		render(RaftPlanet);
-		expect(await screen.findByRole('heading', { level: 1, name: t('members.raft.title') })).toBeInTheDocument();
-		expect(screen.getByText(t('members.raft.job'))).toBeInTheDocument();
-		fireEvent.click(await screen.findByRole('button', { name: t('members.raft.snapshot') }));
+		render(ReplicationPlanet);
+		expect(await screen.findByRole('heading', { level: 1, name: t('members.replication.title') })).toBeInTheDocument();
+		expect(screen.getByText(t('members.replication.job'))).toBeInTheDocument();
+		fireEvent.click(await screen.findByRole('button', { name: t('members.replication.snapshot') }));
 		await waitFor(() => {
 			expect(snapshot).toHaveBeenCalledTimes(1);
 		});
 	});
 
+	it('lists the log facts, the copies and the snapshots', async () => {
+		render(ReplicationPlanet);
+		expect(await screen.findByText(t('members.replication.applied'))).toBeInTheDocument();
+		expect(await screen.findByText('snap-100')).toBeInTheDocument();
+		expect(screen.getAllByText('callfs-node-2').length).toBeGreaterThan(0);
+	});
+
 	it('hides the technical rows when the toggle is switched off', async () => {
-		render(RaftPlanet);
-		expect(await screen.findByText(t('members.raft.commit'))).toBeInTheDocument();
+		render(ReplicationPlanet);
+		expect(await screen.findByText(t('members.replication.applied'))).toBeInTheDocument();
 		const toggle = await screen.findByRole('button', { name: t('common.show_technical') });
 		expect(toggle).toHaveAttribute('aria-pressed', 'true');
 		fireEvent.click(toggle);
 		expect(toggle).toHaveAttribute('aria-pressed', 'false');
 		await waitFor(() => {
-			expect(screen.queryByText(t('members.raft.commit'))).toBeNull();
+			expect(screen.queryByText(t('members.replication.applied'))).toBeNull();
 		});
 	});
 
-	it('explains that Raft is off when the cluster runs alone', async () => {
+	it('moves the leader to the automatic choice', async () => {
+		render(ReplicationPlanet);
+		fireEvent.click(await screen.findByRole('button', { name: t('members.replication.move') }));
+		const dialog = await screen.findByRole('dialog');
+		fireEvent.click(within(dialog).getByRole('button', { name: t('members.replication.move.confirm') }));
+		await waitFor(() => {
+			expect(transferLeadership).toHaveBeenCalledWith(null);
+		});
+	});
+
+	it('explains that replication is off when the cluster runs alone', async () => {
 		vi.mocked(cluster).mockResolvedValue({
 			ok: true,
-			value: healthyCluster({ mode: 'single', voters: 1, members: [member('callfs-node-1', { state: 'leader', is_self: true })] })
+			value: healthyCluster({ mode: 'single', replicas: 1, members: [member('callfs-node-1', { state: 'leader', is_self: true })] })
 		});
-		render(RaftPlanet);
-		expect(await screen.findByText(t('members.raft.single.title'))).toBeInTheDocument();
+		render(ReplicationPlanet);
+		expect(await screen.findByText(t('members.replication.single.title'))).toBeInTheDocument();
 	});
 
 	it('registers the snapshot command while mounted and removes it on destroy', async () => {
 		const registry = new CommandRegistry({ context: () => CONTEXT });
-		render(RaftPlanet, { context: new Map([[COMMANDS_CONTEXT, registry]]) });
+		render(ReplicationPlanet, { context: new Map([[COMMANDS_CONTEXT, registry]]) });
 		await waitFor(() => {
 			expect(registry.list(CONTEXT).map((entry) => entry.command.id)).toContain('cluster.snapshot');
 		});

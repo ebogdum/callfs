@@ -1,6 +1,5 @@
 <script lang="ts" module>
 	export type TooltipSide = 'top' | 'right' | 'bottom' | 'left';
-	export const TOKENS = ['--tooltip-bg', '--tooltip-fg', '--tooltip-radius'] as const;
 </script>
 
 <script lang="ts">

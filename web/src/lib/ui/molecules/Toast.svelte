@@ -30,10 +30,12 @@
 		body?: string;
 		action?: ToastAction;
 		onclose: () => void;
+		onpause?: () => void;
+		onresume?: () => void;
 		duration?: number;
 	}
 
-	let { tone, title, body, action, onclose, duration, class: className, ...rest }: Props = $props();
+	let { tone, title, body, action, onclose, onpause, onresume, duration, class: className, ...rest }: Props = $props();
 
 	let hovered = $state(false);
 	let focused = $state(false);
@@ -41,6 +43,21 @@
 
 	const lifetime = $derived(duration ?? (undefined === action ? DEFAULT_LIFETIME_MS : ACTION_LIFETIME_MS));
 	const paused = $derived(hovered || focused);
+
+	let wasPaused = false;
+
+	$effect(() => {
+		const isPaused = paused;
+		if (isPaused === wasPaused) {
+			return;
+		}
+		wasPaused = isPaused;
+		if (isPaused) {
+			onpause?.();
+		} else {
+			onresume?.();
+		}
+	});
 
 	$effect(() => {
 		if (paused) {

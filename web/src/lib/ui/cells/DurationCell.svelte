@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--duration-cell-color'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import Duration from '../atoms/Duration.svelte';

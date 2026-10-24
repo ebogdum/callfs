@@ -42,6 +42,7 @@
 	import ErrorState from '../../molecules/ErrorState.svelte';
 	import InlineAlert from '../../molecules/InlineAlert.svelte';
 	import Skeleton from '../../atoms/Skeleton.svelte';
+	import { formatChartValue } from './BarChart.svelte';
 	import ChartFrame, { type ChartTable } from './ChartFrame.svelte';
 	import { CrosshairState, crosshairGroup } from './crosshair.svelte';
 	import {
@@ -66,6 +67,7 @@
 		stacked?: boolean;
 		area?: boolean;
 		syncKey?: string;
+		domain?: readonly [number, number];
 		height?: ChartHeight;
 		status: QueryStatus;
 		error?: UiError;
@@ -95,6 +97,7 @@
 		stacked = false,
 		area = false,
 		syncKey,
+		domain,
 		height = 'md',
 		status,
 		error,
@@ -143,7 +146,7 @@
 	};
 
 	const pool = $derived(collapseSeries(series));
-	const showLegend = $derived(1 < pool.length);
+	const showLegend = $derived(0 < pool.length);
 	const legendItems = $derived(
 		pool.map((entry, index) => ({
 			id: entry.id,
@@ -210,7 +213,8 @@
 	};
 
 	const xRange = $derived(
-		extentOf(layers.flatMap((layer) => layer.segments.flatMap((segment) => segment.upper.map(([x]) => x))))
+		domain ??
+			extentOf(layers.flatMap((layer) => layer.segments.flatMap((segment) => segment.upper.map(([x]) => x))))
 	);
 	const yRange = $derived(
 		extentOf([
@@ -258,8 +262,8 @@
 		annotations.filter((annotation) => xScale.domain[0] <= annotation.at && annotation.at <= xScale.domain[1])
 	);
 
-	const formatAxis = (value: number): string =>
-		BYTE_UNITS.includes(unit) ? formatBytes(value, { precision: 0 }).text : formatNumber(value, 'compact');
+	const formatAxis = (value: number, step: number): string =>
+		BYTE_UNITS.includes(unit) ? formatBytes(value, { precision: 0 }).text : formatChartValue(value, 'none', step);
 	const formatClock = (value: number): string => {
 		const span = (xScale.domain[1] - xScale.domain[0]) * msPerUnit;
 		const at = value * msPerUnit;
@@ -270,7 +274,7 @@
 
 	const formatReading = (value: number | null): string => {
 		const isBytes = BYTE_UNITS.includes(unit);
-		const text = null === value ? DASH : isBytes ? formatBytes(value).text : formatNumber(value, 'int');
+		const text = null === value ? DASH : isBytes ? formatBytes(value).text : formatNumber(value, 'decimal');
 		return t('chart.readout.value', { value: text, unit: isBytes ? '' : unitLabel }).trim();
 	};
 
@@ -434,6 +438,9 @@
 							<path class="area" d={areaFrom(segment.top, segment.bottom)} style:fill={layer.color} />
 						{/if}
 						<path class="series" d={pathFrom(segment.top)} style:stroke={layer.color} style:stroke-dasharray={layer.dash} />
+						{#if 1 === segment.top.length}
+							<circle class="dot" cx={segment.top[0][0]} cy={segment.top[0][1]} r={MARKER_RADIUS} style:fill={layer.color} />
+						{/if}
 					{/each}
 				{/each}
 				{#each shownAnnotations as annotation (`${annotation.at}:${annotation.label}`)}
@@ -482,6 +489,10 @@
 		fill: none;
 		stroke-width: 2;
 		stroke-linejoin: round;
+	}
+
+	.dot {
+		stroke: none;
 	}
 
 	.area {

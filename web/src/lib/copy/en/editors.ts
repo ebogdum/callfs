@@ -28,6 +28,8 @@ export default {
 	'editors.list.empty': 'Nothing added yet.',
 	'editors.octal.input_label': 'Permission number',
 	'editors.octal.invalid': 'Enter three or four digits from 0 to 7.',
+	'editors.octal.symbolic_label': 'Letters, like u=rw,go=r',
+	'editors.octal.symbolic_invalid': 'Use letters like u=rw,go=r or rwxr-xr-x.',
 	'editors.octal.owner': 'Owner',
 	'editors.octal.group': 'Group',
 	'editors.octal.others': 'Others',

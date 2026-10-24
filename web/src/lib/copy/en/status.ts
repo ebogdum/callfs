@@ -7,7 +7,6 @@ export default {
 	'status.health.checking': 'Checking',
 	'status.member.leader': 'Leader',
 	'status.member.follower': 'Follower',
-	'status.member.candidate': 'Electing',
 	'status.member.shutdown': 'Stopped',
 	'status.member.unreachable': 'Unreachable',
 	'status.member.lagging': 'Behind',

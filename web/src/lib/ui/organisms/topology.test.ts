@@ -12,36 +12,33 @@ afterEach(cleanup);
 const members: ClusterMember[] = [
 	{
 		node_id: 'callfs-node-1',
-		raft_addr: '10.0.0.1:7000',
+		instance_id: 'inst-1',
 		api_endpoint: 'https://node1.example:8080',
-		suffrage: 'voter',
 		state: 'leader',
 		is_self: true,
-		last_contact_ms: 0,
-		behind_by: 0,
-		instance_id: 'inst-1'
+		online: true,
+		last_seen_ms: 0,
+		behind_by: 0
 	},
 	{
 		node_id: 'callfs-node-2',
-		raft_addr: '10.0.0.2:7000',
+		instance_id: 'inst-2',
 		api_endpoint: 'https://node2.example:8080',
-		suffrage: 'voter',
 		state: 'follower',
 		is_self: false,
-		last_contact_ms: 1200,
-		behind_by: 3,
-		instance_id: 'inst-2'
+		online: true,
+		last_seen_ms: 1200,
+		behind_by: 3
 	},
 	{
 		node_id: 'callfs-node-3',
-		raft_addr: '10.0.0.3:7000',
-		api_endpoint: 'https://node3.example:8080',
-		suffrage: 'nonvoter',
-		state: 'unreachable',
+		instance_id: null,
+		api_endpoint: null,
+		state: 'offline',
 		is_self: false,
-		last_contact_ms: null,
-		behind_by: null,
-		instance_id: null
+		online: false,
+		last_seen_ms: null,
+		behind_by: null
 	}
 ];
 
@@ -57,7 +54,9 @@ const servers: ServerInfo[] = [
 		checked_at: null,
 		files: 10,
 		bytes: 1000,
-		pieces: 4
+		pieces: 4,
+		disk_free_bytes: null,
+		disk_total_bytes: null
 	},
 	{
 		instance_id: 'inst-2',
@@ -70,7 +69,9 @@ const servers: ServerInfo[] = [
 		checked_at: null,
 		files: 0,
 		bytes: 0,
-		pieces: 0
+		pieces: 0,
+		disk_free_bytes: null,
+		disk_total_bytes: null
 	}
 ];
 
@@ -85,10 +86,10 @@ function nodeByName(container: HTMLElement, name: string): SVGGElement {
 }
 
 describe('TopologyMap', () => {
-	it('renders one node per member and server, named with the visible name', () => {
+	it('renders one node per member and per server without a member, named with the visible name', () => {
 		const { container } = render(TopologyMap, { props: { members, servers, selected: null } });
 		const nodes = nodeElements(container);
-		expect(nodes).toHaveLength(5);
+		expect(nodes).toHaveLength(3);
 		expect(nodeByName(container, 'callfs-node-2').getAttribute('aria-label')).toContain('callfs-node-2');
 		expect(nodeByName(container, 'callfs-node-2').getAttribute('tabindex')).toBe('-1');
 		expect(nodes[0]?.getAttribute('tabindex')).toBe('0');
@@ -103,11 +104,11 @@ describe('TopologyMap', () => {
 		await fireEvent.keyDown(nodes[1] as SVGGElement, { key: 'ArrowLeft' });
 		expect(nodes[0]).toHaveFocus();
 		await fireEvent.keyDown(nodes[0] as SVGGElement, { key: 'ArrowLeft' });
-		expect(nodes[4]).toHaveFocus();
-		await fireEvent.keyDown(nodes[4] as SVGGElement, { key: 'Home' });
+		expect(nodes[2]).toHaveFocus();
+		await fireEvent.keyDown(nodes[2] as SVGGElement, { key: 'Home' });
 		expect(nodes[0]).toHaveFocus();
 		await fireEvent.keyDown(nodes[0] as SVGGElement, { key: 'End' });
-		expect(nodes[4]).toHaveFocus();
+		expect(nodes[2]).toHaveFocus();
 	});
 
 	it('opens the focused node on Enter with its prefixed id', async () => {
@@ -120,8 +121,15 @@ describe('TopologyMap', () => {
 	it('opens a node on click', async () => {
 		const onopen = vi.fn();
 		const { container } = render(TopologyMap, { props: { members, servers, selected: null, onopen } });
-		await fireEvent.click(nodeByName(container, 'https://node2.example:8080'));
-		expect(onopen).toHaveBeenCalledWith('server:inst-2');
+		await fireEvent.click(nodeByName(container, 'callfs-node-2'));
+		expect(onopen).toHaveBeenCalledWith('member:callfs-node-2');
+	});
+
+	it('adds a node only for servers that no member runs on', () => {
+		const lone: ServerInfo = { ...(servers[1] as ServerInfo), instance_id: 'inst-9', endpoint: 'https://lone.example:8080' };
+		const { container } = render(TopologyMap, { props: { members, servers: [...servers, lone], selected: null } });
+		expect(nodeElements(container)).toHaveLength(4);
+		expect(nodeByName(container, 'https://lone.example:8080')).toBeTruthy();
 	});
 
 	it('colors nodes by latency and by lag', () => {
@@ -141,7 +149,7 @@ describe('TopologyMap', () => {
 		const { container } = render(TopologyMap, { props: { members, servers, selected: null } });
 		expect(nodeByName(container, 'callfs-node-1').getAttribute('data-leader')).toBe('true');
 		const table = screen.getByRole('table');
-		expect(within(table).getAllByRole('row')).toHaveLength(6);
+		expect(within(table).getAllByRole('row')).toHaveLength(4);
 		expect(
 			within(table).getAllByRole('button', { name: t('topology.open_named', { name: 'callfs-node-3' }) })
 		).toHaveLength(1);
@@ -150,18 +158,18 @@ describe('TopologyMap', () => {
 });
 
 describe('MemberCard', () => {
-	it('shows the node id as heading, state word, role and copyable addresses', () => {
+	it('shows the node id as heading, state word, role and copyable address', () => {
 		render(MemberCard, { props: { member: members[1] as ClusterMember } });
 		expect(screen.getByRole('heading', { name: 'callfs-node-2' })).toBeInTheDocument();
 		expect(screen.getByText(t('status.member.follower'))).toBeInTheDocument();
-		expect(screen.getByText('10.0.0.2:7000')).toBeInTheDocument();
-		expect(screen.getAllByRole('button', { name: new RegExp(t('common.copy')) })).toHaveLength(2);
+		expect(screen.getByText('https://node2.example:8080')).toBeInTheDocument();
+		expect(screen.getAllByRole('button', { name: new RegExp(t('common.copy')) })).toHaveLength(1);
 	});
 
-	it('shows unknown last contact when the member never reported', () => {
+	it('shows unknown last seen and the offline word when the member never reported', () => {
 		render(MemberCard, { props: { member: members[2] as ClusterMember } });
 		expect(screen.getAllByText(t('common.unknown')).length).toBeGreaterThanOrEqual(2);
-		expect(screen.getByText(t('topology.role.nonvoter'))).toBeInTheDocument();
+		expect(screen.getByText(t('members.online.no'))).toBeInTheDocument();
 	});
 });
 

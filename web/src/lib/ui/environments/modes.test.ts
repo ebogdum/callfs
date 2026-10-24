@@ -57,6 +57,7 @@ describe('WallLayout', () => {
 
 	it('forces high contrast and a 1.5 font scale on the document while mounted and restores them on unmount', () => {
 		render(WallLayout, { props: { children: content } });
+		expect(document.documentElement.dataset.theme).toBe('dark');
 		expect(document.documentElement.dataset.contrast).toBe('more');
 		expect(document.documentElement.style.getPropertyValue('--font-scale')).toBe('1.5');
 		cleanup();
@@ -82,12 +83,10 @@ describe('WallLayout', () => {
 });
 
 describe('PrintLayout', () => {
-	it('renders children in the main body and a footer with the generated date', () => {
+	it('renders children in the main body', () => {
 		const { container } = render(PrintLayout, { props: { children: content } });
 		expect(container.querySelector('.print-body .content')?.textContent).toBe('content');
-		const time = container.querySelector('.print-footer time') as HTMLTimeElement;
-		expect(time.getAttribute('datetime')).not.toBeNull();
-		expect(time.textContent?.trim().length).toBeGreaterThan(0);
+		expect(container.querySelector('.print-footer')).toBeNull();
 	});
 
 	it('forces the light theme on the document while mounted and restores it on unmount', () => {

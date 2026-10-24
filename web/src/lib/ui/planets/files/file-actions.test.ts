@@ -20,7 +20,7 @@ vi.mock('$lib/api/files', () => ({
 	deletePermanent: vi.fn(),
 	move: vi.fn(),
 	planDelete: vi.fn(),
-	readRange: vi.fn(),
+	readRangeBlob: vi.fn(),
 	rename: vi.fn(),
 	setMode: vi.fn(),
 	setOwner: vi.fn(),

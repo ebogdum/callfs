@@ -12,57 +12,51 @@ vi.mock('$lib/api/admin/cluster', () => ({ cluster: vi.fn() }));
 vi.mock('$lib/api/admin/topology', () => ({ instances: vi.fn() }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
-const RAFT_MEMBERS: ClusterMember[] = [
+const NATS_MEMBERS: ClusterMember[] = [
 	{
 		node_id: 'callfs-node-1',
-		raft_addr: '10.0.0.1:7000',
+		instance_id: 'callfs-node-1',
 		api_endpoint: 'https://10.0.0.1:8443',
-		suffrage: 'voter',
 		state: 'leader',
 		is_self: true,
-		last_contact_ms: 0,
-		behind_by: 0,
-		instance_id: 'callfs-node-1'
+		online: true,
+		last_seen_ms: 0,
+		behind_by: 0
 	},
 	{
 		node_id: 'callfs-node-2',
-		raft_addr: '10.0.0.2:7000',
+		instance_id: 'callfs-node-2',
 		api_endpoint: 'https://10.0.0.2:8443',
-		suffrage: 'voter',
 		state: 'follower',
 		is_self: false,
-		last_contact_ms: 12,
-		behind_by: 0,
-		instance_id: 'callfs-node-2'
+		online: true,
+		last_seen_ms: 12,
+		behind_by: 0
 	},
 	{
 		node_id: 'callfs-node-3',
-		raft_addr: '10.0.0.3:7000',
-		api_endpoint: 'https://10.0.0.3:8443',
-		suffrage: 'voter',
-		state: 'unreachable',
+		instance_id: null,
+		api_endpoint: null,
+		state: 'offline',
 		is_self: false,
-		last_contact_ms: null,
-		behind_by: null,
-		instance_id: null
+		online: false,
+		last_seen_ms: null,
+		behind_by: null
 	}
 ];
 
 function clusterInfo(overrides: Partial<ClusterInfo> = {}): ClusterInfo {
 	return {
-		mode: 'raft',
+		mode: 'nats',
 		self_id: 'callfs-node-1',
+		cluster_name: 'callfs',
 		leader_id: 'callfs-node-1',
 		leader_endpoint: 'https://10.0.0.1:8443',
-		term: 7,
-		last_log_index: 120,
-		commit_index: 120,
-		applied_index: 120,
-		last_snapshot: null,
-		voters: 3,
+		replicas: 3,
 		has_quorum: true,
 		can_lose: 1,
-		members: RAFT_MEMBERS,
+		log: { first_seq: 1, last_seq: 120, messages: 120, bytes: 4096, applied_seq: 120, last_snapshot: null, snapshot_interval_ms: 300000 },
+		members: NATS_MEMBERS,
 		...overrides
 	};
 }
@@ -81,7 +75,9 @@ const SERVER_LIST = {
 			checked_at: null,
 			files: 10,
 			bytes: 1024,
-			pieces: 0
+			pieces: 0,
+			disk_free_bytes: null,
+			disk_total_bytes: null
 		},
 		{
 			instance_id: 'callfs-node-2',
@@ -94,7 +90,9 @@ const SERVER_LIST = {
 			checked_at: null,
 			files: 0,
 			bytes: 0,
-			pieces: 0
+			pieces: 0,
+			disk_free_bytes: null,
+			disk_total_bytes: null
 		}
 	]
 };
@@ -139,8 +137,8 @@ describe('TopologyPlanet', () => {
 			value: clusterInfo({
 				mode: 'single',
 				leader_id: null,
-				voters: 1,
-				members: [RAFT_MEMBERS[0]],
+				replicas: 1,
+				members: [NATS_MEMBERS[0]],
 				has_quorum: true,
 				can_lose: 0
 			})

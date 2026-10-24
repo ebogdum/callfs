@@ -1,15 +1,7 @@
-<script lang="ts" module>
-	export const TOKENS = [
-		'--scope-chip-radius',
-		'--scope-chip-fg',
-		'--scope-chip-bg',
-		'--scope-chip-border'
-	] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import { t } from '$lib/copy/t';
+	import Term from '$lib/ui/atoms/Term.svelte';
 	import Icon from '$lib/ui/quarks/Icon.svelte';
 	import Cluster from '$lib/ui/quarks/Cluster.svelte';
 
@@ -33,7 +25,7 @@
 			<span aria-hidden="true">{t('u080molecules.scope.separator')}</span>
 			<span class="leader">
 				<Icon name="leader" size="xs" />
-				<span>{t('u080molecules.scope.leader')}</span>
+				<Term term="leader" />
 			</span>
 		{/if}
 	</Cluster>

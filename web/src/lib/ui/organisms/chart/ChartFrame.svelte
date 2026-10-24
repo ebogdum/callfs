@@ -25,11 +25,12 @@
 		children: Snippet;
 		yTitle?: string;
 		formatX?: (value: number) => string;
-		formatY?: (value: number) => string;
+		formatY?: (value: number, step: number) => string;
 		describedby?: string;
 		showXTicks?: boolean;
 		showYTicks?: boolean;
 		showAxis?: boolean;
+		onkeydown?: (event: KeyboardEvent) => void;
 	}
 
 	const defaultTick = (value: number): string => formatNumber(value, 'compact');
@@ -50,9 +51,37 @@
 		showXTicks = true,
 		showYTicks = true,
 		showAxis = true,
+		onkeydown,
 		class: className,
 		...rest
 	}: Props = $props();
+
+	let activeRow = $state<number | null>(null);
+
+	const activeText = $derived(null === activeRow ? '' : (table.rows[activeRow] ?? []).join(', '));
+
+	const handleKeydown = (event: KeyboardEvent): void => {
+		onkeydown?.(event);
+		if (event.defaultPrevented || 0 === table.rows.length) {
+			return;
+		}
+		const last = table.rows.length - 1;
+		let next: number | null = null;
+		if ('ArrowRight' === event.key) {
+			next = null === activeRow ? 0 : Math.min(last, activeRow + 1);
+		} else if ('ArrowLeft' === event.key) {
+			next = null === activeRow ? last : Math.max(0, activeRow - 1);
+		} else if ('Home' === event.key) {
+			next = 0;
+		} else if ('End' === event.key) {
+			next = last;
+		}
+		if (null === next) {
+			return;
+		}
+		event.preventDefault();
+		activeRow = next;
+	};
 
 	const plot = $derived({
 		left: xScale.range[0],
@@ -78,7 +107,16 @@
 			.filter((entry, index, list) => 0 === index || list[index - 1].text !== entry.text)
 			.map((entry) => ({ ...entry, x: xScale.apply(entry.tick), anchor: anchorFor(xScale.apply(entry.tick), entry.text) }))
 	);
-	const yTicks = $derived(yScale.ticks(Math.max(2, Math.floor((plot.bottom - plot.top) / Y_TICK_SPACING))));
+	const yStep = $derived.by(() => {
+		const raw = yScale.ticks(Math.max(2, Math.floor((plot.bottom - plot.top) / Y_TICK_SPACING)));
+		return 2 <= raw.length ? raw[1] - raw[0] : 1;
+	});
+	const yTicks = $derived(
+		yScale
+			.ticks(Math.max(2, Math.floor((plot.bottom - plot.top) / Y_TICK_SPACING)))
+			.map((tick) => ({ tick, text: formatY(tick, yStep) }))
+			.filter((entry, index, list) => 0 === index || list[index - 1].text !== entry.text)
+	);
 </script>
 
 <div class={['chart-frame', className]} {...rest}>
@@ -91,15 +129,17 @@
 		tabindex="0"
 		aria-label={summary}
 		aria-describedby={describedby}
-		aria-keyshortcuts="ArrowLeft ArrowRight"
+		aria-keyshortcuts="ArrowLeft ArrowRight Home End"
+		onkeydown={handleKeydown}
+		onblur={() => (activeRow = null)}
 		{width}
 		{height}
 		viewBox={`0 0 ${width} ${height}`}
 	>
-		{#if showYTicks}{#each yTicks as tick (tick)}
-			<line class="gridline" x1={plot.left} x2={plot.right} y1={yScale.apply(tick)} y2={yScale.apply(tick)} />
-			<text class="tick" x={plot.left - TICK_GAP} y={yScale.apply(tick)} text-anchor="end" dominant-baseline="middle"
-				>{formatY(tick)}</text
+		{#if showYTicks}{#each yTicks as entry (entry.tick)}
+			<line class="gridline" x1={plot.left} x2={plot.right} y1={yScale.apply(entry.tick)} y2={yScale.apply(entry.tick)} />
+			<text class="tick" x={plot.left - TICK_GAP} y={yScale.apply(entry.tick)} text-anchor="end" dominant-baseline="middle"
+				>{entry.text}</text
 			>
 		{/each}
 		{/if}{#if showXTicks}{#each xTicks as entry (entry.tick)}
@@ -117,6 +157,7 @@
 		{/if}
 		{@render children()}
 	</svg>
+	<p class="active-readout" aria-live="polite">{activeText}</p>
 	<div class="sr-table">
 		<table>
 			<caption>{label}</caption>
@@ -158,6 +199,13 @@
 		line-height: var(--text-caption-line);
 		font-weight: var(--text-caption-weight);
 		letter-spacing: var(--text-caption-tracking);
+	}
+
+	.active-readout {
+		color: var(--text-muted);
+		font-size: var(--text-caption-size);
+		line-height: var(--text-caption-line);
+		min-block-size: var(--text-caption-line);
 	}
 
 	.sr-table {

@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--menu-bg', '--menu-fg', '--menu-border', '--menu-radius'] as const;
-</script>
-
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { DropdownMenu } from 'bits-ui';

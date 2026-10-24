@@ -6,14 +6,17 @@ export type Result<T> = { ok: true; value: T } | { ok: false; error: UiError };
 type CsvColumn<T> = ColumnDef<T> & { csv: (row: T) => string };
 
 const CSV_NEEDS_QUOTES = /[",\r\n]/;
+const CSV_FORMULA_START = /^[=+\-@\t\r]/;
 const REVOKE_DELAY_MS = 1000;
 
 const hasCsv = <T>(column: ColumnDef<T>): column is CsvColumn<T> => 'function' === typeof column.csv;
 
 const exportColumns = <T>(columns: ColumnDef<T>[]): CsvColumn<T>[] => columns.filter(hasCsv);
 
-const csvField = (value: string): string =>
-	CSV_NEEDS_QUOTES.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+const csvField = (raw: string): string => {
+	const value = CSV_FORMULA_START.test(raw) ? `'${raw}` : raw;
+	return CSV_NEEDS_QUOTES.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+};
 
 export const toCSV = <T>(rows: T[], columns: ColumnDef<T>[]): string => {
 	const exported = exportColumns(columns);

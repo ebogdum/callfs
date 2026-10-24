@@ -12,7 +12,7 @@ export default {
 	'about.field.server_id': 'Server ID',
 	'about.field.uptime': 'Uptime',
 	'about.feature.split_storage': 'Split storage',
-	'about.feature.raft': 'Raft cluster',
+	'about.feature.nats': 'Clustering',
 	'about.feature.other_servers': 'Other servers',
 	'about.feature.backup_copy': 'Backup copy',
 	'about.feature.quic': 'QUIC',

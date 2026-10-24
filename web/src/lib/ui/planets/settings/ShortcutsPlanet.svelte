@@ -60,7 +60,12 @@
 	const bindings = $derived(manager.effective());
 
 	$effect(() => {
-		manager.setOverrides(alternativesOf(preferences.value.keymapOverrides));
+		const stored = preferences.value.keymapOverrides;
+		if (null === stored) {
+			manager.resetOverrides();
+			return;
+		}
+		manager.setOverrides(alternativesOf(stored));
 	});
 
 	function startRecording(id: string): void {
@@ -90,6 +95,7 @@
 			conflict = t('personal.shortcuts.conflict', { name: labelOf(firstConflict) });
 			return;
 		}
+		manager.setOverride(id, [keys]);
 		preferences.update({ keymapOverrides: { ...preferences.value.keymapOverrides, [id]: keys } });
 		cancelRecording();
 	}
@@ -100,6 +106,7 @@
 
 	function resetAll(): void {
 		const previous = $state.snapshot(preferences.value.keymapOverrides);
+		manager.resetOverrides();
 		preferences.update({ keymapOverrides: CLEARED_OVERRIDES });
 		toasts.push({
 			tone: 'ok',

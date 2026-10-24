@@ -19,6 +19,7 @@ const copy: Record<string, string> = {
 	'activity.audit.title': 'Audit log',
 	'activity.audit.job': 'See who did what to which file.',
 	'activity.audit.query': 'Search the audit log',
+	'activity.audit.placeholder': 'User, action or path',
 	'activity.audit.query_hint': 'Try: user:alice op:delete path:/team status:403',
 	'activity.audit.table': 'Audit log',
 	'activity.audit.col.time': 'Time',

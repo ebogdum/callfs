@@ -9,6 +9,7 @@ export default {
 	'browse.empty.root.body': 'Upload files or create a folder to start.',
 	'browse.empty.folder.title': 'This folder is empty',
 	'browse.empty.folder.body': 'Drop files here, press U to upload, or N for a new folder.',
+	'browse.drop.label': 'Drop files or folders here to upload',
 	'browse.empty.upload': 'Upload files',
 	'browse.empty.new_folder': 'New folder',
 	'browse.filter.empty.title': "No files match '{query}' here.",

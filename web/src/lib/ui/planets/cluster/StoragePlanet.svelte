@@ -51,11 +51,11 @@
 	});
 
 	const usageQuery = createQuery({
-		key: ['series', 'usage_bytes'],
+		key: ['series', 'callfs_usage_bytes'],
 		fetch: () => {
 			const nowSeconds = Math.floor(Date.now() / 1000);
 			return metricSeries({
-				name: 'usage_bytes',
+				name: 'callfs_usage_bytes',
 				measure: 'value',
 				from: nowSeconds - USAGE_WINDOW_SECONDS,
 				to: nowSeconds,

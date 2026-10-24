@@ -1,6 +1,4 @@
 <script lang="ts" module>
-	export const TOKENS = ['--etag-cell-fg', '--etag-cell-empty-fg'] as const;
-
 	const VISIBLE_CHARACTERS = 12;
 	const ELLIPSIS = '…';
 </script>

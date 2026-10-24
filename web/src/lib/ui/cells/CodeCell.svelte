@@ -1,7 +1,3 @@
-<script lang="ts" module>
-	export const TOKENS = ['--code-cell-fg'] as const;
-</script>
-
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
 	import Code from '../atoms/Code.svelte';

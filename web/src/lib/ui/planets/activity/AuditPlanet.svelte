@@ -213,6 +213,7 @@
 				bind:value={queryText}
 				grammar={AUDIT_GRAMMAR}
 				label={t('activity.audit.query')}
+				placeholder={t('activity.audit.placeholder')}
 				hint={t('activity.audit.query_hint')}
 				onsubmit={applyQuery}
 			/>

@@ -1,12 +1,13 @@
 <script lang="ts" module>
 	import { getContext } from 'svelte';
-	import { presetValue, TimeRangeStore, type TimeRangePreset, type TimeRangeValue } from '$lib/stores/time-range.svelte';
+	import { page } from '$app/state';
+	import { parseTimeRange, presetValue, TimeRangeStore, type TimeRangePreset, type TimeRangeValue } from '$lib/stores/time-range.svelte';
 
 	const RANGE_CONTEXT = 'callfs.timeRange';
 	const PRESETS: readonly TimeRangePreset[] = ['15m', '1h', '6h', '24h', '7d'];
 
 	export function insightsRange(): TimeRangeStore {
-		return getContext<TimeRangeStore | undefined>(RANGE_CONTEXT) ?? new TimeRangeStore(presetValue('24h', Date.now(), false));
+		return getContext<TimeRangeStore | undefined>(RANGE_CONTEXT) ?? new TimeRangeStore(parseTimeRange(page.url.searchParams, Date.now()));
 	}
 
 	function presetOf(raw: string | undefined): TimeRangePreset | undefined {

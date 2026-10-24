@@ -1,12 +1,5 @@
 <script lang="ts" module>
 	export type NameBadge = 'locked' | 'split' | 'remote' | 'backup' | 'link' | 'hidden';
-
-	export const TOKENS = [
-		'--name-cell-fg',
-		'--name-cell-icon-fg',
-		'--name-cell-badge-fg',
-		'--name-cell-input-bg'
-	] as const;
 </script>
 
 <script lang="ts">

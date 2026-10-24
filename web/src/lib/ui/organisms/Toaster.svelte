@@ -21,12 +21,14 @@
 	import { t } from '$lib/copy/t';
 	import Toast from '../molecules/Toast.svelte';
 
-	interface Props extends HTMLAttributes<HTMLDivElement> {
+	interface Props extends Omit<HTMLAttributes<HTMLDivElement>, 'onpause' | 'onresume'> {
 		items: ToastEntry[];
 		ondismiss: (id: number) => void;
+		onpause?: (id: number) => void;
+		onresume?: (id: number) => void;
 	}
 
-	let { items, ondismiss, class: className, ...rest }: Props = $props();
+	let { items, ondismiss, onpause, onresume, class: className, ...rest }: Props = $props();
 
 	const visible = $derived(items.slice(0, VISIBLE_LIMIT));
 </script>
@@ -46,6 +48,8 @@
 			action={toast.action}
 			duration={toast.duration}
 			onclose={() => ondismiss(toast.id)}
+			onpause={() => onpause?.(toast.id)}
+			onresume={() => onresume?.(toast.id)}
 		/>
 	{/each}
 </div>

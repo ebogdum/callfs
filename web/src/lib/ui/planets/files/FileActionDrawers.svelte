@@ -1,11 +1,13 @@
 <script lang="ts">
 	import type { HTMLAttributes } from 'svelte/elements';
+	import { cluster } from '$lib/api/admin/cluster';
 	import { toUiError } from '$lib/api/errors';
 	import { listDir } from '$lib/api/files';
 	import { filePath } from '$lib/api/http';
 	import { t } from '$lib/copy/t';
 	import { formatBytes } from '$lib/format/bytes';
 	import { capabilities } from '$lib/stores/capabilities.svelte';
+	import { notifications } from '$lib/stores/notifications.svelte';
 	import { preferences } from '$lib/stores/preferences.svelte';
 	import { session } from '$lib/stores/session.svelte';
 	import type { FileEntry, Result } from '$lib/api/types';
@@ -53,6 +55,31 @@
 			: { ok: false, error: toUiError(outcome.error, { action: 'browse.action.list_folders', object: path }) };
 	};
 
+	let serverChoices = $state<{ instance_id: string }[]>([]);
+
+	const loadServers = async (): Promise<void> => {
+		const outcome = await cluster();
+		if (!outcome.ok) {
+			notifications.add({
+				tone: 'danger',
+				category: 'error',
+				title: outcome.error.title,
+				body: outcome.error.body,
+				requestId: outcome.error.requestId ?? null
+			});
+			return;
+		}
+		serverChoices = outcome.value.members.flatMap((member) =>
+			null !== member.instance_id && !member.is_self && member.online ? [{ instance_id: member.instance_id }] : []
+		);
+	};
+
+	$effect(() => {
+		if ('move' === kind && session.isAdmin) {
+			void loadServers();
+		}
+	});
+
 	const planSentence = $derived(
 		null === actions.deletePlan
 			? t('fileactions.delete.plan_loading')
@@ -94,7 +121,7 @@
 					pinned={preferences.value.files.pinned}
 					load={loadFolders}
 					storages={['localfs', 's3']}
-					servers={[]}
+					servers={serverChoices}
 					bind:options={actions.forms.move.options}
 					capabilities={capabilities.data}
 					{count}

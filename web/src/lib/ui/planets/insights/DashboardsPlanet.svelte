@@ -206,8 +206,9 @@
 	}
 
 	.cell {
-		display: flex;
-		flex-direction: column;
+		display: grid;
+		grid-template-rows: minmax(0, 1fr);
+		grid-auto-rows: auto;
 		gap: var(--space-2);
 		grid-column: span var(--span, 12);
 		min-inline-size: 0;

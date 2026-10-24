@@ -5,7 +5,7 @@ import type { Result } from './types';
 
 export type NodeStatus = 'up' | 'down';
 
-export type NodeRole = 'leader' | 'follower' | 'candidate' | 'shutdown' | 'none';
+export type NodeRole = 'leader' | 'follower' | 'offline' | 'none';
 
 export interface NodeInfo {
 	id: string;
@@ -14,7 +14,7 @@ export interface NodeInfo {
 	status: NodeStatus;
 	latency_ms: number;
 	detail?: string;
-	raft_state?: string;
+	role?: string;
 	leader_id?: string;
 	version?: string;
 	uptime_s?: number;
@@ -28,10 +28,10 @@ export interface NodeList {
 
 const NODES_PATH = '/v1/nodes';
 const SINGLE_SERVER: NodeList = { self: '', nodes: [] };
-const ROLES: readonly NodeRole[] = ['leader', 'follower', 'candidate', 'shutdown'];
+const ROLES: readonly NodeRole[] = ['leader', 'follower', 'offline'];
 
 export function roleOf(node: NodeInfo, all: readonly NodeInfo[] = []): NodeRole {
-	const state = (node.raft_state ?? '').toLowerCase();
+	const state = (node.role ?? '').toLowerCase();
 	const reported = ROLES.find((role) => role === state);
 	if (undefined !== reported) {
 		return reported;

@@ -4,8 +4,6 @@
 	import { modeToSymbolic } from '$lib/format/mode';
 	import VisuallyHidden from '../quarks/VisuallyHidden.svelte';
 
-	export const TOKENS = ['--mode-cell-fg', '--mode-cell-font-size'] as const;
-
 	interface Props extends HTMLAttributes<HTMLSpanElement> {
 		value: string;
 	}

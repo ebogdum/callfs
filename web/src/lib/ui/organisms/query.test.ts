@@ -4,8 +4,6 @@ import type { Facet } from '../types';
 import FacetSidebar from './FacetSidebar.svelte';
 import QueryBar from './QueryBar.svelte';
 import {
-	chipFromToken,
-	chipText,
 	completionAt,
 	format,
 	parse,
@@ -160,16 +158,6 @@ describe('completion and chips', () => {
 
 	it('removes a token range and tidies the spacing', () => {
 		expect(removeRange('a size:1MB b', 2, 11)).toBe('a b');
-	});
-
-	it('turns a token into a chip and back into the same text', () => {
-		const [token] = parse('size:>1MB', NOW).tokens;
-		if (undefined === token) {
-			throw new Error('token missing');
-		}
-		const chip = chipFromToken(token);
-		expect(chip).toEqual({ facet: 'size', op: ':', value: '>1MB', label: 'size:>1MB' });
-		expect(chipText(chip)).toBe('size:>1MB');
 	});
 });
 

@@ -10,7 +10,7 @@ export interface StatusEntry {
 
 export type StatusKey =
 	| 'health.ok' | 'health.warn' | 'health.down' | 'health.disabled' | 'health.unknown' | 'health.checking'
-	| 'member.leader' | 'member.follower' | 'member.candidate' | 'member.shutdown' | 'member.unreachable' | 'member.lagging'
+	| 'member.leader' | 'member.follower' | 'member.shutdown' | 'member.unreachable' | 'member.lagging'
 	| 'server.up' | 'server.down' | 'server.self' | 'server.unknown'
 	| 'quorum.ok' | 'quorum.at_risk' | 'quorum.lost'
 	| 'link.active' | 'link.used' | 'link.expired' | 'link.revoked'
@@ -39,7 +39,6 @@ export const STATUS: Record<StatusKey, StatusEntry> = {
 	'health.checking': { tone: 'progress', word: 'status.health.checking' },
 	'member.leader': { tone: 'accent', word: 'status.member.leader' },
 	'member.follower': { tone: 'ok', word: 'status.member.follower' },
-	'member.candidate': { tone: 'warn', word: 'status.member.candidate' },
 	'member.shutdown': { tone: 'neutral', word: 'status.member.shutdown' },
 	'member.unreachable': { tone: 'danger', word: 'status.member.unreachable' },
 	'member.lagging': { tone: 'warn', word: 'status.member.lagging' },
