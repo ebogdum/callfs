@@ -4,26 +4,43 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sync"
 
 	"github.com/klauspost/reedsolomon"
 )
 
-// Codec wraps Reed-Solomon encoding and decoding.
-type Codec struct{}
+type encoderKey struct {
+	dataShards   int
+	parityShards int
+}
 
-// NewCodec creates a new erasure Codec.
+type Codec struct {
+	encoders sync.Map
+}
+
 func NewCodec() *Codec {
 	return &Codec{}
 }
 
-// Encode splits data into dataShards pieces and computes parityShards parity blocks.
-// Returns dataShards+parityShards slices. Each shard has equal length (data is padded).
+func (c *Codec) encoder(dataShards, parityShards int) (reedsolomon.Encoder, error) {
+	key := encoderKey{dataShards: dataShards, parityShards: parityShards}
+	if cached, ok := c.encoders.Load(key); ok {
+		return cached.(reedsolomon.Encoder), nil
+	}
+	enc, err := reedsolomon.New(dataShards, parityShards)
+	if err != nil {
+		return nil, err
+	}
+	actual, _ := c.encoders.LoadOrStore(key, enc)
+	return actual.(reedsolomon.Encoder), nil
+}
+
 func (c *Codec) Encode(data []byte, profile ErasureProfile) ([][]byte, error) {
 	if profile.DataShards < 1 || profile.ParityShards < 1 {
 		return nil, ErrInvalidProfile
 	}
 
-	enc, err := reedsolomon.New(profile.DataShards, profile.ParityShards)
+	enc, err := c.encoder(profile.DataShards, profile.ParityShards)
 	if err != nil {
 		return nil, fmt.Errorf("erasure: failed to create encoder: %w", err)
 	}
@@ -40,44 +57,35 @@ func (c *Codec) Encode(data []byte, profile ErasureProfile) ([][]byte, error) {
 	return shards, nil
 }
 
-// Decode reconstructs the original data from shards. Nil entries are treated as missing.
-// At least dataShards non-nil shards are required.
 func (c *Codec) Decode(shards [][]byte, profile ErasureProfile, originalSize int64) ([]byte, error) {
 	if profile.DataShards < 1 || profile.ParityShards < 1 {
 		return nil, ErrInvalidProfile
 	}
+	if originalSize < 0 {
+		return nil, fmt.Errorf("erasure: invalid original size %d", originalSize)
+	}
 
-	enc, err := reedsolomon.New(profile.DataShards, profile.ParityShards)
+	enc, err := c.encoder(profile.DataShards, profile.ParityShards)
 	if err != nil {
 		return nil, fmt.Errorf("erasure: failed to create decoder: %w", err)
 	}
 
-	if err := enc.Reconstruct(shards); err != nil {
+	if err := enc.ReconstructData(shards); err != nil {
 		return nil, fmt.Errorf("erasure: reconstruction failed: %w", err)
 	}
 
-	ok, err := enc.Verify(shards)
-	if err != nil {
-		return nil, fmt.Errorf("erasure: verification failed: %w", err)
+	out := make([]byte, originalSize)
+	var written int64
+	for i := 0; i < profile.DataShards && written < originalSize; i++ {
+		written += int64(copy(out[written:], shards[i]))
 	}
-	if !ok {
-		return nil, ErrShardCorrupted
-	}
-
-	// Join data shards and trim to original size
-	buf := make([]byte, 0, originalSize)
-	for i := 0; i < profile.DataShards; i++ {
-		buf = append(buf, shards[i]...)
-	}
-
-	if int64(len(buf)) < originalSize {
+	if written < originalSize {
 		return nil, ErrInsufficientShards
 	}
 
-	return buf[:originalSize], nil
+	return out, nil
 }
 
-// ShardChecksum returns the SHA-256 hex digest of a shard.
 func ShardChecksum(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])

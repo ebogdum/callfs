@@ -8,4 +8,5 @@ var (
 	ErrShardCorrupted     = errors.New("erasure: shard checksum mismatch (code 3051)")
 	ErrInvalidProfile     = errors.New("erasure: invalid erasure profile parameters (code 3054)")
 	ErrShardNotFound      = errors.New("erasure: shard not found on this node (code 3055)")
+	ErrEmptyUpload        = errors.New("erasure: zero-byte uploads cannot be erasure coded (code 3056)")
 )

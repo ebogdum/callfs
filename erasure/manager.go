@@ -3,11 +3,15 @@ package erasure
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +21,18 @@ import (
 	"github.com/ebogdum/callfs/backends"
 	"github.com/ebogdum/callfs/config"
 	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/metrics"
 )
 
-// Manager orchestrates erasure coding: encoding, shard distribution, retrieval, and deletion.
+const (
+	maxConcurrentDecodes = 32
+	maxShardReadBytes    = 256 << 20
+	maxIdleConnsPerPeer  = 64
+	remoteRequestTimeout = 30 * time.Second
+	maxConcurrentRepairs = 4
+	repairTimeout        = 10 * time.Minute
+)
+
 type Manager struct {
 	codec         *Codec
 	placement     PlacementStrategy
@@ -28,13 +41,17 @@ type Manager struct {
 	config        *config.ErasureConfig
 	instanceID    string
 	selfEndpoint  string
+	peerMu        sync.RWMutex
 	peerEndpoints map[string]string
 	internalToken string
 	httpClient    *http.Client
 	logger        *zap.Logger
+	decodeSlots   chan struct{}
+	repairSlots   chan struct{}
+	healthMu      sync.RWMutex
+	healthCache   map[string]FileHealth
 }
 
-// NewManager creates a new erasure Manager.
 func NewManager(
 	erasureStore metadata.ErasureMetadataStore,
 	localBackend backends.Storage,
@@ -44,17 +61,15 @@ func NewManager(
 	internalToken string,
 	logger *zap.Logger,
 ) *Manager {
-	// Derive selfEndpoint from peerEndpoints (includes self when populated in cmd/main.go)
 	selfEndpoint := peerEndpoints[instanceID]
 
-	// Warn if any peer endpoint uses unencrypted HTTP (internal secret would be sent in plaintext)
-	for id, ep := range peerEndpoints {
-		if strings.HasPrefix(ep, "http://") {
-			logger.Warn("Peer endpoint uses unencrypted HTTP - internal token will be sent in plaintext",
-				zap.String("peer_id", id),
-				zap.String("endpoint", ep))
-		}
-	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = maxIdleConnsPerPeer * max(len(peerEndpoints), 1)
+	transport.MaxIdleConnsPerHost = maxIdleConnsPerPeer
+	transport.ResponseHeaderTimeout = remoteRequestTimeout
+
+	peers := make(map[string]string, len(peerEndpoints))
+	maps.Copy(peers, peerEndpoints)
 
 	return &Manager{
 		codec:         NewCodec(),
@@ -64,14 +79,23 @@ func NewManager(
 		config:        cfg,
 		instanceID:    instanceID,
 		selfEndpoint:  selfEndpoint,
-		peerEndpoints: peerEndpoints,
+		peerEndpoints: peers,
 		internalToken: internalToken,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		httpClient:    &http.Client{Transport: transport},
 		logger:        logger,
+		decodeSlots:   make(chan struct{}, maxConcurrentDecodes),
+		repairSlots:   make(chan struct{}, maxConcurrentRepairs),
+		healthCache:   make(map[string]FileHealth),
 	}
 }
 
-// Close releases resources held by the erasure Manager (e.g. HTTP connection pools).
+func (m *Manager) peerEndpoint(instanceID string) (string, bool) {
+	m.peerMu.RLock()
+	defer m.peerMu.RUnlock()
+	endpoint, ok := m.peerEndpoints[instanceID]
+	return endpoint, ok
+}
+
 func (m *Manager) Close() {
 	m.httpClient.CloseIdleConnections()
 }
@@ -100,6 +124,8 @@ func (m *Manager) resolveInstances(opts *StoreOptions) []string {
 	if opts != nil && len(opts.Instances) > 0 {
 		return opts.Instances
 	}
+	m.peerMu.RLock()
+	defer m.peerMu.RUnlock()
 	instances := make([]string, 0, len(m.peerEndpoints)+1)
 	instances = append(instances, m.instanceID)
 	for id := range m.peerEndpoints {
@@ -110,7 +136,6 @@ func (m *Manager) resolveInstances(opts *StoreOptions) []string {
 	return instances
 }
 
-// cleanupShards removes successfully-written shards (best-effort) after a failure.
 func (m *Manager) cleanupShards(shardInfos []ShardInfo) {
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cleanupCancel()
@@ -148,166 +173,221 @@ func shardInfosToMetadata(shardInfos []ShardInfo) []metadata.ErasureShardInfo {
 	return mdShards
 }
 
-// StoreFile erasure-encodes data and distributes shards across instances.
-func (m *Manager) StoreFile(ctx context.Context, path string, data []byte, originalSize int64, opts *StoreOptions) (*ErasureFileInfo, error) {
-	if originalSize != int64(len(data)) {
-		return nil, fmt.Errorf("originalSize %d does not match data length %d", originalSize, len(data))
-	}
-
-	dataShards, parityShards := m.resolveShardCounts(opts)
-	profile := ErasureProfile{DataShards: dataShards, ParityShards: parityShards}
-
-	shards, err := m.codec.Encode(data, profile)
+func (m *Manager) RetrieveFile(ctx context.Context, path string) ([]byte, error) {
+	rc, size, err := m.OpenReader(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("erasure encode failed: %w", err)
+		return nil, err
 	}
-	if len(shards) > 0 {
-		profile.ShardSize = int64(len(shards[0]))
+	data, err := readAllSized(rc, size)
+	if err == nil {
+		return data, nil
 	}
-
-	totalShards := dataShards + parityShards
-	assignments := m.placement.AssignShards(totalShards, m.instanceID, m.resolveInstances(opts))
-
-	fileHash := sha256.Sum256(data)
-	hashPrefix := hex.EncodeToString(fileHash[:8])
-
-	shardInfos := make([]ShardInfo, totalShards)
-	var storeErr error
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	for i := 0; i < totalShards; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-
-			shardPath := fmt.Sprintf(".erasure/%s/%d", hashPrefix, idx)
-			checksum := ShardChecksum(shards[idx])
-			instanceForShard := assignments[idx]
-
-			var writeErr error
-			if instanceForShard == m.instanceID {
-				writeErr = m.localBackend.Create(ctx, shardPath, bytes.NewReader(shards[idx]), int64(len(shards[idx])))
-			} else {
-				writeErr = m.storeRemoteShard(ctx, instanceForShard, hashPrefix, idx, shards[idx])
-			}
-
-			mu.Lock()
-			defer mu.Unlock()
-			if writeErr != nil {
-				if storeErr == nil {
-					storeErr = fmt.Errorf("failed to store shard %d on %s: %w", idx, instanceForShard, writeErr)
-				}
-				return
-			}
-
-			shardInfos[idx] = ShardInfo{
-				Index:       idx,
-				InstanceID:  instanceForShard,
-				BackendType: m.config.ShardBackend,
-				Path:        shardPath,
-				Size:        int64(len(shards[idx])),
-				Checksum:    checksum,
-			}
-		}(i)
+	if ctx.Err() != nil {
+		return nil, err
 	}
-	wg.Wait()
-
-	if storeErr != nil {
-		m.cleanupShards(shardInfos)
-		return nil, storeErr
-	}
-
-	mdInfo := &metadata.ErasureFileInfo{
-		FilePath:     path,
-		OriginalSize: originalSize,
-		DataShards:   profile.DataShards,
-		ParityShards: profile.ParityShards,
-		ShardSize:    profile.ShardSize,
-		Shards:       shardInfosToMetadata(shardInfos),
-	}
-
-	if err := m.erasureStore.CreateErasureInfo(ctx, path, mdInfo); err != nil {
-		m.cleanupShards(shardInfos)
-		return nil, fmt.Errorf("failed to store erasure metadata: %w", err)
-	}
-
-	m.logger.Info("Erasure-coded file stored",
+	m.logger.Warn("Streamed erasure read failed, retrying with verified reconstruction",
 		zap.String("path", path),
-		zap.Int("data_shards", dataShards),
-		zap.Int("parity_shards", parityShards),
-		zap.Int64("original_size", originalSize))
-
-	return &ErasureFileInfo{
-		FilePath:     path,
-		OriginalSize: originalSize,
-		Profile:      profile,
-		Shards:       shardInfos,
-	}, nil
+		zap.Error(err))
+	return m.retrieveVerified(ctx, path)
 }
 
-// RetrieveFile fetches shards in parallel and reconstructs the original file.
-func (m *Manager) RetrieveFile(ctx context.Context, path string) ([]byte, error) {
+func (m *Manager) retrieveVerified(ctx context.Context, path string) ([]byte, error) {
 	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get erasure info: %w", err)
 	}
 
-	totalShards := mdInfo.DataShards + mdInfo.ParityShards
-	shards := make([][]byte, totalShards)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	successCount := 0
+	data, damaged, err := m.reconstruct(ctx, mdInfo)
+	if err != nil {
+		return nil, err
+	}
 
-	// Use a cancellable context so we can abort remaining fetches once we have enough shards
+	if repairErr := m.repairShards(ctx, mdInfo, data, damaged); repairErr != nil {
+		m.logger.Warn("Shard repair failed",
+			zap.String("path", path),
+			zap.Int("damaged_shards", len(damaged)),
+			zap.Error(repairErr))
+	}
+	return data, nil
+}
+
+func (m *Manager) RetrieveRange(ctx context.Context, path string, offset, length int64) ([]byte, error) {
+	rc, n, err := m.openRange(ctx, path, offset, length)
+	if err != nil {
+		return nil, err
+	}
+	data, err := readAllSized(rc, n)
+	if err == nil {
+		return data, nil
+	}
+	if ctx.Err() != nil {
+		return nil, err
+	}
+	m.logger.Warn("Streamed erasure range read failed, retrying with verified reconstruction",
+		zap.String("path", path),
+		zap.Error(err))
+
+	full, err := m.retrieveVerified(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	n, err = RangeLength(int64(len(full)), offset, length)
+	if err != nil {
+		return nil, err
+	}
+	return full[offset : offset+n], nil
+}
+
+func readAllSized(rc io.ReadCloser, size int64) ([]byte, error) {
+	data := make([]byte, size)
+	_, err := io.ReadFull(rc, data)
+	if closeErr := rc.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func (m *Manager) RepairFile(ctx context.Context, path string) error {
+	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to get erasure info: %w", err)
+	}
+
+	data, damaged, err := m.reconstruct(ctx, mdInfo)
+	if err != nil {
+		return err
+	}
+	return m.repairShards(ctx, mdInfo, data, damaged)
+}
+
+func (m *Manager) runBackground(path, operation string, task func(ctx context.Context) error) {
+	go func() {
+		m.repairSlots <- struct{}{}
+		defer func() { <-m.repairSlots }()
+
+		ctx, cancel := context.WithTimeout(context.Background(), repairTimeout)
+		defer cancel()
+		m.logger.Info("Background erasure task started",
+			zap.String("operation", operation),
+			zap.String("path", path))
+		if err := task(ctx); nil != err {
+			m.logger.Warn("Background erasure task failed",
+				zap.String("operation", operation),
+				zap.String("path", path),
+				zap.Error(err))
+			return
+		}
+		m.logger.Info("Background erasure task completed",
+			zap.String("operation", operation),
+			zap.String("path", path))
+	}()
+}
+
+func (m *Manager) verifyParity(ctx context.Context, path string) error {
+	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, path)
+	if nil != err {
+		return fmt.Errorf("failed to get erasure info: %w", err)
+	}
+
+	dataShards := mdInfo.DataShards
+	total := dataShards + mdInfo.ParityShards
+	var damaged []metadata.ErasureShardInfo
+	for _, si := range mdInfo.Shards {
+		if si.Index < dataShards || si.Index >= total {
+			continue
+		}
+		data, fetchErr := m.fetchShard(ctx, si)
+		if nil == fetchErr && si.Checksum == ShardChecksum(data) {
+			continue
+		}
+		m.logger.Warn("Parity shard damaged",
+			zap.Int("index", si.Index),
+			zap.String("instance", si.InstanceID),
+			zap.Error(fetchErr))
+		damaged = append(damaged, si)
+	}
+	if 0 == len(damaged) {
+		return nil
+	}
+
+	data, moreDamaged, err := m.reconstruct(ctx, mdInfo)
+	if nil != err {
+		return err
+	}
+	return m.repairShards(ctx, mdInfo, data, append(damaged, moreDamaged...))
+}
+
+func (m *Manager) reconstruct(ctx context.Context, mdInfo *metadata.ErasureFileInfo) ([]byte, []metadata.ErasureShardInfo, error) {
+	dataShards := mdInfo.DataShards
+	totalShards := dataShards + mdInfo.ParityShards
+	shards := make([][]byte, totalShards)
+	var damaged []metadata.ErasureShardInfo
+	successCount := 0
+	var mu sync.Mutex
+
 	fetchCtx, fetchCancel := context.WithCancel(ctx)
 	defer fetchCancel()
 
-	for _, si := range mdInfo.Shards {
-		wg.Add(1)
-		go func(si metadata.ErasureShardInfo) {
-			defer wg.Done()
+	fetchGroup := func(group []metadata.ErasureShardInfo) {
+		var wg sync.WaitGroup
+		for _, si := range group {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 
-			var data []byte
-			var fetchErr error
+				data, fetchErr := m.fetchShard(fetchCtx, si)
+				checksumOK := fetchErr == nil && ShardChecksum(data) == si.Checksum
 
-			if si.InstanceID == m.instanceID {
-				data, fetchErr = m.readLocalShard(fetchCtx, si.Path)
-			} else {
-				shardPrefix := extractShardPrefix(si.Path)
-				data, fetchErr = m.fetchRemoteShard(fetchCtx, si.InstanceID, shardPrefix, si.Index)
-			}
+				mu.Lock()
+				defer mu.Unlock()
+				if fetchErr != nil {
+					m.logger.Warn("Failed to fetch shard",
+						zap.Int("index", si.Index),
+						zap.String("instance", si.InstanceID),
+						zap.Error(fetchErr))
+					if !errors.Is(fetchErr, context.Canceled) {
+						damaged = append(damaged, si)
+					}
+					return
+				}
+				if !checksumOK {
+					m.logger.Warn("Shard checksum mismatch",
+						zap.Int("index", si.Index),
+						zap.String("instance", si.InstanceID))
+					damaged = append(damaged, si)
+					return
+				}
 
-			mu.Lock()
-			defer mu.Unlock()
-			if fetchErr != nil {
-				m.logger.Warn("Failed to fetch shard",
-					zap.Int("index", si.Index),
-					zap.String("instance", si.InstanceID),
-					zap.Error(fetchErr))
-				return
-			}
-
-			if ShardChecksum(data) != si.Checksum {
-				m.logger.Warn("Shard checksum mismatch",
-					zap.Int("index", si.Index),
-					zap.String("instance", si.InstanceID))
-				return
-			}
-
-			shards[si.Index] = data
-			successCount++
-
-			// Short-circuit: cancel remaining fetches once we have enough shards
-			if successCount >= mdInfo.DataShards {
-				fetchCancel()
-			}
-		}(si)
+				shards[si.Index] = data
+				successCount++
+				if successCount >= dataShards {
+					fetchCancel()
+				}
+			}()
+		}
+		wg.Wait()
 	}
-	wg.Wait()
 
-	if successCount < mdInfo.DataShards {
-		return nil, ErrInsufficientShards
+	var dataGroup, parityGroup []metadata.ErasureShardInfo
+	for _, si := range mdInfo.Shards {
+		switch {
+		case si.Index < 0 || si.Index >= totalShards:
+			continue
+		case si.Index < dataShards:
+			dataGroup = append(dataGroup, si)
+		default:
+			parityGroup = append(parityGroup, si)
+		}
+	}
+	fetchGroup(dataGroup)
+	if successCount < dataShards {
+		fetchGroup(parityGroup)
+	}
+	if successCount < dataShards {
+		return nil, nil, ErrInsufficientShards
 	}
 
 	profile := ErasureProfile{
@@ -316,10 +396,59 @@ func (m *Manager) RetrieveFile(ctx context.Context, path string) ([]byte, error)
 		ShardSize:    mdInfo.ShardSize,
 	}
 
-	return m.codec.Decode(shards, profile, mdInfo.OriginalSize)
+	data, err := m.codec.Decode(shards, profile, mdInfo.OriginalSize)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, damaged, nil
 }
 
-// GetManifest builds a ChunkManifest with direct endpoints for each shard.
+func (m *Manager) repairShards(ctx context.Context, mdInfo *metadata.ErasureFileInfo, data []byte, damaged []metadata.ErasureShardInfo) error {
+	if len(damaged) == 0 {
+		return nil
+	}
+
+	profile := ErasureProfile{
+		DataShards:   mdInfo.DataShards,
+		ParityShards: mdInfo.ParityShards,
+		ShardSize:    mdInfo.ShardSize,
+	}
+	encoded, err := m.codec.Encode(data, profile)
+	if err != nil {
+		return fmt.Errorf("failed to re-encode file for repair: %w", err)
+	}
+
+	var mu sync.Mutex
+	var repairErrs []error
+	var wg sync.WaitGroup
+	for _, si := range damaged {
+		wg.Add(1)
+		go func(si metadata.ErasureShardInfo) {
+			defer wg.Done()
+			if writeErr := m.rewriteShard(ctx, si, encoded[si.Index]); nil != writeErr {
+				mu.Lock()
+				defer mu.Unlock()
+				repairErrs = append(repairErrs, fmt.Errorf("failed to repair shard %d on %s: %w", si.Index, si.InstanceID, writeErr))
+			} else {
+				metrics.ErasurePiecesRepairedTotal.Inc()
+			}
+		}(si)
+	}
+	wg.Wait()
+
+	return errors.Join(repairErrs...)
+}
+
+func (m *Manager) rewriteShard(ctx context.Context, si metadata.ErasureShardInfo, shard []byte) error {
+	if ShardChecksum(shard) != si.Checksum {
+		return fmt.Errorf("re-encoded shard %d does not match recorded checksum", si.Index)
+	}
+	if si.InstanceID == m.instanceID {
+		return m.localBackend.Create(ctx, si.Path, bytes.NewReader(shard), int64(len(shard)))
+	}
+	return m.storeRemoteShard(ctx, si.InstanceID, extractShardPrefix(si.Path), si.Index, bytes.NewReader(shard), int64(len(shard)))
+}
+
 func (m *Manager) GetManifest(ctx context.Context, path string) (*ChunkManifest, error) {
 	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, path)
 	if err != nil {
@@ -342,7 +471,7 @@ func (m *Manager) GetManifest(ctx context.Context, path string) (*ChunkManifest,
 		if si.InstanceID == m.instanceID {
 			endpoint = m.selfEndpoint
 		} else {
-			endpoint = m.peerEndpoints[si.InstanceID]
+			endpoint, _ = m.peerEndpoint(si.InstanceID)
 		}
 
 		if endpoint == "" {
@@ -351,7 +480,7 @@ func (m *Manager) GetManifest(ctx context.Context, path string) (*ChunkManifest,
 
 		shardEndpoints = append(shardEndpoints, ShardEndpoint{
 			Index:    si.Index,
-			Endpoint: strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/shards/%s/%d", strings.TrimPrefix(path, "/"), si.Index),
+			Endpoint: strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/shards/%s/%d", escapePathSegments(path), si.Index),
 			Size:     si.Size,
 			Checksum: si.Checksum,
 		})
@@ -361,74 +490,71 @@ func (m *Manager) GetManifest(ctx context.Context, path string) (*ChunkManifest,
 	return manifest, nil
 }
 
-// GetShard reads a single local shard by path and index, verifying checksum before returning.
-func (m *Manager) GetShard(ctx context.Context, path string, index int) ([]byte, error) {
-	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get erasure info: %w", err)
-	}
-
-	for _, si := range mdInfo.Shards {
-		if si.Index == index && si.InstanceID == m.instanceID {
-			data, readErr := m.readLocalShard(ctx, si.Path)
-			if readErr != nil {
-				return nil, readErr
-			}
-			if ShardChecksum(data) != si.Checksum {
-				return nil, fmt.Errorf("shard %d checksum mismatch: data corrupted on disk", index)
-			}
-			return data, nil
-		}
-	}
-
-	return nil, ErrShardNotFound
-}
-
-// DeleteFile removes erasure metadata first, then best-effort deletes all shards.
-// Metadata-first ordering ensures a crash leaves orphan shards (reclaimable) rather
-// than orphan metadata pointing to partially-deleted shards (irrecoverable).
 func (m *Manager) DeleteFile(ctx context.Context, path string) error {
-	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to get erasure info for delete: %w", err)
+	found, err := m.DeleteFileShards(ctx, path)
+	if nil != err || !found {
+		return err
 	}
 
-	// Delete metadata first — makes the file logically gone
 	if err := m.erasureStore.DeleteErasureInfo(ctx, path); err != nil {
 		return fmt.Errorf("failed to delete erasure metadata: %w", err)
 	}
+	m.forgetHealth(path)
+	return nil
+}
 
-	// Best-effort shard cleanup
+func (m *Manager) DeleteFileShards(ctx context.Context, path string) (bool, error) {
+	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, path)
+	if err != nil {
+		if errors.Is(err, metadata.ErrNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get erasure info for delete: %w", err)
+	}
+
+	if err := m.DeleteShards(ctx, mdInfo); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (m *Manager) ForgetHealth(path string) {
+	m.forgetHealth(path)
+}
+
+func (m *Manager) DeleteShards(ctx context.Context, mdInfo *metadata.ErasureFileInfo) error {
+	var mu sync.Mutex
+	var deleteErrs []error
 	var wg sync.WaitGroup
 	for _, si := range mdInfo.Shards {
 		wg.Add(1)
 		go func(si metadata.ErasureShardInfo) {
 			defer wg.Done()
-			if si.InstanceID == m.instanceID {
-				if delErr := m.localBackend.Delete(ctx, si.Path); delErr != nil {
-					m.logger.Warn("Failed to delete local shard",
-						zap.Int("index", si.Index),
-						zap.Error(delErr))
-				}
-			} else {
-				shardPrefix := extractShardPrefix(si.Path)
-				if delErr := m.deleteRemoteShard(ctx, si.InstanceID, shardPrefix, si.Index); delErr != nil {
-					m.logger.Warn("Failed to delete remote shard",
-						zap.Int("index", si.Index),
-						zap.String("instance", si.InstanceID),
-						zap.Error(delErr))
-				}
+			if delErr := m.deleteShard(ctx, si); delErr != nil {
+				mu.Lock()
+				defer mu.Unlock()
+				deleteErrs = append(deleteErrs, fmt.Errorf("failed to delete shard %d on %s: %w", si.Index, si.InstanceID, delErr))
 			}
 		}(si)
 	}
 	wg.Wait()
 
+	if len(deleteErrs) > 0 {
+		return errors.Join(deleteErrs...)
+	}
 	return nil
 }
 
-// RenameFile re-keys an erasure-coded file's metadata from oldPath to newPath.
-// Shards are keyed by content hash, independent of the file path, so no shard
-// data is moved — only the erasure info record is re-pointed.
+func (m *Manager) deleteShard(ctx context.Context, si metadata.ErasureShardInfo) error {
+	if si.InstanceID == m.instanceID {
+		if err := m.localBackend.Delete(ctx, si.Path); err != nil && !errors.Is(err, metadata.ErrNotFound) {
+			return err
+		}
+		return nil
+	}
+	return m.deleteRemoteShard(ctx, si.InstanceID, extractShardPrefix(si.Path), si.Index)
+}
+
 func (m *Manager) RenameFile(ctx context.Context, oldPath, newPath string) error {
 	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, oldPath)
 	if err != nil {
@@ -441,20 +567,81 @@ func (m *Manager) RenameFile(ctx context.Context, oldPath, newPath string) error
 	}
 
 	if err := m.erasureStore.DeleteErasureInfo(ctx, oldPath); err != nil {
-		// New record is in place; a stale old record is reclaimable, so log and continue.
 		m.logger.Warn("Failed to delete old erasure metadata after rename",
 			zap.String("old_path", oldPath),
 			zap.String("new_path", newPath),
 			zap.Error(err))
 	}
 
+	m.forgetHealth(oldPath)
+	m.forgetHealth(newPath)
 	m.logger.Info("Erasure-coded file metadata renamed",
 		zap.String("old_path", oldPath),
 		zap.String("new_path", newPath))
 	return nil
 }
 
-// extractShardPrefix extracts the hash prefix from a shard path like ".erasure/<prefix>/<idx>".
+func (m *Manager) RenameFileOverwrite(ctx context.Context, oldPath, newPath string) (*metadata.ErasureFileInfo, error) {
+	mdInfo, err := m.erasureStore.GetErasureInfo(ctx, oldPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get erasure info for rename: %w", err)
+	}
+
+	replacedInfo, err := m.erasureStore.GetErasureInfo(ctx, newPath)
+	if err != nil {
+		if !errors.Is(err, metadata.ErrNotFound) {
+			return nil, fmt.Errorf("failed to get erasure info at rename destination: %w", err)
+		}
+		replacedInfo = nil
+	}
+	if nil != replacedInfo {
+		if err := m.erasureStore.DeleteErasureInfo(ctx, newPath); err != nil {
+			return nil, fmt.Errorf("failed to delete replaced erasure metadata: %w", err)
+		}
+	}
+
+	mdInfo.FilePath = newPath
+	if err := m.erasureStore.CreateErasureInfo(ctx, newPath, mdInfo); err != nil {
+		createErr := fmt.Errorf("failed to write erasure metadata at new path: %w", err)
+		if nil != replacedInfo {
+			if restoreErr := m.erasureStore.CreateErasureInfo(context.WithoutCancel(ctx), newPath, replacedInfo); nil != restoreErr {
+				return nil, errors.Join(createErr, fmt.Errorf("failed to restore replaced erasure metadata: %w", restoreErr))
+			}
+		}
+		return nil, createErr
+	}
+
+	if err := m.erasureStore.DeleteErasureInfo(ctx, oldPath); err != nil {
+		m.logger.Warn("Failed to delete old erasure metadata after rename",
+			zap.String("old_path", oldPath),
+			zap.String("new_path", newPath),
+			zap.Error(err))
+	}
+
+	m.forgetHealth(oldPath)
+	m.forgetHealth(newPath)
+	m.logger.Info("Erasure-coded file metadata renamed with overwrite",
+		zap.String("old_path", oldPath),
+		zap.String("new_path", newPath))
+	return replacedInfo, nil
+}
+
+func newShardPrefix() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", fmt.Errorf("failed to generate shard id: %w", err)
+	}
+	return hex.EncodeToString(id[:]), nil
+}
+
+func escapePathSegments(path string) string {
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
+}
+
 func extractShardPrefix(shardPath string) string {
 	trimmed := strings.TrimPrefix(shardPath, ".erasure/")
 	lastSlash := strings.LastIndex(trimmed, "/")
@@ -464,29 +651,52 @@ func extractShardPrefix(shardPath string) string {
 	return trimmed[:lastSlash]
 }
 
-func (m *Manager) readLocalShard(ctx context.Context, shardPath string) ([]byte, error) {
-	reader, err := m.localBackend.Open(ctx, shardPath)
+func (m *Manager) fetchShard(ctx context.Context, si metadata.ErasureShardInfo) ([]byte, error) {
+	if si.Size < 0 || si.Size > maxShardReadBytes {
+		return nil, fmt.Errorf("shard %d has invalid size %d", si.Index, si.Size)
+	}
+	rc, err := m.openShard(ctx, si)
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
-	return io.ReadAll(reader)
+	return readAllSized(rc, si.Size)
 }
 
-func (m *Manager) storeRemoteShard(ctx context.Context, instanceID, hashPrefix string, index int, data []byte) error {
-	endpoint, ok := m.peerEndpoints[instanceID]
+func requireHTTPSEndpoint(endpoint string) error {
+	parsed, err := url.Parse(endpoint)
+	if nil != err {
+		return fmt.Errorf("peer endpoint %s is not a valid URL: %w", endpoint, err)
+	}
+	if "https" == parsed.Scheme {
+		return nil
+	}
+	if ip := net.ParseIP(parsed.Hostname()); "http" == parsed.Scheme && (strings.EqualFold("localhost", parsed.Hostname()) || (nil != ip && ip.IsLoopback())) {
+		return nil
+	}
+	return fmt.Errorf("peer endpoint %s must use https (http is allowed only for loopback peers)", endpoint)
+}
+
+func shardURL(endpoint, shardPrefix string, index int) string {
+	return strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", shardPrefix, index)
+}
+
+func (m *Manager) storeRemoteShard(ctx context.Context, instanceID, shardPrefix string, index int, body io.Reader, size int64) error {
+	endpoint, ok := m.peerEndpoint(instanceID)
 	if !ok {
 		return fmt.Errorf("no endpoint for instance %s", instanceID)
 	}
 
-	url := strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", hashPrefix, index)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+	if err := requireHTTPSEndpoint(endpoint); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, shardURL(endpoint, shardPrefix, index), body)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+m.internalToken)
 	req.Header.Set("Content-Type", "application/octet-stream")
-	req.ContentLength = int64(len(data))
+	req.ContentLength = size
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
@@ -503,14 +713,17 @@ func (m *Manager) storeRemoteShard(ctx context.Context, instanceID, hashPrefix s
 	return nil
 }
 
-func (m *Manager) fetchRemoteShard(ctx context.Context, instanceID, shardPrefix string, index int) ([]byte, error) {
-	endpoint, ok := m.peerEndpoints[instanceID]
+func (m *Manager) openRemoteShard(ctx context.Context, instanceID, shardPrefix string, index int) (io.ReadCloser, error) {
+	endpoint, ok := m.peerEndpoint(instanceID)
 	if !ok {
 		return nil, fmt.Errorf("no endpoint for instance %s", instanceID)
 	}
 
-	url := strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", shardPrefix, index)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err := requireHTTPSEndpoint(endpoint); err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, shardURL(endpoint, shardPrefix, index), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -520,24 +733,31 @@ func (m *Manager) fetchRemoteShard(ctx context.Context, instanceID, shardPrefix 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if http.StatusNotFound == resp.StatusCode {
+			return nil, fmt.Errorf("remote shard fetch failed with status %d: %w", resp.StatusCode, metadata.ErrNotFound)
+		}
 		return nil, fmt.Errorf("remote shard fetch failed with status %d", resp.StatusCode)
 	}
-
-	const maxShardReadBytes = 256 << 20
-	return io.ReadAll(io.LimitReader(resp.Body, maxShardReadBytes))
+	return resp.Body, nil
 }
 
 func (m *Manager) deleteRemoteShard(ctx context.Context, instanceID, shardPrefix string, index int) error {
-	endpoint, ok := m.peerEndpoints[instanceID]
+	endpoint, ok := m.peerEndpoint(instanceID)
 	if !ok {
 		return fmt.Errorf("no endpoint for instance %s", instanceID)
 	}
 
-	url := strings.TrimRight(endpoint, "/") + fmt.Sprintf("/v1/internal/shards/%s/%d", shardPrefix, index)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err := requireHTTPSEndpoint(endpoint); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, remoteRequestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, shardURL(endpoint, shardPrefix, index), nil)
 	if err != nil {
 		return err
 	}
@@ -552,6 +772,9 @@ func (m *Manager) deleteRemoteShard(ctx context.Context, instanceID, shardPrefix
 		resp.Body.Close()
 	}()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("remote shard delete failed with status %d", resp.StatusCode)
 	}
