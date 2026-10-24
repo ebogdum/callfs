@@ -15,12 +15,23 @@ PLATFORMS=(
     "freebsd/arm64"
     "openbsd/amd64"
     "openbsd/arm64"
-    "netbsd/amd64"
-    "netbsd/arm64"
 )
 
 # Create a directory for the builds
 BUILD_DIR="builds"
+MODULE="github.com/ebogdum/callfs/v2"
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+LDFLAGS="-s -w -X ${MODULE}/internal/buildinfo.Version=${VERSION} -X ${MODULE}/internal/buildinfo.Commit=${COMMIT} -X ${MODULE}/internal/buildinfo.Date=${DATE}"
+
+if [ ! -f web/build/index.html ]; then
+    echo "Building the web console..."
+    if ! (cd web && npm ci && npm run build); then
+        echo "Failed to build the web console."
+        exit 1
+    fi
+fi
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
@@ -35,7 +46,7 @@ build_platform() {
     fi
 
     echo "Building for $GOOS/$GOARCH..."
-    if ! env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath -ldflags="-s -w" -o "$OUTPUT_NAME" "$PACKAGE_PATH"; then
+    if ! env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath -tags ui -ldflags="$LDFLAGS" -o "$OUTPUT_NAME" "$PACKAGE_PATH"; then
         echo "An error occurred while building for $GOOS/$GOARCH."
         return 1
     fi

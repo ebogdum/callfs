@@ -8,7 +8,31 @@ permissions:
   contents: write
 
 jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web console
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: web-build
+          path: web/build
+          if-no-files-found: error
+
   build:
+    needs: web
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -22,14 +46,17 @@ jobs:
           - freebsd/arm64
           - openbsd/amd64
           - openbsd/arm64
-          - netbsd/amd64
-          - netbsd/arm64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: web-build
+          path: web/build
 
       - name: Build ${{ matrix.platform }}
         env:
@@ -42,7 +69,9 @@ jobs:
           if [ "$GOOS" = "windows" ]; then
             OUTPUT="${OUTPUT}.exe"
           fi
-          CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags="-s -w" -o "$OUTPUT" ./cmd
+          MODULE="github.com/ebogdum/callfs/v2"
+          LDFLAGS="-s -w -X ${MODULE}/internal/buildinfo.Version=${GITHUB_REF_NAME} -X ${MODULE}/internal/buildinfo.Commit=${GITHUB_SHA::7} -X ${MODULE}/internal/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath -tags ui -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -101,4 +130,4 @@ jobs:
           fi
 
       - name: Trigger Go module proxy
-        run: GOPROXY=https://proxy.golang.org go list -m github.com/ebogdum/callfs@${GITHUB_REF_NAME}
+        run: GOPROXY=https://proxy.golang.org go list -m "github.com/ebogdum/callfs/v2@${GITHUB_REF_NAME}"
