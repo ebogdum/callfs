@@ -23,6 +23,10 @@ func (n *NoopAdapter) Open(ctx context.Context, path string) (io.ReadCloser, err
 	return nil, fmt.Errorf("backend not enabled: cannot open file %s", path)
 }
 
+func (n *NoopAdapter) OpenRange(ctx context.Context, path string, offset, length int64) (io.ReadCloser, error) {
+	return nil, fmt.Errorf("backend not enabled: cannot open file %s", path)
+}
+
 // Create always returns an error for noop backend
 func (n *NoopAdapter) Create(ctx context.Context, path string, reader io.Reader, size int64) error {
 	return fmt.Errorf("backend not enabled: cannot create file %s", path)

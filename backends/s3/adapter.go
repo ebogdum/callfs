@@ -1,23 +1,55 @@
 package s3
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"strings"
+	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"go.uber.org/zap"
 
 	"github.com/ebogdum/callfs/config"
 )
 
-// S3Adapter implements the backends.Storage interface for AWS S3
+const (
+	uploadPartSize      = 5 * 1024 * 1024
+	uploadConcurrency   = 3
+	headBucketTimeout   = 15 * time.Second
+	s3DialTimeout       = 10 * time.Second
+	s3TLSHandshake      = 10 * time.Second
+	s3ResponseHeaderMax = 60 * time.Second
+	s3IdleConnTimeout   = 90 * time.Second
+	s3MaxIdlePerHost    = 64
+)
+
+func newS3HTTPClient() *http.Client {
+	dialer := &net.Dialer{Timeout: s3DialTimeout, KeepAlive: 30 * time.Second}
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           dialer.DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          s3MaxIdlePerHost * 4,
+			MaxIdleConnsPerHost:   s3MaxIdlePerHost,
+			IdleConnTimeout:       s3IdleConnTimeout,
+			TLSHandshakeTimeout:   s3TLSHandshake,
+			ExpectContinueTimeout: time.Second,
+			ResponseHeaderTimeout: s3ResponseHeaderMax,
+		},
+	}
+}
+
 type S3Adapter struct {
-	client               *s3.S3
-	uploader             *s3manager.Uploader
+	client               *s3.Client
+	uploader             *manager.Uploader
 	bucketName           string
 	serverSideEncryption string
 	acl                  string
@@ -25,49 +57,50 @@ type S3Adapter struct {
 	logger               *zap.Logger
 }
 
-// NewS3Adapter creates a new S3 storage adapter
 func NewS3Adapter(cfg config.BackendConfig, logger *zap.Logger) (*S3Adapter, error) {
 	if cfg.S3BucketName == "" {
 		return nil, fmt.Errorf("S3 bucket name is required")
 	}
 
-	// Create AWS session
-	awsConfig := &aws.Config{
-		Region: aws.String(cfg.S3Region),
-		Credentials: credentials.NewStaticCredentials(
+	if "" != cfg.S3Endpoint && strings.HasPrefix(cfg.S3Endpoint, "http://") {
+		if !cfg.S3AllowInsecure {
+			return nil, fmt.Errorf("S3 endpoint %s uses plaintext HTTP; set s3_allow_insecure to permit it", cfg.S3Endpoint)
+		}
+		logger.Warn("S3 endpoint uses plaintext HTTP; object data and credentials are sent unencrypted", zap.String("endpoint", cfg.S3Endpoint))
+	}
+
+	awsConfig := aws.Config{
+		Region: cfg.S3Region,
+		Credentials: credentials.NewStaticCredentialsProvider(
 			cfg.S3AccessKey,
 			cfg.S3SecretKey,
 			"",
 		),
+		HTTPClient: newS3HTTPClient(),
 	}
 
-	// Set custom endpoint if provided (for MinIO compatibility)
-	if cfg.S3Endpoint != "" {
-		awsConfig.Endpoint = aws.String(cfg.S3Endpoint)
-		// Only disable SSL if the endpoint is explicitly HTTP
-		awsConfig.DisableSSL = aws.Bool(strings.HasPrefix(cfg.S3Endpoint, "http://"))
-		awsConfig.S3ForcePathStyle = aws.Bool(true)              // Required for MinIO
-		awsConfig.S3DisableContentMD5Validation = aws.Bool(true) // Disable MD5 for MinIO
-	}
-
-	sess, err := session.NewSession(awsConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS session: %w", err)
-	}
-
-	client := s3.New(sess)
-
-	// Verify bucket access
-	_, err = client.HeadBucket(&s3.HeadBucketInput{
-		Bucket: aws.String(cfg.S3BucketName),
+	client := s3.NewFromConfig(awsConfig, func(o *s3.Options) {
+		if "" != cfg.S3Endpoint {
+			o.BaseEndpoint = aws.String(cfg.S3Endpoint)
+			o.UsePathStyle = true
+		}
 	})
-	if err != nil {
+
+	headCtx, cancel := context.WithTimeout(context.Background(), headBucketTimeout)
+	defer cancel()
+	if _, err := client.HeadBucket(headCtx, &s3.HeadBucketInput{
+		Bucket: aws.String(cfg.S3BucketName),
+	}); nil != err {
 		return nil, fmt.Errorf("failed to access S3 bucket %s: %w", cfg.S3BucketName, err)
 	}
 
 	return &S3Adapter{
-		client:               client,
-		uploader:             s3manager.NewUploaderWithClient(client),
+		client: client,
+		uploader: manager.NewUploader(client, func(u *manager.Uploader) {
+			u.PartSize = uploadPartSize
+			u.Concurrency = uploadConcurrency
+			u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(uploadPartSize)
+		}),
 		bucketName:           cfg.S3BucketName,
 		serverSideEncryption: cfg.S3ServerSideEncryption,
 		acl:                  cfg.S3ACL,
@@ -76,20 +109,15 @@ func NewS3Adapter(cfg config.BackendConfig, logger *zap.Logger) (*S3Adapter, err
 	}, nil
 }
 
-// Close closes any resources used by the S3 adapter
 func (a *S3Adapter) Close() error {
-	// No resources to close for S3
 	return nil
 }
 
-// pathToKey converts a filesystem path to an S3 key
 func (a *S3Adapter) pathToKey(path string) string {
-	// Remove leading slash and normalize
 	key := strings.TrimPrefix(path, "/")
 	return key
 }
 
-// keyToPath converts an S3 key to a filesystem path
 func (a *S3Adapter) keyToPath(key string) string {
 	if key == "" {
 		return "/"
@@ -100,14 +128,11 @@ func (a *S3Adapter) keyToPath(key string) string {
 	return key
 }
 
-// isS3NotFound checks if an error indicates the object was not found
 func isS3NotFound(err error) bool {
-	if err == nil {
+	if nil == err {
 		return false
 	}
-	// Check AWS SDK error types first
-	errStr := err.Error()
-	return strings.Contains(errStr, "NoSuchKey") ||
-		strings.Contains(errStr, "NotFound") ||
-		strings.Contains(errStr, "status code: 404")
+	var noSuchKey *types.NoSuchKey
+	var notFound *types.NotFound
+	return errors.As(err, &noSuchKey) || errors.As(err, &notFound)
 }

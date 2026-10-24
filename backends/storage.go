@@ -15,6 +15,10 @@ type Storage interface {
 	// Open opens a file for reading and returns a ReadCloser
 	Open(ctx context.Context, path string) (io.ReadCloser, error)
 
+	// OpenRange opens length bytes of a file starting at offset. A length of -1
+	// reads to the end of the file.
+	OpenRange(ctx context.Context, path string, offset, length int64) (io.ReadCloser, error)
+
 	// Create creates a new file with content from the reader
 	Create(ctx context.Context, path string, reader io.Reader, size int64) error
 
@@ -27,7 +31,8 @@ type Storage interface {
 	// Move relocates the object stored at oldPath to newPath within this
 	// backend, without streaming the bytes through the caller. For local
 	// filesystems this is an atomic rename; for object stores it is a
-	// server-side copy followed by a delete.
+	// server-side copy followed by a delete. An existing destination file is
+	// replaced.
 	Move(ctx context.Context, oldPath, newPath string) error
 
 	// Stat returns metadata for a file or directory
