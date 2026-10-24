@@ -1,0 +1,1 @@
+ALTER TABLE inodes DROP COLUMN IF EXISTS etag;
