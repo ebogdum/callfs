@@ -1,0 +1,59 @@
+:root {
+	--dur-0: 0ms;
+	--dur-micro: 120ms;
+	--dur-small: 160ms;
+	--dur-medium: 220ms;
+	--dur-large: 280ms;
+	--dur-exit-micro: 80ms;
+	--dur-exit-small: 110ms;
+	--dur-exit-medium: 150ms;
+	--dur-exit-large: 190ms;
+	--dur-fade: 120ms;
+	--dur-shimmer: 1600ms;
+	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-standard: cubic-bezier(0.2, 0, 0, 1);
+	--ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+	--ease-in: cubic-bezier(0.4, 0, 1, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:root:not([data-motion='full']) {
+		--dur-0: 0ms;
+		--dur-micro: 0ms;
+		--dur-small: 0ms;
+		--dur-medium: 0ms;
+		--dur-large: 0ms;
+		--dur-exit-micro: 0ms;
+		--dur-exit-small: 0ms;
+		--dur-exit-medium: 0ms;
+		--dur-exit-large: 0ms;
+		--dur-shimmer: 0ms;
+	}
+}
+
+:root[data-motion='reduced'] {
+	--dur-0: 0ms;
+	--dur-micro: 0ms;
+	--dur-small: 0ms;
+	--dur-medium: 0ms;
+	--dur-large: 0ms;
+	--dur-exit-micro: 0ms;
+	--dur-exit-small: 0ms;
+	--dur-exit-medium: 0ms;
+	--dur-exit-large: 0ms;
+	--dur-shimmer: 0ms;
+}
+
+:root[data-motion='none'] {
+	--dur-0: 0ms;
+	--dur-micro: 0ms;
+	--dur-small: 0ms;
+	--dur-medium: 0ms;
+	--dur-large: 0ms;
+	--dur-exit-micro: 0ms;
+	--dur-exit-small: 0ms;
+	--dur-exit-medium: 0ms;
+	--dur-exit-large: 0ms;
+	--dur-fade: 0ms;
+	--dur-shimmer: 0ms;
+}

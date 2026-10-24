@@ -1,0 +1,60 @@
+.segmented {
+	display: inline-flex;
+	align-items: stretch;
+	gap: var(--space-0-5);
+	max-inline-size: 100%;
+	padding: var(--space-0-5);
+	border: var(--hairline) solid var(--border-subtle);
+	border-radius: var(--radius-md);
+	background: var(--surface-sunken);
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.segmented .segment {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-1-5);
+	min-block-size: calc(var(--control-h) - var(--space-1) - 2 * var(--hairline));
+	min-inline-size: var(--target-min);
+	padding-inline: var(--space-3);
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-muted);
+	font: inherit;
+	font-size: var(--text-sm-size);
+	font-weight: var(--text-control-weight);
+	line-height: var(--text-sm-line);
+	cursor: pointer;
+	outline: var(--focus-width) solid transparent;
+	transition: background-color var(--dur-micro) var(--ease-in-out), color var(--dur-micro) var(--ease-in-out);
+}
+
+.segmented .segment[data-state='on'] {
+	background: var(--surface-raised);
+	color: var(--text);
+	box-shadow: var(--shadow-xs), 0 0 0 var(--hairline) var(--border);
+}
+
+@media (hover: hover) {
+	.segmented .segment[data-state='off']:hover {
+		color: var(--text);
+	}
+}
+
+.segmented .segment:active {
+	background: var(--surface-pressed);
+}
+
+.segmented .segment:focus-visible {
+	box-shadow: var(--focus-ring);
+}
+
+@media (pointer: coarse) {
+	.segmented .segment {
+		min-block-size: calc(var(--touch-target) - var(--space-1) - 2 * var(--hairline));
+	}
+}

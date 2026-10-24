@@ -1,0 +1,20 @@
+export default {
+	'shell.navigation.main': 'Main',
+	'shell.sidebar.collapse': 'Collapse sidebar',
+	'shell.sidebar.expand': 'Expand sidebar',
+	'shell.brand.name': 'callfs',
+	'shell.brand.home': 'callfs home',
+	'shell.boot.loading': 'Loading callfs',
+	'shell.breadcrumb.label': 'You are here',
+	'shell.search.placeholder': 'Search or jump to…',
+	'shell.search.open': 'Search',
+	'shell.account.label': 'Account menu for {user}',
+	'shell.footer.version': 'Version {version}',
+	'shell.login.lead': 'Use your access key to open the console.',
+	'shell.login.show_key': 'Show key',
+	'shell.login.hide_key': 'Hide key',
+	'shell.login.footer': 'callfs · Your own file server',
+	'shell.page.actions': 'Page actions',
+	'shell.panel.actions': 'Panel actions',
+	'shell.cluster.off': 'Off'
+};

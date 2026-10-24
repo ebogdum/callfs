@@ -1,0 +1,43 @@
+{
+	"name": "callfs-web",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview --port 4173 --strictPort",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --threshold error",
+		"test:unit": "vitest run",
+		"test:screens": "playwright test --project=screens",
+		"test:a11y": "playwright test --project=a11y",
+		"test:e2e": "playwright test --project=e2e",
+		"test:visual": "playwright test --project=visual",
+		"budget": "node scripts/check-budget.mjs"
+	},
+	"dependencies": {
+		"@fontsource-variable/inter": "5.3.0",
+		"@fontsource-variable/jetbrains-mono": "5.3.0",
+		"@lucide/svelte": "1.61.0",
+		"bits-ui": "^2.18.1"
+	},
+	"devDependencies": {
+		"@axe-core/playwright": "^4.12.1",
+		"@playwright/test": "^1.61.1",
+		"@sveltejs/adapter-static": "^3.0.8",
+		"@sveltejs/kit": "^2.63.0",
+		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"@testing-library/jest-dom": "^6.9.1",
+		"@testing-library/svelte": "^5.4.2",
+		"@types/node": "22.20.5",
+		"jsdom": "^29.1.1",
+		"svelte": "^5.56.1",
+		"svelte-check": "^4.6.0",
+		"typescript": "^6.0.3",
+		"vite": "^8.0.16",
+		"vitest": "^4.1.10"
+	}
+}

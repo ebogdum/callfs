@@ -1,0 +1,21 @@
+export default {
+	'datatable.selectPage': 'Select all on this page',
+	'datatable.selectRow': 'Select {name}',
+	'datatable.selectedCount': '{count, plural, one {# item selected} other {# items selected}}',
+	'datatable.allMatching': 'All {count} matching items are selected',
+	'datatable.selectAllMatching': 'Select all {count} matching',
+	'datatable.clearSelection': 'Clear selection',
+	'datatable.resizeColumn': 'Resize {column}',
+	'datatable.actions': 'Actions',
+	'datatable.partial': 'Some rows could not be loaded.',
+	'datatable.partialBody': 'The rows that loaded are shown. Try again to load the rest.',
+	'datatable.errorTitle': 'This list could not load.',
+	'datatable.errorBody': 'Try again in a moment.',
+	'datatable.shown': '{count} shown',
+	'datatable.shownMore': '{shown} shown · more available',
+	'datatable.range.estimate': '{from}–{to} of about {total}',
+	'datatable.loadMore': 'Load more',
+	'datatable.toolbar.export': 'Export',
+	'datatable.toolbar.exportCsv': 'Export CSV',
+	'datatable.toolbar.exportJson': 'Export JSON'
+};

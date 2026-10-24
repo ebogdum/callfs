@@ -1,0 +1,21 @@
+export default {
+	'notifications.toasts.region': 'Notifications',
+	'notifications.center.title': 'Notifications',
+	'notifications.center.summary': '{count, plural, one {# unread} other {# unread}}',
+	'notifications.center.mark_all_read': 'Mark all read',
+	'notifications.center.empty_title': 'No notifications',
+	'notifications.center.empty_body': 'Errors and important events show here.',
+	'notifications.center.filtered_empty_title': 'Nothing in this filter',
+	'notifications.center.filtered_empty_body': 'Pick All to see every notice.',
+	'notifications.filter.label': 'Show',
+	'notifications.filter.all': 'All',
+	'notifications.filter.errors': 'Errors',
+	'notifications.filter.jobs': 'Jobs',
+	'notifications.filter.cluster': 'Cluster',
+	'notifications.entry.new': 'New',
+	'notifications.entry.request_id': 'Request ID',
+	'notifications.entry.copy_request_id': 'Copy request ID',
+	'notifications.entry.mark_read': 'Mark read',
+	'notifications.entry.open': 'Open',
+	'notifications.entry.clear': 'Clear'
+};

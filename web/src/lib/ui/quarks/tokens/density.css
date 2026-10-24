@@ -1,0 +1,48 @@
+:root,
+html[data-density='default'] {
+	--control-h: 2rem;
+	--control-px: 0.75rem;
+	--row-h: 2.5rem;
+	--row-h-2line: 3.5rem;
+	--cell-px: 0.75rem;
+	--table-edge-px: 1rem;
+	--card-pad: 1.25rem;
+	--table-text: var(--text-body-size);
+	--icon-size: 1rem;
+}
+
+html[data-density='compact'] {
+	--control-h: 1.75rem;
+	--control-px: 0.625rem;
+	--row-h: 2rem;
+	--row-h-2line: 3rem;
+	--cell-px: 0.75rem;
+	--table-edge-px: 1rem;
+	--card-pad: 1rem;
+	--table-text: var(--text-sm-size);
+	--icon-size: 1rem;
+}
+
+html[data-density='comfortable'] {
+	--control-h: 2.5rem;
+	--control-px: 1rem;
+	--row-h: 3rem;
+	--row-h-2line: 4rem;
+	--cell-px: 1rem;
+	--table-edge-px: 1.5rem;
+	--card-pad: 1.5rem;
+	--table-text: var(--text-body-size);
+	--icon-size: 1.25rem;
+}
+
+@media (pointer: coarse) {
+	:root,
+	html[data-density] {
+		--control-h: 2.75rem;
+		--row-h: 3rem;
+	}
+
+	:root {
+		--text-input: max(1rem, var(--text-body-size));
+	}
+}

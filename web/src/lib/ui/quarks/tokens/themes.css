@@ -1,0 +1,397 @@
+:root[data-contrast='more'] {
+	--bg: #ffffff;
+	--bg-subtle: var(--n-2);
+	--surface: #ffffff;
+	--surface-raised: #ffffff;
+	--surface-sunken: var(--n-2);
+	--surface-overlay: #ffffff;
+	--surface-hover: rgb(0 0 0 / 0.08);
+	--surface-pressed: rgb(0 0 0 / 0.14);
+	--surface-selected: var(--a-3);
+	--border-subtle: var(--n-8);
+	--border: var(--n-9);
+	--border-strong: var(--n-11);
+	--border-control: var(--n-11);
+	--text: #000000;
+	--text-muted: var(--n-12);
+	--text-faint: var(--n-11);
+	--text-on-accent: #ffffff;
+	--text-link: var(--a-12);
+	--accent: var(--a-11);
+	--accent-hover: var(--a-12);
+	--accent-pressed: var(--a-12);
+	--accent-soft: var(--a-3);
+	--accent-soft-hover: var(--a-4);
+	--accent-border: var(--a-9);
+	--accent-text: var(--a-12);
+	--focus-ring-color: var(--a-11);
+	--ok: var(--ok-6);
+	--ok-soft: var(--ok-1);
+	--ok-border: var(--ok-4);
+	--ok-text: var(--ok-6);
+	--warn: var(--warn-6);
+	--warn-soft: var(--warn-1);
+	--warn-border: var(--warn-4);
+	--warn-text: var(--warn-6);
+	--danger: var(--bad-6);
+	--danger-soft: var(--bad-1);
+	--danger-border: var(--bad-4);
+	--danger-text: var(--bad-6);
+	--info: var(--info-6);
+	--info-soft: var(--info-1);
+	--info-border: var(--info-4);
+	--info-text: var(--info-6);
+	--scrim: rgb(0 0 0 / 0.6);
+	--shadow-color: 0 0 0;
+	--code-bg: var(--n-2);
+	--selection-bg: var(--a-5);
+	--hairline: 1px;
+	--focus-width: 3px;
+}
+
+:root[data-theme='dark'][data-contrast='more'] {
+	--bg: #000000;
+	--bg-subtle: var(--n-1);
+	--surface: #000000;
+	--surface-raised: var(--n-2);
+	--surface-sunken: var(--n-1);
+	--surface-overlay: var(--n-3);
+	--surface-hover: rgb(255 255 255 / 0.12);
+	--surface-pressed: rgb(255 255 255 / 0.18);
+	--surface-selected: var(--a-4);
+	--border-subtle: var(--n-9);
+	--border: var(--n-10);
+	--border-strong: var(--n-11);
+	--border-control: var(--n-11);
+	--text: #ffffff;
+	--text-muted: var(--n-12);
+	--text-faint: var(--n-11);
+	--text-on-accent: #000000;
+	--text-link: var(--a-12);
+	--accent: var(--a-11);
+	--accent-hover: var(--a-12);
+	--accent-pressed: var(--a-12);
+	--accent-soft: var(--a-4);
+	--accent-soft-hover: var(--a-5);
+	--accent-border: var(--a-9);
+	--accent-text: var(--a-12);
+	--focus-ring-color: var(--a-11);
+	--ok: var(--ok-6);
+	--ok-soft: var(--ok-1);
+	--ok-border: var(--ok-4);
+	--ok-text: var(--ok-6);
+	--warn: var(--warn-6);
+	--warn-soft: var(--warn-1);
+	--warn-border: var(--warn-4);
+	--warn-text: var(--warn-6);
+	--danger: var(--bad-6);
+	--danger-soft: var(--bad-1);
+	--danger-border: var(--bad-4);
+	--danger-text: var(--bad-6);
+	--info: var(--info-6);
+	--info-soft: var(--info-1);
+	--info-border: var(--info-4);
+	--info-text: var(--info-6);
+	--scrim: rgb(0 0 0 / 0.75);
+	--shadow-color: 0 0 0;
+	--code-bg: var(--n-1);
+	--selection-bg: var(--a-7);
+	--hairline: 2px;
+	--focus-width: 3px;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light'])[data-contrast='more'] {
+		--bg: #000000;
+		--bg-subtle: var(--n-1);
+		--surface: #000000;
+		--surface-raised: var(--n-2);
+		--surface-sunken: var(--n-1);
+		--surface-overlay: var(--n-3);
+		--surface-hover: rgb(255 255 255 / 0.12);
+		--surface-pressed: rgb(255 255 255 / 0.18);
+		--surface-selected: var(--a-4);
+		--border-subtle: var(--n-9);
+		--border: var(--n-10);
+		--border-strong: var(--n-11);
+		--border-control: var(--n-11);
+		--text: #ffffff;
+		--text-muted: var(--n-12);
+		--text-faint: var(--n-11);
+		--text-on-accent: #000000;
+		--text-link: var(--a-12);
+		--accent: var(--a-11);
+		--accent-hover: var(--a-12);
+		--accent-pressed: var(--a-12);
+		--accent-soft: var(--a-4);
+		--accent-soft-hover: var(--a-5);
+		--accent-border: var(--a-9);
+		--accent-text: var(--a-12);
+		--focus-ring-color: var(--a-11);
+		--ok: var(--ok-6);
+		--ok-soft: var(--ok-1);
+		--ok-border: var(--ok-4);
+		--ok-text: var(--ok-6);
+		--warn: var(--warn-6);
+		--warn-soft: var(--warn-1);
+		--warn-border: var(--warn-4);
+		--warn-text: var(--warn-6);
+		--danger: var(--bad-6);
+		--danger-soft: var(--bad-1);
+		--danger-border: var(--bad-4);
+		--danger-text: var(--bad-6);
+		--info: var(--info-6);
+		--info-soft: var(--info-1);
+		--info-border: var(--info-4);
+		--info-text: var(--info-6);
+		--scrim: rgb(0 0 0 / 0.75);
+		--shadow-color: 0 0 0;
+		--code-bg: var(--n-1);
+		--selection-bg: var(--a-7);
+		--hairline: 2px;
+		--focus-width: 3px;
+	}
+}
+
+@media (prefers-contrast: more) {
+	:root[data-theme='light']:not([data-contrast='standard']) {
+		--bg: #ffffff;
+		--bg-subtle: var(--n-2);
+		--surface: #ffffff;
+		--surface-raised: #ffffff;
+		--surface-sunken: var(--n-2);
+		--surface-overlay: #ffffff;
+		--surface-hover: rgb(0 0 0 / 0.08);
+		--surface-pressed: rgb(0 0 0 / 0.14);
+		--surface-selected: var(--a-3);
+		--border-subtle: var(--n-8);
+		--border: var(--n-9);
+		--border-strong: var(--n-11);
+		--border-control: var(--n-11);
+		--text: #000000;
+		--text-muted: var(--n-12);
+		--text-faint: var(--n-11);
+		--text-on-accent: #ffffff;
+		--text-link: var(--a-12);
+		--accent: var(--a-11);
+		--accent-hover: var(--a-12);
+		--accent-pressed: var(--a-12);
+		--accent-soft: var(--a-3);
+		--accent-soft-hover: var(--a-4);
+		--accent-border: var(--a-9);
+		--accent-text: var(--a-12);
+		--focus-ring-color: var(--a-11);
+		--ok: var(--ok-6);
+		--ok-soft: var(--ok-1);
+		--ok-border: var(--ok-4);
+		--ok-text: var(--ok-6);
+		--warn: var(--warn-6);
+		--warn-soft: var(--warn-1);
+		--warn-border: var(--warn-4);
+		--warn-text: var(--warn-6);
+		--danger: var(--bad-6);
+		--danger-soft: var(--bad-1);
+		--danger-border: var(--bad-4);
+		--danger-text: var(--bad-6);
+		--info: var(--info-6);
+		--info-soft: var(--info-1);
+		--info-border: var(--info-4);
+		--info-text: var(--info-6);
+		--scrim: rgb(0 0 0 / 0.6);
+		--shadow-color: 0 0 0;
+		--code-bg: var(--n-2);
+		--selection-bg: var(--a-5);
+		--hairline: 1px;
+		--focus-width: 3px;
+	}
+	:root[data-theme='dark']:not([data-contrast='standard']) {
+		--bg: #000000;
+		--bg-subtle: var(--n-1);
+		--surface: #000000;
+		--surface-raised: var(--n-2);
+		--surface-sunken: var(--n-1);
+		--surface-overlay: var(--n-3);
+		--surface-hover: rgb(255 255 255 / 0.12);
+		--surface-pressed: rgb(255 255 255 / 0.18);
+		--surface-selected: var(--a-4);
+		--border-subtle: var(--n-9);
+		--border: var(--n-10);
+		--border-strong: var(--n-11);
+		--border-control: var(--n-11);
+		--text: #ffffff;
+		--text-muted: var(--n-12);
+		--text-faint: var(--n-11);
+		--text-on-accent: #000000;
+		--text-link: var(--a-12);
+		--accent: var(--a-11);
+		--accent-hover: var(--a-12);
+		--accent-pressed: var(--a-12);
+		--accent-soft: var(--a-4);
+		--accent-soft-hover: var(--a-5);
+		--accent-border: var(--a-9);
+		--accent-text: var(--a-12);
+		--focus-ring-color: var(--a-11);
+		--ok: var(--ok-6);
+		--ok-soft: var(--ok-1);
+		--ok-border: var(--ok-4);
+		--ok-text: var(--ok-6);
+		--warn: var(--warn-6);
+		--warn-soft: var(--warn-1);
+		--warn-border: var(--warn-4);
+		--warn-text: var(--warn-6);
+		--danger: var(--bad-6);
+		--danger-soft: var(--bad-1);
+		--danger-border: var(--bad-4);
+		--danger-text: var(--bad-6);
+		--info: var(--info-6);
+		--info-soft: var(--info-1);
+		--info-border: var(--info-4);
+		--info-text: var(--info-6);
+		--scrim: rgb(0 0 0 / 0.75);
+		--shadow-color: 0 0 0;
+		--code-bg: var(--n-1);
+		--selection-bg: var(--a-7);
+		--hairline: 2px;
+		--focus-width: 3px;
+	}
+}
+
+@media (prefers-contrast: more) and (prefers-color-scheme: light) {
+	:root:not([data-contrast='standard']):not([data-theme]) {
+		--bg: #ffffff;
+		--bg-subtle: var(--n-2);
+		--surface: #ffffff;
+		--surface-raised: #ffffff;
+		--surface-sunken: var(--n-2);
+		--surface-overlay: #ffffff;
+		--surface-hover: rgb(0 0 0 / 0.08);
+		--surface-pressed: rgb(0 0 0 / 0.14);
+		--surface-selected: var(--a-3);
+		--border-subtle: var(--n-8);
+		--border: var(--n-9);
+		--border-strong: var(--n-11);
+		--border-control: var(--n-11);
+		--text: #000000;
+		--text-muted: var(--n-12);
+		--text-faint: var(--n-11);
+		--text-on-accent: #ffffff;
+		--text-link: var(--a-12);
+		--accent: var(--a-11);
+		--accent-hover: var(--a-12);
+		--accent-pressed: var(--a-12);
+		--accent-soft: var(--a-3);
+		--accent-soft-hover: var(--a-4);
+		--accent-border: var(--a-9);
+		--accent-text: var(--a-12);
+		--focus-ring-color: var(--a-11);
+		--ok: var(--ok-6);
+		--ok-soft: var(--ok-1);
+		--ok-border: var(--ok-4);
+		--ok-text: var(--ok-6);
+		--warn: var(--warn-6);
+		--warn-soft: var(--warn-1);
+		--warn-border: var(--warn-4);
+		--warn-text: var(--warn-6);
+		--danger: var(--bad-6);
+		--danger-soft: var(--bad-1);
+		--danger-border: var(--bad-4);
+		--danger-text: var(--bad-6);
+		--info: var(--info-6);
+		--info-soft: var(--info-1);
+		--info-border: var(--info-4);
+		--info-text: var(--info-6);
+		--scrim: rgb(0 0 0 / 0.6);
+		--shadow-color: 0 0 0;
+		--code-bg: var(--n-2);
+		--selection-bg: var(--a-5);
+		--hairline: 1px;
+		--focus-width: 3px;
+	}
+}
+
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']):not([data-contrast='standard']) {
+		--bg: #000000;
+		--bg-subtle: var(--n-1);
+		--surface: #000000;
+		--surface-raised: var(--n-2);
+		--surface-sunken: var(--n-1);
+		--surface-overlay: var(--n-3);
+		--surface-hover: rgb(255 255 255 / 0.12);
+		--surface-pressed: rgb(255 255 255 / 0.18);
+		--surface-selected: var(--a-4);
+		--border-subtle: var(--n-9);
+		--border: var(--n-10);
+		--border-strong: var(--n-11);
+		--border-control: var(--n-11);
+		--text: #ffffff;
+		--text-muted: var(--n-12);
+		--text-faint: var(--n-11);
+		--text-on-accent: #000000;
+		--text-link: var(--a-12);
+		--accent: var(--a-11);
+		--accent-hover: var(--a-12);
+		--accent-pressed: var(--a-12);
+		--accent-soft: var(--a-4);
+		--accent-soft-hover: var(--a-5);
+		--accent-border: var(--a-9);
+		--accent-text: var(--a-12);
+		--focus-ring-color: var(--a-11);
+		--ok: var(--ok-6);
+		--ok-soft: var(--ok-1);
+		--ok-border: var(--ok-4);
+		--ok-text: var(--ok-6);
+		--warn: var(--warn-6);
+		--warn-soft: var(--warn-1);
+		--warn-border: var(--warn-4);
+		--warn-text: var(--warn-6);
+		--danger: var(--bad-6);
+		--danger-soft: var(--bad-1);
+		--danger-border: var(--bad-4);
+		--danger-text: var(--bad-6);
+		--info: var(--info-6);
+		--info-soft: var(--info-1);
+		--info-border: var(--info-4);
+		--info-text: var(--info-6);
+		--scrim: rgb(0 0 0 / 0.75);
+		--shadow-color: 0 0 0;
+		--code-bg: var(--n-1);
+		--selection-bg: var(--a-7);
+		--hairline: 2px;
+		--focus-width: 3px;
+	}
+}
+
+:root[data-radius='sharp'] {
+	--radius-xs: 2px;
+	--radius-sm: 3px;
+	--radius-md: 4px;
+	--radius-lg: 6px;
+	--radius-xl: 8px;
+}
+
+:root[data-radius='round'] {
+	--radius-xs: 6px;
+	--radius-sm: 8px;
+	--radius-md: 10px;
+	--radius-lg: 16px;
+	--radius-xl: 20px;
+}
+
+@media (forced-colors: active) {
+	:root[data-theme='light'],
+	:root[data-theme='dark'],
+	:root:not([data-theme]) {
+		--text: CanvasText;
+		--bg: Canvas;
+		--surface: Canvas;
+		--border-subtle: CanvasText;
+		--border: CanvasText;
+		--border-strong: CanvasText;
+		--border-control: CanvasText;
+		--accent: Highlight;
+		--text-on-accent: HighlightText;
+		--text-link: LinkText;
+		--text-faint: GrayText;
+	}
+}

@@ -1,0 +1,19 @@
+export default {
+	'u082molecules.drop.choose_files': 'Choose files',
+	'u082molecules.drop.choose_folder': 'Choose folder',
+	'u082molecules.drop.dragging': 'Drop to upload',
+	'u082molecules.drop.ready': 'Ready to upload: {count}.',
+	'u082molecules.drop.rejected': 'Not added: {count}. {reason}',
+	'u082molecules.drop.reason_type': 'That file type is not allowed.',
+	'u082molecules.drop.reason_size': 'That file is too big. Files can be up to {max}.',
+	'u082molecules.range.preset': 'Range',
+	'u082molecules.range.first_mb': 'First 1 MB',
+	'u082molecules.range.last_mb': 'Last 1 MB',
+	'u082molecules.range.custom': 'Custom',
+	'u082molecules.range.from': 'From byte',
+	'u082molecules.range.to': 'To byte',
+	'u082molecules.range.unit': 'B',
+	'u082molecules.range.help': 'Leave empty to read to the end.',
+	'u082molecules.range.outside': 'Pick a range inside {size}.',
+	'u082molecules.range.order': 'Pick an end after the start.'
+};

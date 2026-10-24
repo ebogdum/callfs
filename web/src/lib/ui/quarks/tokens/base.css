@@ -1,0 +1,105 @@
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	font-size: calc(100% * var(--font-scale));
+	color-scheme: light dark;
+}
+
+body {
+	margin: 0;
+	font-family: var(--font-sans);
+	font-size: var(--text-body-size);
+	line-height: var(--text-body-line);
+	font-weight: var(--text-body-weight);
+	letter-spacing: var(--text-body-tracking);
+	color: var(--text);
+	background: var(--bg);
+}
+
+:where(p, h1, h2, h3, h4, h5, h6, ul, ol, dl, dd, figure, blockquote, pre, fieldset) {
+	margin: 0;
+}
+
+:where(fieldset) {
+	min-inline-size: 0;
+	padding: 0;
+	border: 0;
+}
+
+:where(legend) {
+	padding: 0;
+}
+
+::selection {
+	background: var(--selection-bg);
+	color: var(--text);
+}
+
+:focus-visible {
+	outline: var(--focus-width) solid transparent;
+	box-shadow: var(--focus-ring);
+}
+
+[hidden] {
+	display: none !important;
+}
+
+:root {
+	--gutter: 1rem;
+}
+
+@media (min-width: 640px) {
+	:root {
+		--gutter: 1.5rem;
+	}
+}
+
+@media (min-width: 1240px) {
+	:root {
+		--gutter: 2rem;
+	}
+}
+
+.skip-link {
+	position: fixed;
+	z-index: var(--z-skip);
+	inset-block-start: var(--space-2);
+	inset-inline-start: var(--space-2);
+	padding-block: var(--space-2);
+	padding-inline: var(--space-4);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	color: var(--text);
+	box-shadow: var(--shadow-md);
+	text-decoration: none;
+	translate: 0 calc(-100% - var(--space-4));
+	transition: translate var(--dur-small) var(--ease-out);
+}
+
+.skip-link:focus-visible {
+	translate: 0 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:root:not([data-motion='full']) * {
+		animation-duration: var(--dur-0) !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: var(--dur-fade) !important;
+		scroll-behavior: auto !important;
+	}
+}
+
+:root:is([data-motion='reduced'], [data-motion='none']) * {
+	animation-duration: var(--dur-0) !important;
+	animation-iteration-count: 1 !important;
+	transition-duration: var(--dur-fade) !important;
+	scroll-behavior: auto !important;
+}
+
+[data-theme-switching] * {
+	transition: none !important;
+}

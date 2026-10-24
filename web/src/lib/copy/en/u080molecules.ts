@@ -1,0 +1,22 @@
+export default {
+	'u080molecules.stale.updated': 'Updated {when}',
+	'u080molecules.stale.just_now': 'Updated a moment ago',
+	'u080molecules.stale.not_yet': 'Not updated yet',
+	'u080molecules.stale.word': 'Stale',
+	'u080molecules.stale.paused': 'Paused',
+	'u080molecules.stale.offline': 'Offline',
+	'u080molecules.stale.refresh': 'Refresh',
+	'u080molecules.connection.live': 'Live',
+	'u080molecules.connection.stale': 'Stale',
+	'u080molecules.connection.reconnecting': 'Reconnecting',
+	'u080molecules.connection.offline': 'Offline',
+	'u080molecules.connection.paused': 'Paused',
+	'u080molecules.scope.server': 'Server {server}',
+	'u080molecules.scope.member': 'Member {member}',
+	'u080molecules.scope.leader': 'Leader',
+	'u080molecules.scope.separator': '·',
+	'u080molecules.theme.group': 'Theme',
+	'u080molecules.theme.system': 'System',
+	'u080molecules.theme.light': 'Light',
+	'u080molecules.theme.dark': 'Dark'
+};
