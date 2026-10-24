@@ -1,14 +1,17 @@
 services:
   postgres:
-    image: postgres:latest
+    image: postgres:17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe
     environment:
       POSTGRES_DB: callfs
       POSTGRES_USER: callfs
-      POSTGRES_PASSWORD: callfs
+      POSTGRES_PASSWORD: "${CALLFS_POSTGRES_PASSWORD:?set CALLFS_POSTGRES_PASSWORD}"
+      CALLFS_POSTGRES_RUNTIME_PASSWORD: "${CALLFS_POSTGRES_RUNTIME_PASSWORD:?set CALLFS_POSTGRES_RUNTIME_PASSWORD}"
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
     ports:
-      - "5432:5432"
-    command: postgres -c log_statement=all -c log_destination=stderr
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ./deploy/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    command: postgres -c log_statement=none -c log_destination=stderr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U callfs -d callfs"]
       interval: 10s
@@ -18,10 +21,12 @@ services:
       - /var/lib/postgresql/data
 
   redis:
-    image: redis:latest
+    image: redis:7@sha256:44960b3100c48159a66d28c18b0588c193492e25f7551d60e51dd464fc3eca5b
+    environment:
+      REDISCLI_AUTH: "${CALLFS_REDIS_PASSWORD:?set CALLFS_REDIS_PASSWORD}"
     ports:
-      - "6379:6379"
-    command: redis-server --appendonly no --save ""
+      - "127.0.0.1:6379:6379"
+    command: redis-server --appendonly no --save "" --requirepass "${CALLFS_REDIS_PASSWORD:?set CALLFS_REDIS_PASSWORD}"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -29,6 +34,28 @@ services:
       retries: 5
     tmpfs:
       - /data
+
+  callfs:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8443:8443"
+    environment:
+      CALLFS_SERVER__LISTEN_ADDR: ":8443"
+      CALLFS_SERVER__PROTOCOL: "http"
+      CALLFS_METADATA_STORE__TYPE: "postgres"
+      CALLFS_METADATA_STORE__DSN: "postgres://callfs_app:${CALLFS_POSTGRES_RUNTIME_PASSWORD:?set CALLFS_POSTGRES_RUNTIME_PASSWORD}@postgres:5432/callfs?sslmode=disable"
+      CALLFS_METADATA_STORE__MIGRATION_DSN: "postgres://callfs:${CALLFS_POSTGRES_PASSWORD:?set CALLFS_POSTGRES_PASSWORD}@postgres:5432/callfs?sslmode=disable"
+      CALLFS_DLM__TYPE: "redis"
+      CALLFS_DLM__REDIS_ADDR: "redis:6379"
+      CALLFS_DLM__REDIS_PASSWORD: "${CALLFS_REDIS_PASSWORD:?set CALLFS_REDIS_PASSWORD}"
+      CALLFS_AUTH__INTERNAL_PROXY_SECRET: "${CALLFS_INTERNAL_PROXY_SECRET:?set CALLFS_INTERNAL_PROXY_SECRET}"
+      CALLFS_AUTH__SINGLE_USE_LINK_SECRET: "${CALLFS_SINGLE_USE_LINK_SECRET:?set CALLFS_SINGLE_USE_LINK_SECRET}"
+      CALLFS_AUTH__API_KEY_USERS__ADMIN: "${CALLFS_ADMIN_API_KEY:?set CALLFS_ADMIN_API_KEY}"
 
 networks:
   default:

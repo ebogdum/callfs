@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # --- Configuration ---
-# build_dir: Path to the directory containing your compiled binaries/artifacts
 # default_branch: Your main development branch (e.g., main, master)
 # remote_name: The name of your remote repository (usually "origin")
 # prerelease_suffix: Suffix for pre-releases (e.g., "beta", "rc.1"). Leave empty for stable.
@@ -10,7 +9,6 @@
 # notes_file: Path to a file containing release notes (default: CHANGELOG.md).
 #             The script will try to extract the relevant section for the version being released.
 
-build_dir="builds" # Directory where cross-compiled binaries are stored
 default_branch="main"
 remote_name="origin"
 prerelease_suffix="" # e.g., "rc.1" or "beta"
@@ -34,16 +32,11 @@ extract_changelog_for_version() {
     # Try to find the section for this version in the changelog
     # Look for patterns like [version], [vversion], ## version, ## [version], etc.
     local start_line
-    start_line=$(grep -n -E "^##?\s*\[?v?${version_clean}\]?" "$changelog_file" | head -n1 | cut -d: -f1)
+    local version_pattern="${version_clean//./\\.}"
+    start_line=$(grep -n -E "^##?\s*\[?v?${version_pattern}(\]|$)" "$changelog_file" | head -n1 | cut -d: -f1)
     
     if [ -z "$start_line" ]; then
-        # If version not found, try to extract the latest section
-        echo "Version $version not found in changelog. Extracting latest changes..."
-        start_line=$(grep -n -E "^##?\s*\[" "$changelog_file" | head -n1 | cut -d: -f1)
-    fi
-    
-    if [ -z "$start_line" ]; then
-        echo "Warning: Could not find version section in changelog."
+        echo "Error: Version $version not found in changelog." >&2
         return 1
     fi
     
@@ -100,7 +93,10 @@ EOF
     echo "Changelog reset to template. Backup saved as ${changelog_file}.backup"
 }
 get_latest_tag() {
-    git fetch --tags "$remote_name" >/dev/null 2>&1
+    if ! git fetch --tags "$remote_name" >/dev/null 2>&1; then
+        echo "Error: Failed to fetch tags from $remote_name." >&2
+        return 1
+    fi
     # Get the latest semantic version tag (vX.Y.Z or X.Y.Z)
     git tag --sort=-v:refname | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | head -n1
 }
@@ -138,18 +134,6 @@ increment_version() {
 
 # --- Main Script ---
 
-# 0. Build the project
-echo "Building the project..."
-if [ -f "./builds.sh" ]; then
-    if ! ./builds.sh; then
-        echo "Error: Build failed. Cannot proceed with release."
-        exit 1
-    fi
-    echo "Build completed successfully."
-else
-    echo "Warning: builds.sh not found. Skipping build step."
-fi
-
 # 1. Prerequisites check
 if ! command -v gh &> /dev/null; then
     echo "GitHub CLI 'gh' could not be found. Please install it."
@@ -159,29 +143,28 @@ if ! command -v git &> /dev/null; then
     echo "Git 'git' could not be found. Please install it."
     exit 1
 fi
-if [ ! -d "$build_dir" ]; then
-    echo "Error: Build directory '$build_dir' not found."
-    echo "Please ensure your project is built and artifacts are in this directory."
-    exit 1
-fi
-if [ -z "$(ls -A "$build_dir")" ]; then
-    echo "Error: Build directory '$build_dir' is empty."
-    exit 1
-fi
 
 
 # 2. Ensure we are on the default branch and it's clean
 echo "Checking Git status..."
-git checkout "$default_branch"
 if ! git diff --quiet HEAD || ! git diff --cached --quiet HEAD; then
     echo "Your working directory or staging area is not clean. Please commit or stash changes."
     exit 1
 fi
+if ! git checkout "$default_branch"; then
+    echo "Error: Failed to checkout $default_branch."
+    exit 1
+fi
 echo "Pulling latest changes from $remote_name/$default_branch..."
-git pull "$remote_name" "$default_branch"
+if ! git pull --ff-only "$remote_name" "$default_branch"; then
+    echo "Error: Failed to pull $remote_name/$default_branch. Ensure it fast-forwards cleanly."
+    exit 1
+fi
 
 # 3. Get the latest tag and determine the next version
-latest_tag=$(get_latest_tag)
+if ! latest_tag=$(get_latest_tag); then
+    exit 1
+fi
 new_version=""
 
 if [ -z "$latest_tag" ]; then
@@ -227,7 +210,10 @@ fi
 echo "Creating Git tag $new_version..."
 if git tag "$new_version"; then
     echo "Pushing tag $new_version to $remote_name..."
-    git push "$remote_name" "$new_version"
+    if ! git push "$remote_name" "$new_version"; then
+        echo "Error: Failed to push tag $new_version to $remote_name." >&2
+        exit 1
+    fi
 else
     echo "Error: Failed to create Git tag. Does it already exist?"
     exit 1
@@ -249,7 +235,8 @@ else
     # Try to extract changelog content for this version
     if [ -n "$notes_file" ] && [ -f "$notes_file" ]; then
         echo "Extracting release notes from $notes_file..."
-        temp_notes_file="/tmp/release_notes_${new_version}.md"
+        temp_notes_file="$(mktemp "${TMPDIR:-/tmp}/release_notes_${new_version}.XXXXXX")" || { echo "Could not create temporary notes file" >&2; exit 1; }
+        trap 'rm -f "$temp_notes_file"' EXIT
         if extract_changelog_for_version "$new_version" "$notes_file" > "$temp_notes_file" 2>/dev/null; then
             if [ -s "$temp_notes_file" ]; then
                 echo "Found changelog content for $new_version"
@@ -277,54 +264,41 @@ else
     fi
 fi
 
-# Construct the list of files to upload
-# Using find to handle spaces in filenames and list them properly for gh
-files_to_upload=()
-while IFS= read -r -d $'\0' file; do
-    files_to_upload+=("$file")
-done < <(find "$build_dir" -type f -print0)
-
-if [ ${#files_to_upload[@]} -eq 0 ]; then
-    echo "Warning: No files found in $build_dir to upload."
-else
-    echo "Found files to upload:"
-    printf " - %s\n" "${files_to_upload[@]}"
-fi
-
-
-if gh release create "$new_version" "${files_to_upload[@]}" --title "$release_title" "${release_options[@]}"; then
-    echo "Successfully created GitHub Release $new_version and uploaded artifacts."
-    # Clean up temporary notes file if it was created
-    if [ -n "$temp_notes_file" ] && [ -f "$temp_notes_file" ]; then
-        rm -f "$temp_notes_file"
-    fi
-    gh release view "$new_version" --web # Open in browser
-    
-    # 6. Ask if changelog should be reset
-    echo ""
-    read -r -p "Would you like to reset the changelog to prepare for next development cycle? (y/N): " reset_confirm
-    if [[ "$reset_confirm" == "y" || "$reset_confirm" == "Y" ]]; then
-        if [ -n "$notes_file" ] && [ -f "$notes_file" ]; then
-            if reset_changelog "$notes_file"; then
-                echo "Changelog has been reset for next development cycle."
-            else
-                echo "Warning: Failed to reset changelog."
-            fi
-        else
-            echo "Warning: Changelog file not found or not configured."
+if ! gh release create "$new_version" --title "$release_title" "${release_options[@]}"; then
+    if ! gh release view "$new_version" >/dev/null 2>&1; then
+        echo "Error: Failed to create GitHub Release."
+        echo "You might need to: "
+        echo "  1. Ensure 'gh' is authenticated with sufficient permissions (repo scope)."
+        echo "The tag '$new_version' was pushed. You might need to create the release manually or delete the tag and retry."
+        if [ -n "$temp_notes_file" ] && [ -f "$temp_notes_file" ]; then
+            rm -f "$temp_notes_file"
         fi
+        exit 1
     fi
-else
-    echo "Error: Failed to create GitHub Release."
-    echo "You might need to: "
-    echo "  1. Ensure 'gh' is authenticated with sufficient permissions (repo scope)."
-    echo "  2. Check if a release for tag '$new_version' already exists."
-    echo "The tag '$new_version' was pushed. You might need to create the release manually or delete the tag and retry."
-    # Clean up temporary notes file if it was created
-    if [ -n "$temp_notes_file" ] && [ -f "$temp_notes_file" ]; then
-        rm -f "$temp_notes_file"
+    echo "Release $new_version was already created by the release workflow; applying release notes."
+    if [ -n "$temp_notes_file" ] && [ -s "$temp_notes_file" ] && ! gh release edit "$new_version" --notes-file "$temp_notes_file"; then
+        echo "Error: Failed to apply release notes to $new_version." >&2
+        exit 1
     fi
-    exit 1
+fi
+echo "GitHub Release $new_version is ready. Binaries are attached by the release workflow."
+if [ -n "$temp_notes_file" ] && [ -f "$temp_notes_file" ]; then
+    rm -f "$temp_notes_file"
+fi
+gh release view "$new_version" --web
+
+echo ""
+read -r -p "Would you like to reset the changelog to prepare for next development cycle? (y/N): " reset_confirm
+if [[ "$reset_confirm" == "y" || "$reset_confirm" == "Y" ]]; then
+    if [ -n "$notes_file" ] && [ -f "$notes_file" ]; then
+        if reset_changelog "$notes_file"; then
+            echo "Changelog has been reset for next development cycle."
+        else
+            echo "Warning: Failed to reset changelog."
+        fi
+    else
+        echo "Warning: Changelog file not found or not configured."
+    fi
 fi
 
 echo "Done."

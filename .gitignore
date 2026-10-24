@@ -51,3 +51,12 @@ _removed/
 scripts/
 certs/
 config.yaml
+# Committed integration test binary
+tests/integration/integration
+
+# Web console
+web/build/
+web/node_modules/
+web/.svelte-kit/
+
+tests/perf/results/

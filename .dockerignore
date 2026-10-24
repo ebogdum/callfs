@@ -5,7 +5,12 @@
 # Documentation
 *.md
 docs/
+articles/
 PHASE2_SUMMARY.md
+
+# Integration tests and frontend dependencies
+tests/
+web/node_modules/
 
 # Build artifacts
 bin/

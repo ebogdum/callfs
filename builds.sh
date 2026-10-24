@@ -21,25 +21,49 @@ PLATFORMS=(
 
 # Create a directory for the builds
 BUILD_DIR="builds"
+rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-for platform in "${PLATFORMS[@]}"
-do
-    # Split the platform string into OS and ARCH
+build_platform() {
+    local platform="$1"
+    local GOOS GOARCH OUTPUT_NAME
     IFS='/' read -r GOOS GOARCH <<< "$platform"
 
-    # Define the output name
     OUTPUT_NAME="$BUILD_DIR/${APP_NAME}-${GOOS}-${GOARCH}"
     if [ "$GOOS" = "windows" ]; then
         OUTPUT_NAME+=".exe"
     fi
 
     echo "Building for $GOOS/$GOARCH..."
-    env GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags="-s -w" -o "$OUTPUT_NAME" "$PACKAGE_PATH"
-    if [ $? -ne 0 ]; then
+    if ! env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath -ldflags="-s -w" -o "$OUTPUT_NAME" "$PACKAGE_PATH"; then
         echo "An error occurred while building for $GOOS/$GOARCH."
-        # Optionally exit on error: exit 1
+        return 1
+    fi
+}
+
+pids=()
+for platform in "${PLATFORMS[@]}"
+do
+    build_platform "$platform" &
+    pids+=("$!")
+done
+
+failed=0
+for pid in "${pids[@]}"
+do
+    if ! wait "$pid"; then
+        failed=1
     fi
 done
+
+if [ "$failed" -ne 0 ]; then
+    echo "One or more builds failed."
+    exit 1
+fi
+
+if ! (cd "$BUILD_DIR" && shasum -a 256 "${APP_NAME}"-* > SHA256SUMS); then
+    echo "Failed to generate SHA256SUMS."
+    exit 1
+fi
 
 echo "All builds completed."

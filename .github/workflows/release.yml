@@ -8,39 +8,79 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+          - windows/amd64
+          - darwin/amd64
+          - darwin/arm64
+          - freebsd/amd64
+          - freebsd/arm64
+          - openbsd/amd64
+          - openbsd/arm64
+          - netbsd/amd64
+          - netbsd/arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
 
-      - name: Build binaries for all platforms
+      - name: Build ${{ matrix.platform }}
+        env:
+          PLATFORM: ${{ matrix.platform }}
         run: |
+          GOOS="${PLATFORM%/*}"
+          GOARCH="${PLATFORM#*/}"
           mkdir -p builds
-          PLATFORMS=(
-            "linux/amd64"
-            "linux/arm64"
-            "windows/amd64"
-            "darwin/amd64"
-            "darwin/arm64"
-            "freebsd/amd64"
-            "freebsd/arm64"
-            "openbsd/amd64"
-            "openbsd/arm64"
-          )
-          for platform in "${PLATFORMS[@]}"; do
-            IFS='/' read -r GOOS GOARCH <<< "$platform"
-            OUTPUT="builds/callfs-${GOOS}-${GOARCH}"
-            if [ "$GOOS" = "windows" ]; then
-              OUTPUT="${OUTPUT}.exe"
-            fi
-            echo "Building ${GOOS}/${GOARCH}..."
-            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags="-s -w" -o "$OUTPUT" ./cmd
-          done
-          ls -lh builds/
+          OUTPUT="builds/callfs-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            OUTPUT="${OUTPUT}.exe"
+          fi
+          CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags="-s -w" -o "$OUTPUT" ./cmd
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: callfs-${{ strategy.job-index }}
+          path: builds/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: callfs-*
+          path: builds
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        working-directory: builds
+        run: sha256sum callfs-* > SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: builds/*
+
+      - name: List binaries
+        run: ls -lh builds/
 
       - name: Create GitHub Release with binaries
         env:
@@ -52,7 +92,7 @@ jobs:
           # existing release instead, keeping its curated changelog notes.
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             echo "Release ${GITHUB_REF_NAME} already exists; uploading binaries to it."
-            gh release upload "${GITHUB_REF_NAME}" builds/* --clobber
+            gh release upload "${GITHUB_REF_NAME}" builds/*
           else
             gh release create "${GITHUB_REF_NAME}" \
               builds/* \
