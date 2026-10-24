@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/server/handlers"
-	"github.com/ebogdum/callfs/server/middleware"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/server/handlers"
+	"github.com/ebogdum/callfs/v2/server/middleware"
 )
 
 const (

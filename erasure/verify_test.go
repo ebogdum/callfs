@@ -8,9 +8,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/backends/localfs"
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/backends/localfs"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func TestPlanToleratesInstanceFailuresWithinParity(t *testing.T) {

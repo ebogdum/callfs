@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 // stubStore is a minimal in-memory metadata store for testing the authorizer.

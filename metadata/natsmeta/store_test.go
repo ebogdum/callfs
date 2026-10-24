@@ -11,9 +11,9 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/natsrv/natstest"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/natsrv/natstest"
 )
 
 func startStores(t *testing.T) []*Store {

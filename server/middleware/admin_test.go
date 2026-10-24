@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ebogdum/callfs/auth"
+	"github.com/ebogdum/callfs/v2/auth"
 )
 
 func TestRequireAdminStatusByIdentity(t *testing.T) {

@@ -216,7 +216,7 @@ raft:
 	if !errors.Is(err, ErrRaftRemoved) {
 		t.Fatalf("err = %v, want ErrRaftRemoved", err)
 	}
-	want := "raft cluster mode was removed in " + RaftRemovedVersion + "; run 'callfs migrate config' then 'callfs migrate from-raft' (docs_markdown/07-clustering-distribution.md#migrating-from-raft)"
+	want := "raft cluster mode was removed in " + RaftRemovedVersion + "; set metadata_store.type and dlm.type to nats and configure the nats section"
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("error = %q, want it to contain %q", err, want)
 	}

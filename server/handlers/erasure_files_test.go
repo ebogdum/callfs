@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/erasure"
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/erasure"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func TestParseErasureHealthFilter(t *testing.T) {

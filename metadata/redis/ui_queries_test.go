@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func TestCursorRoundTrip(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ebogdum/callfs/backends"
+	"github.com/ebogdum/callfs/v2/backends"
 )
 
 type SyncMode string

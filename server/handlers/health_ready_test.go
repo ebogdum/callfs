@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/health"
+	"github.com/ebogdum/callfs/v2/health"
 )
 
 type readyStubChecker struct {

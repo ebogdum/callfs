@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func batchFileMeta(path string) *metadata.Metadata {

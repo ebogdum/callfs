@@ -16,9 +16,9 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/ebogdum/callfs/backends"
-	"github.com/ebogdum/callfs/internal/pathutil"
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/backends"
+	"github.com/ebogdum/callfs/v2/internal/pathutil"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 // isCrossDevice reports whether err is an EXDEV ("invalid cross-device link")

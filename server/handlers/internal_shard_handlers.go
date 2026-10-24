@@ -14,9 +14,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/backends"
-	"github.com/ebogdum/callfs/internal/pathutil"
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/backends"
+	"github.com/ebogdum/callfs/v2/internal/pathutil"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 // InternalStoreShardHandler handles PUT /v1/internal/shards/{path}/{index}

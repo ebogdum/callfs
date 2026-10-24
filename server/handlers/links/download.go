@@ -13,10 +13,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/core"
-	"github.com/ebogdum/callfs/internal/pathutil"
-	"github.com/ebogdum/callfs/links"
-	"github.com/ebogdum/callfs/server/handlers"
+	"github.com/ebogdum/callfs/v2/core"
+	"github.com/ebogdum/callfs/v2/internal/pathutil"
+	"github.com/ebogdum/callfs/v2/links"
+	"github.com/ebogdum/callfs/v2/server/handlers"
 )
 
 // DownloadLinkHandler creates an HTTP handler for downloading files via single-use links.

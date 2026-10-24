@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ebogdum/callfs/backends"
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/backends"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 // NoopAdapter is a no-operation storage backend that always returns errors

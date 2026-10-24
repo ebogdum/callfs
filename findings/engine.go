@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ebogdum/callfs/config"
+	"github.com/ebogdum/callfs/v2/config"
 )
 
 var (

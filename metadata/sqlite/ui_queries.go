@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 const (

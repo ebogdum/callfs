@@ -8,7 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/config"
+	"github.com/ebogdum/callfs/v2/config"
 )
 
 func freeLoopbackAddr(t *testing.T) string {

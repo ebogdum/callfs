@@ -15,13 +15,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/core"
-	"github.com/ebogdum/callfs/findings"
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/metadata/schema"
-	"github.com/ebogdum/callfs/server/handlers"
-	"github.com/ebogdum/callfs/telemetry"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/core"
+	"github.com/ebogdum/callfs/v2/findings"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/metadata/schema"
+	"github.com/ebogdum/callfs/v2/server/handlers"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 const (

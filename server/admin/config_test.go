@@ -12,7 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/config"
+	"github.com/ebogdum/callfs/v2/config"
 )
 
 const configTestYAML = `server:

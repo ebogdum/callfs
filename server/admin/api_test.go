@@ -11,9 +11,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/auth"
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/findings"
+	"github.com/ebogdum/callfs/v2/auth"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/findings"
 )
 
 func TestMountRejectsAnonymousRequests(t *testing.T) {

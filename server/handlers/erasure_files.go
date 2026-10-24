@@ -12,11 +12,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/auth"
-	"github.com/ebogdum/callfs/erasure"
-	"github.com/ebogdum/callfs/jobs"
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/server/middleware"
+	"github.com/ebogdum/callfs/v2/auth"
+	"github.com/ebogdum/callfs/v2/erasure"
+	"github.com/ebogdum/callfs/v2/jobs"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/server/middleware"
 )
 
 const (

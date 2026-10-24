@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/core"
+	"github.com/ebogdum/callfs/v2/core"
 )
 
 func TestInstanceEndpointValidation(t *testing.T) {

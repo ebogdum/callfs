@@ -10,8 +10,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/core"
-	"github.com/ebogdum/callfs/server/handlers"
+	"github.com/ebogdum/callfs/v2/core"
+	"github.com/ebogdum/callfs/v2/server/handlers"
 )
 
 type backendProbeRecord struct {

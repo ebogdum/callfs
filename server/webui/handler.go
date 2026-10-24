@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ebogdum/callfs/server/middleware"
+	"github.com/ebogdum/callfs/v2/server/middleware"
 	"go.uber.org/zap"
 )
 

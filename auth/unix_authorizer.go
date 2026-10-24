@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 // UnixAuthorizer implements permission checking using app-level ownership.

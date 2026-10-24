@@ -8,7 +8,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/ebogdum/callfs/config"
+	"github.com/ebogdum/callfs/v2/config"
 )
 
 type Topology struct {

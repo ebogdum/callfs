@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ebogdum/callfs/metrics"
+	"github.com/ebogdum/callfs/v2/metrics"
 )
 
 const (

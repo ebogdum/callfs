@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/ebogdum/callfs/config"
+	"github.com/ebogdum/callfs/v2/config"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"

@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/metrics"
+	"github.com/ebogdum/callfs/v2/metrics"
 )
 
 const (

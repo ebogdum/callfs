@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ebogdum/callfs/health"
+	"github.com/ebogdum/callfs/v2/health"
 )
 
 const (

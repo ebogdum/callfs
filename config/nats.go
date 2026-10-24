@@ -14,7 +14,7 @@ import (
 
 const RaftRemovedVersion = "v2.0.0"
 
-var ErrRaftRemoved = errors.New("raft cluster mode was removed in " + RaftRemovedVersion + "; run 'callfs migrate config' then 'callfs migrate from-raft' (docs_markdown/07-clustering-distribution.md#migrating-from-raft)")
+var ErrRaftRemoved = errors.New("raft cluster mode was removed in " + RaftRemovedVersion + "; set metadata_store.type and dlm.type to nats and configure the nats section")
 
 const (
 	natsMaxReplicas   = 5

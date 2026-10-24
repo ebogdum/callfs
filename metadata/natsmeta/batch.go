@@ -7,9 +7,9 @@ import (
 
 	"github.com/nats-io/nuid"
 
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/metadata/fsm"
-	"github.com/ebogdum/callfs/natsrv"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/metadata/fsm"
+	"github.com/ebogdum/callfs/v2/natsrv"
 )
 
 const (

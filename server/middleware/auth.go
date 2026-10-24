@@ -16,8 +16,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
-	"github.com/ebogdum/callfs/auth"
-	"github.com/ebogdum/callfs/metrics"
+	"github.com/ebogdum/callfs/v2/auth"
+	"github.com/ebogdum/callfs/v2/metrics"
 )
 
 type contextKey string

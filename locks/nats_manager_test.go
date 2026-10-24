@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/natsrv/natstest"
+	"github.com/ebogdum/callfs/v2/natsrv/natstest"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/zap"
 )

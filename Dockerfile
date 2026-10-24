@@ -41,7 +41,7 @@ COPY --from=web-builder /build/web/build ./web/build
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags ui \
-    -ldflags="-w -s -extldflags \"-static\" -X github.com/ebogdum/callfs/internal/buildinfo.Version=${VERSION} -X github.com/ebogdum/callfs/internal/buildinfo.Commit=${COMMIT} -X github.com/ebogdum/callfs/internal/buildinfo.Date=${BUILD_DATE}" \
+    -ldflags="-w -s -extldflags \"-static\" -X github.com/ebogdum/callfs/v2/internal/buildinfo.Version=${VERSION} -X github.com/ebogdum/callfs/v2/internal/buildinfo.Commit=${COMMIT} -X github.com/ebogdum/callfs/v2/internal/buildinfo.Date=${BUILD_DATE}" \
     -o callfs ./cmd
 
 # Data directory owned by the runtime user

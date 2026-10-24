@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ebogdum/callfs/metadata/fsm"
+	"github.com/ebogdum/callfs/v2/metadata/fsm"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/zap"
 )

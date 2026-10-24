@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ebogdum/callfs/cluster"
+	"github.com/ebogdum/callfs/v2/cluster"
 )
 
 func (l *Local) Hold(ctx context.Context, name string, ttl time.Duration) (<-chan struct{}, func(), error) {

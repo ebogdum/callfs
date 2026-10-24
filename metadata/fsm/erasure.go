@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func (m *Machine) GetErasureInfo(filePath string) (*metadata.ErasureFileInfo, bool) {

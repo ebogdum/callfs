@@ -5,9 +5,9 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/core"
-	"github.com/ebogdum/callfs/internal/buildinfo"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/core"
+	"github.com/ebogdum/callfs/v2/internal/buildinfo"
 )
 
 const (

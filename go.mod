@@ -1,4 +1,4 @@
-module github.com/ebogdum/callfs
+module github.com/ebogdum/callfs/v2
 
 go 1.26.0
 

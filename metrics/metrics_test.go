@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ebogdum/callfs/backends"
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/metrics"
+	"github.com/ebogdum/callfs/v2/backends"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )

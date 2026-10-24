@@ -1,7 +1,7 @@
 package main
 
 //	@title		CallFS API
-//	@version	1.6.0
+//	@version	2.0.0
 //	@description	CallFS is an ultra-lightweight, high-performance REST API filesystem that provides precise Linux filesystem semantics over various backends.
 //	@termsOfService	http://swagger.io/terms/
 
@@ -46,35 +46,35 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/ebogdum/callfs/auth"
-	"github.com/ebogdum/callfs/backends"
-	"github.com/ebogdum/callfs/backends/internalproxy"
-	"github.com/ebogdum/callfs/backends/localfs"
-	"github.com/ebogdum/callfs/backends/noop"
-	"github.com/ebogdum/callfs/backends/s3"
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/core"
-	"github.com/ebogdum/callfs/erasure"
-	"github.com/ebogdum/callfs/health"
-	"github.com/ebogdum/callfs/internal/buildinfo"
-	"github.com/ebogdum/callfs/jobs"
-	"github.com/ebogdum/callfs/links"
-	"github.com/ebogdum/callfs/locks"
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/metadata/natsmeta"
-	"github.com/ebogdum/callfs/metadata/postgres"
-	metadataredis "github.com/ebogdum/callfs/metadata/redis"
-	"github.com/ebogdum/callfs/metadata/schema"
-	metadatasqlite "github.com/ebogdum/callfs/metadata/sqlite"
-	"github.com/ebogdum/callfs/natsrv"
-	"github.com/ebogdum/callfs/server"
-	"github.com/ebogdum/callfs/server/admin"
-	"github.com/ebogdum/callfs/server/handlers"
-	"github.com/ebogdum/callfs/server/middleware"
-	"github.com/ebogdum/callfs/server/nodes"
-	"github.com/ebogdum/callfs/server/webui"
-	"github.com/ebogdum/callfs/telemetry"
-	"github.com/ebogdum/callfs/web"
+	"github.com/ebogdum/callfs/v2/auth"
+	"github.com/ebogdum/callfs/v2/backends"
+	"github.com/ebogdum/callfs/v2/backends/internalproxy"
+	"github.com/ebogdum/callfs/v2/backends/localfs"
+	"github.com/ebogdum/callfs/v2/backends/noop"
+	"github.com/ebogdum/callfs/v2/backends/s3"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/core"
+	"github.com/ebogdum/callfs/v2/erasure"
+	"github.com/ebogdum/callfs/v2/health"
+	"github.com/ebogdum/callfs/v2/internal/buildinfo"
+	"github.com/ebogdum/callfs/v2/jobs"
+	"github.com/ebogdum/callfs/v2/links"
+	"github.com/ebogdum/callfs/v2/locks"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/metadata/natsmeta"
+	"github.com/ebogdum/callfs/v2/metadata/postgres"
+	metadataredis "github.com/ebogdum/callfs/v2/metadata/redis"
+	"github.com/ebogdum/callfs/v2/metadata/schema"
+	metadatasqlite "github.com/ebogdum/callfs/v2/metadata/sqlite"
+	"github.com/ebogdum/callfs/v2/natsrv"
+	"github.com/ebogdum/callfs/v2/server"
+	"github.com/ebogdum/callfs/v2/server/admin"
+	"github.com/ebogdum/callfs/v2/server/handlers"
+	"github.com/ebogdum/callfs/v2/server/middleware"
+	"github.com/ebogdum/callfs/v2/server/nodes"
+	"github.com/ebogdum/callfs/v2/server/webui"
+	"github.com/ebogdum/callfs/v2/telemetry"
+	"github.com/ebogdum/callfs/v2/web"
 )
 
 var rootCmd = &cobra.Command{

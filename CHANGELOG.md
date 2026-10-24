@@ -1,16 +1,29 @@
 # Changelog
 
-## [Unreleased]
+## [v2.0.0] - 2026-10-24
+
+### **Breaking Changes**
+- Raft is removed. Clustering, metadata, locks and node messaging now run on an embedded NATS server that works standalone or as a cluster. Configs with `metadata_store.type: raft` or `dlm.type: raft` are rejected at startup.
+- The `callfs cluster join` and `callfs cluster remove` commands and the `/internal/raft/*` endpoints are gone.
+- The Go module path is now `github.com/ebogdum/callfs/v2`.
 
 ### **New Features**
+- Web console for files, sharing, users, cluster nodes, health findings, activity and settings, with control of every node from one place.
+- `performance.mode` (`fast` or `strict`). Both acknowledge a write only once it is durable; strict also reads back each saved file, locks every change and makes reads wait for the latest cluster state.
+- Write acknowledgement levels (`backend.localfs_ack`, `X-CallFS-Write-Ack`) and a group-commit flusher with configurable workers, memory budget and delay.
+- Admin API, trash, resumable uploads, search, stat and batch endpoints.
 - Lock waits with owner tokens and lease renewal, bounded by `dlm.wait_timeout`.
 - Conditional requests: `ETag` on GET, HEAD, PUT and POST responses; `If-Match` and `If-None-Match: *` on PUT and POST (`412 Precondition Failed`).
 - Range GET (`206 Partial Content`, `Content-Range`, `416 Range Not Satisfiable`).
 - `GET /v1/objects` with prefix and cursor paging, and `DELETE /v1/objects?prefix=` for bulk delete.
 - `DELETE /v1/files/<dir>?recursive=true` removes a directory tree.
-- `callfs cluster remove <node-id>` and `DELETE /internal/raft/servers/<id>`.
 - Configurable rate limits (`server.rate_limit`) and metadata cache TTL (`server.metadata_cache_ttl`).
 - Docker image ships a health check and runs as a non-root user.
+
+### **Performance**
+- Creates no longer take locks when the metadata store checks the namespace itself; overwrites lock only the file's own path.
+- Metadata writes are batched into one replicated message, and file syncs are batched per flush.
+- Reads use zero-copy transfers and a cached directory handle.
 
 ### **Bug Fixes**
 - Single lock namespace (`path:<path>`) for path locks.

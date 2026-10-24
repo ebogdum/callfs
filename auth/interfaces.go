@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 // PermissionType represents different permission types for authorization

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func newModeAdapter(t *testing.T, mode SyncMode) (*LocalFSAdapter, string) {

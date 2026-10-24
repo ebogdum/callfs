@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/ebogdum/callfs/core"
+	"github.com/ebogdum/callfs/v2/core"
 )
 
 func TestFileModeNormalization(t *testing.T) {

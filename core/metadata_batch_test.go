@@ -10,13 +10,13 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/auth"
-	"github.com/ebogdum/callfs/backends/localfs"
-	"github.com/ebogdum/callfs/backends/noop"
-	"github.com/ebogdum/callfs/jobs"
-	"github.com/ebogdum/callfs/locks"
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/metadata/sqlite"
+	"github.com/ebogdum/callfs/v2/auth"
+	"github.com/ebogdum/callfs/v2/backends/localfs"
+	"github.com/ebogdum/callfs/v2/backends/noop"
+	"github.com/ebogdum/callfs/v2/jobs"
+	"github.com/ebogdum/callfs/v2/locks"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/metadata/sqlite"
 )
 
 type countingStore struct {

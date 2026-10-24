@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ebogdum/callfs/backends/internalproxy"
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/backends/internalproxy"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 // UpdateFileOnInstance updates a file on a specific instance using the internal proxy

@@ -9,8 +9,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/auth"
-	"github.com/ebogdum/callfs/config"
+	"github.com/ebogdum/callfs/v2/auth"
+	"github.com/ebogdum/callfs/v2/config"
 )
 
 const (

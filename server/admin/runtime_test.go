@@ -12,10 +12,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/locks"
-	"github.com/ebogdum/callfs/server/handlers"
-	"github.com/ebogdum/callfs/server/middleware"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/locks"
+	"github.com/ebogdum/callfs/v2/server/handlers"
+	"github.com/ebogdum/callfs/v2/server/middleware"
 )
 
 type runtimeLockInspector struct {

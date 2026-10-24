@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ebogdum/callfs/config"
+	"github.com/ebogdum/callfs/v2/config"
 )
 
 const (

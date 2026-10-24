@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/ebogdum/callfs/auth"
+	"github.com/ebogdum/callfs/v2/auth"
 )
 
 var adminRequiredBody = []byte(`{"code":"ADMIN_REQUIRED","message":"Admin access required"}`)

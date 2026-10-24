@@ -14,9 +14,9 @@ import (
 	"github.com/nats-io/nuid"
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/metadata/fsm"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/metadata/fsm"
 )
 
 const (

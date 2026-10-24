@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/cluster"
+	"github.com/ebogdum/callfs/v2/cluster"
 )
 
 func fastBackoff() []time.Duration {

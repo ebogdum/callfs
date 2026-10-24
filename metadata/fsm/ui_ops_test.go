@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func seedUILinks(t *testing.T, f *Machine, base time.Time) {

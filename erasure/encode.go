@@ -14,7 +14,7 @@ import (
 	"github.com/klauspost/reedsolomon"
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 const maxShardsPerRequest = 256

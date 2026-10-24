@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 type ShardState string

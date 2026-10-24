@@ -6,7 +6,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 // Storage defines the interface for backend storage operations

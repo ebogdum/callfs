@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/telemetry"
+	"github.com/ebogdum/callfs/v2/telemetry"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"

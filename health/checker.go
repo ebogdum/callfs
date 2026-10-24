@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ebogdum/callfs/locks"
+	"github.com/ebogdum/callfs/v2/locks"
 )
 
 type Status string

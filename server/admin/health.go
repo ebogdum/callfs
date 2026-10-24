@@ -3,7 +3,7 @@ package admin
 import (
 	"net/http"
 
-	"github.com/ebogdum/callfs/server/handlers"
+	"github.com/ebogdum/callfs/v2/server/handlers"
 )
 
 func (a *API) Health(w http.ResponseWriter, r *http.Request) {

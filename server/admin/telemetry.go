@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ebogdum/callfs/server/handlers"
-	"github.com/ebogdum/callfs/telemetry"
+	"github.com/ebogdum/callfs/v2/server/handlers"
+	"github.com/ebogdum/callfs/v2/telemetry"
 	"go.uber.org/zap"
 )
 

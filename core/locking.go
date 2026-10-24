@@ -7,8 +7,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/locks"
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/locks"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func pathLockKey(path string) string {

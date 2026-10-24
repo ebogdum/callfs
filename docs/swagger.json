@@ -13,7 +13,7 @@
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         },
-        "version": "1.6.0"
+        "version": "2.0.0"
     },
     "host": "localhost:8443",
     "basePath": "/",

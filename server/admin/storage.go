@@ -17,10 +17,10 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/jobs"
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/server/handlers"
-	"github.com/ebogdum/callfs/telemetry"
+	"github.com/ebogdum/callfs/v2/jobs"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/server/handlers"
+	"github.com/ebogdum/callfs/v2/telemetry"
 )
 
 const (

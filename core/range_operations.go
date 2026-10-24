@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func (e *Engine) GetFileRange(ctx context.Context, path string, offset, length int64) (io.ReadCloser, *metadata.Metadata, error) {

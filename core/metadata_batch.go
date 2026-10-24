@@ -11,9 +11,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/ebogdum/callfs/backends"
-	"github.com/ebogdum/callfs/metadata"
-	"github.com/ebogdum/callfs/metrics"
+	"github.com/ebogdum/callfs/v2/backends"
+	"github.com/ebogdum/callfs/v2/metadata"
+	"github.com/ebogdum/callfs/v2/metrics"
 )
 
 const deleteBatchSize = 500

@@ -15,8 +15,8 @@ import (
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
-	"github.com/ebogdum/callfs/config"
-	"github.com/ebogdum/callfs/server/handlers"
+	"github.com/ebogdum/callfs/v2/config"
+	"github.com/ebogdum/callfs/v2/server/handlers"
 )
 
 const configBodyLimit = 64 << 10

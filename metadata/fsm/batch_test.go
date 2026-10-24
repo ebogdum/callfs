@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func applyCmd(t *testing.T, f *Machine, cmd Command) Result {

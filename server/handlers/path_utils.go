@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/ebogdum/callfs/internal/pathutil"
+	"github.com/ebogdum/callfs/v2/internal/pathutil"
 )
 
 // CountingReader wraps an io.Reader and counts bytes read through it.

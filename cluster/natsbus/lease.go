@@ -9,7 +9,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/ebogdum/callfs/cluster"
+	"github.com/ebogdum/callfs/v2/cluster"
 )
 
 const leaseRetryInterval = time.Second

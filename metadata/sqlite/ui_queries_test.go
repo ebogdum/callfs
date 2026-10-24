@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ebogdum/callfs/metadata"
+	"github.com/ebogdum/callfs/v2/metadata"
 )
 
 func TestListSingleUseLinksPagesByOwner(t *testing.T) {
