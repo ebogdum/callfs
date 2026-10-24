@@ -1,4 +1,3 @@
-// Package metrics provides Prometheus metrics for CallFS operations.
 package metrics
 
 import (
@@ -6,8 +5,24 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+var knownMethods = map[string]struct{}{
+	"GET":     {},
+	"HEAD":    {},
+	"POST":    {},
+	"PUT":     {},
+	"PATCH":   {},
+	"DELETE":  {},
+	"OPTIONS": {},
+}
+
+func NormalizeMethod(method string) string {
+	if _, ok := knownMethods[method]; ok {
+		return method
+	}
+	return "OTHER"
+}
+
 var (
-	// HTTP request metrics
 	HTTPRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "callfs_http_requests_total",
@@ -25,7 +40,6 @@ var (
 		[]string{"method", "path"},
 	)
 
-	// Backend operation metrics
 	BackendOpsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "callfs_backend_ops_total",
@@ -43,11 +57,18 @@ var (
 		[]string{"backend_type", "operation"},
 	)
 
-	// Metadata database metrics
+	BackendOpFailuresTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "callfs_backend_op_failures_total",
+			Help: "Total number of failed backend operations",
+		},
+		[]string{"backend_type", "operation"},
+	)
+
 	MetadataDBQueriesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "callfs_metadata_db_queries_total",
-			Help: "Total number of metadata database queries",
+			Help: "Total number of metadata store queries",
 		},
 		[]string{"operation"},
 	)
@@ -55,17 +76,23 @@ var (
 	MetadataDBQueryDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "callfs_metadata_db_query_duration_seconds",
-			Help:    "Metadata database query duration in seconds",
+			Help:    "Metadata store query duration in seconds",
 			Buckets: prometheus.DefBuckets,
 		},
 		[]string{"operation"},
 	)
 
-	// Single-use link metrics
 	SingleUseLinkGenerationsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "callfs_single_use_link_generations_total",
 			Help: "Total number of single-use links generated",
+		},
+	)
+
+	SingleUseLinksActive = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "callfs_single_use_links_active",
+			Help: "Number of download links that can still be opened",
 		},
 	)
 
@@ -74,57 +101,155 @@ var (
 			Name: "callfs_single_use_link_consumptions_total",
 			Help: "Total number of single-use links consumed",
 		},
-		[]string{"status"}, // "success", "expired", "invalid", "not_found"
+		[]string{"status"},
 	)
 
-	// Lock manager metrics
 	LockOperationsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "callfs_lock_operations_total",
-			Help: "Total number of lock operations",
+			Help: "Total number of edit lock operations",
 		},
-		[]string{"operation", "status"}, // operation: "acquire", "release"; status: "success", "failure"
+		[]string{"operation", "status"},
 	)
 
 	LockOperationDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "callfs_lock_operation_duration_seconds",
-			Help:    "Lock operation duration in seconds",
+			Help:    "Edit lock operation duration in seconds",
 			Buckets: prometheus.DefBuckets,
 		},
 		[]string{"operation"},
 	)
 
-	// Active locks gauge
 	ActiveLocks = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "callfs_active_locks",
-			Help: "Number of currently active locks",
+			Help: "Number of edit locks currently held",
 		},
 	)
 
-	// File operations metrics
 	FileOperationsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "callfs_file_operations_total",
 			Help: "Total number of file operations",
 		},
-		[]string{"operation", "backend_type"}, // operation: "create", "read", "update", "delete"
+		[]string{"operation", "backend_type"},
 	)
 
-	// Error metrics
 	ErrorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "callfs_errors_total",
-			Help: "Total number of errors by component",
+			Help: "Total number of errors returned to clients",
 		},
 		[]string{"component", "error_type"},
 	)
-)
 
-// RegisterMetrics ensures all metrics are registered with Prometheus.
-// This function is idempotent and safe to call multiple times.
-func RegisterMetrics() {
-	// All metrics are automatically registered via promauto.
-	// This function exists for explicit initialization if needed.
-}
+	CacheLookupsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "callfs_cache_lookups_total",
+			Help: "Total number of metadata cache lookups",
+		},
+		[]string{"result"},
+	)
+
+	CacheEvictionsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "callfs_cache_evictions_total",
+			Help: "Total number of metadata cache evictions",
+		},
+	)
+
+	CacheEntries = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "callfs_cache_entries",
+			Help: "Number of entries in the metadata cache",
+		},
+	)
+
+	RateLimitRejectionsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "callfs_rate_limit_rejections_total",
+			Help: "Total number of requests rejected by rate limits",
+		},
+		[]string{"endpoint"},
+	)
+
+	ReplicationTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "callfs_replication_total",
+			Help: "Total number of backup copy attempts",
+		},
+		[]string{"result"},
+	)
+
+	TransfersActive = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "callfs_transfers_active",
+			Help: "Number of file transfers currently running",
+		},
+		[]string{"kind"},
+	)
+
+	AuthFailuresTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "callfs_auth_failures_total",
+			Help: "Total number of failed authentication attempts",
+		},
+		[]string{"reason"},
+	)
+
+	RaftApplyDuration = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "callfs_raft_apply_duration_seconds",
+			Help:    "Raft log apply duration in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+	)
+
+	RaftForwardDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "callfs_raft_forward_duration_seconds",
+			Help:    "Duration of requests forwarded to the Raft leader in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"result"},
+	)
+
+	RaftLeaderChangesTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "callfs_raft_leader_changes_total",
+			Help: "Total number of Raft leader changes",
+		},
+	)
+
+	JobsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "callfs_jobs_total",
+			Help: "Total number of finished jobs",
+		},
+		[]string{"kind", "result"},
+	)
+
+	ErasurePiecesRepairedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "callfs_erasure_pieces_repaired_total",
+			Help: "Total number of erasure pieces repaired",
+		},
+	)
+
+	UsageBytes = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "callfs_usage_bytes",
+			Help: "Bytes stored per storage backend",
+		},
+		[]string{"storage"},
+	)
+
+	UsageFiles = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "callfs_usage_files",
+			Help: "Files stored per storage backend",
+		},
+		[]string{"storage"},
+	)
+)
